@@ -4254,16 +4254,14 @@ fn container_data_seed_command(fixture_root: &std::path::Path) -> Command {
         .env("EFFIGY_TEST_LOG_FOLLOW_FILE", &log_follow)
         .env("EFFIGY_TEST_OWNED_INSPECT_FILE", &inspect)
         .env("EFFIGY_TEST_OWNED_CHECKOUT", &root)
-        // Cold service activation starts a held stack, which idle-stops when
-        // the seed ends.
+        // A seed that starts a held stack should leave no reaper behind.
         .env(
             "EFFIGY_TEST_SERVICE_STATE_FILE",
             root.join("service-running"),
         )
         .env("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", "1")
         .env_remove("EFFIGY_DISABLE_HOST_CONTAINER_LEASE")
-        .env_remove("EFFIGY_HOST_CONTAINER_LEASE_TIMEOUT_SECS")
-        .env_remove("EFFIGY_DISABLE_HOST_CONTAINER_LEASE_REAPER");
+        .env("EFFIGY_CONTAINER_IDLE_TIMEOUT_SECS", "0");
     command
 }
 
@@ -6173,6 +6171,7 @@ fn cli_workspace_binding_handoff_stops_environment_after_return() {
         .env("EFFIGY_TEST_OWNED_INSPECT_FILE", &inspect)
         .env("EFFIGY_TEST_OWNED_CHECKOUT", &canonical_root)
         .env("EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF", "1")
+        .env("EFFIGY_CONTAINER_IDLE_TIMEOUT_SECS", "0")
         .output_owned()
         .expect("run workspace handoff");
     assert!(
@@ -6188,6 +6187,177 @@ fn cli_workspace_binding_handoff_stops_environment_after_return() {
         docker_invocations.contains("down --remove-orphans"),
         "expected workspace shutdown via compose down: {docker_invocations}"
     );
+}
+
+#[test]
+fn cli_container_idle_linger_reuses_the_stack_and_reaps_after_the_last_run() {
+    use effigy_containers::environment::{EnvRecord, EnvRef, EnvState};
+    use effigy_kernel::ctx::{
+        CancelToken, Deadline, EffectClass, Limits, OperationContext, Placement,
+    };
+    use effigy_kernel::location::CheckoutLocation;
+    use effigy_kernel::root::StateRoot;
+
+    const IDLE_SECONDS: &str = "2";
+    let fixture = effigy_test_support::Fixture::workspace("effigy-container-idle-linger-")
+        .expect("private idle linger checkout");
+    let root = fs::canonicalize(fixture.path()).expect("canonical checkout");
+    fs::create_dir(root.join(".git")).expect("checkout marker");
+    write_container_fixture_with_task(&root, None, "./app:/workspace", true, false);
+    let mut manifest = fs::OpenOptions::new()
+        .append(true)
+        .open(root.join("effigy.toml"))
+        .expect("fixture manifest");
+    writeln!(
+        manifest,
+        "\n[defer]\nrun_in = \"container\"\nrun = \"printf '%s' {{request}}\""
+    )
+    .expect("write one-shot deferred container task");
+    let (bin_dir, colima_state) = install_fake_container_runtime(&root);
+    let inspect = write_owned_runtime_inspect(&root);
+    let colima_args = root.join("colima-args.log");
+    let service_state = root.join("service-running");
+    let home = private_home(&root);
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").expect("PATH")
+    );
+    let run_task = || {
+        Command::new(env!("CARGO_BIN_EXE_effigy"))
+            .current_dir(&root)
+            .arg("idle-test")
+            .env("NO_COLOR", "1")
+            .env("HOME", &home)
+            .env("EFFIGY_TEST_CONTAINERS_HOME", home.join(".effigy"))
+            .env("EFFIGY_COMPOSE_BACKEND", "colima")
+            .env("PATH", &path)
+            .env("EFFIGY_TEST_DOCKER_ARGS_FILE", root.join("docker-args.log"))
+            .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
+            .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
+            .env("EFFIGY_TEST_SERVICE_STATE_FILE", &service_state)
+            .env("EFFIGY_TEST_DOWN_REMOVES_SERVICE", "1")
+            .env("EFFIGY_TEST_LOG_FOLLOW_FILE", root.join("log-follow.marker"))
+            .env("EFFIGY_TEST_OWNED_INSPECT_FILE", &inspect)
+            .env("EFFIGY_TEST_OWNED_CHECKOUT", &root)
+            .env("EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF", "1")
+            .env("EFFIGY_CONTAINER_IDLE_TIMEOUT_SECS", IDLE_SECONDS)
+            .env_remove("EFFIGY_DISABLE_HOST_CONTAINER_LEASE")
+            .env_remove("EFFIGY_DISABLE_HOST_CONTAINER_LEASE_REAPER")
+            .output_owned()
+            .expect("capture one-shot task output")
+    };
+    let reapers = || -> Vec<u32> {
+        let output = Command::new("ps")
+            .args(["-axww", "-o", "pid=,args="])
+            .output()
+            .expect("list fixture reapers");
+        assert!(output.status.success(), "ps failed: {output:?}");
+        let fixture_arg = format!(
+            "__container-lease-reaper --repo-root {} --container web --token ",
+            root.display()
+        );
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|line| line.contains(&fixture_arg))
+            .filter_map(|line| line.split_whitespace().next()?.parse().ok())
+            .collect()
+    };
+    // Always wait for this fixture's short-lived reapers before removing its
+    // checkout, including when an assertion fails.
+    struct DrainReapers<F: Fn() -> Vec<u32>>(F);
+    impl<F: Fn() -> Vec<u32>> Drop for DrainReapers<F> {
+        fn drop(&mut self) {
+            let until = Instant::now() + Duration::from_secs(10);
+            while !(self.0)().is_empty() && Instant::now() < until {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+    }
+    let _drain = DrainReapers(&reapers);
+    let first = run_task();
+    assert!(first.status.success(), "cold task failed: {first:?}");
+    assert!(
+        service_state.exists(),
+        "captured task output must return while the stack is warm: {first:?}"
+    );
+    assert!(
+        String::from_utf8_lossy(&first.stderr).contains("stays warm for 2s"),
+        "{first:?}"
+    );
+    let first_reapers = reapers();
+    assert_eq!(
+        first_reapers.len(),
+        1,
+        "the cold task launched one live reaper"
+    );
+
+    let cx = OperationContext::new(
+        Deadline::At(Instant::now() + Duration::from_secs(20)),
+        CancelToken::default(),
+        Limits {
+            capture_tail: 1024,
+            log_rotate: 4096,
+            log_keep: 2,
+            line_max: 512,
+            queue_bytes: 2048,
+            probe_concurrency: 1,
+        },
+        EffectClass::Observe,
+        Placement::Host,
+    )
+    .observe()
+    .expect("observe checkout");
+    let location = CheckoutLocation { root: root.clone() };
+    let state = StateRoot::checkout_observe_in(&cx, &home, &location);
+    let state = state.verified().expect("fixture state root");
+    let policy = effigy_containers::load_container_policy_for_inspection(&root, Some("web"))
+        .expect("idle fixture policy");
+    let env = EnvRef::for_policy(&policy).expect("fixture environment");
+    let read = || EnvRecord::read(&cx, state, &env.resource);
+    let first_record = read();
+    let first_record = first_record.verified().expect("first environment record");
+    let first_timer = first_record.engine().expect("first timer");
+
+    let second = run_task();
+    assert!(second.status.success(), "warm task failed: {second:?}");
+    let second_record = read();
+    let second_record = second_record.verified().expect("second environment record");
+    let second_timer = second_record.engine().expect("refreshed timer");
+    assert!(second_record.active(), "the second task also left a warm stack");
+    assert!(
+        !String::from_utf8_lossy(&second.stderr).contains("was started for this run"),
+        "the second task saw a running stack: {second:?}"
+    );
+    assert!(second_timer.idle_reap_token.is_some());
+    assert_ne!(first_timer.idle_reap_token, second_timer.idle_reap_token);
+    assert!(second_timer.idle_reap_after_epoch_ms > first_timer.idle_reap_after_epoch_ms);
+
+    let until = Instant::now() + Duration::from_secs(10);
+    loop {
+        let remaining = reapers();
+        if remaining.is_empty() {
+            break;
+        }
+        assert!(
+            Instant::now() < until,
+            "fixture reapers still running: {remaining:?}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(
+        read().verified().expect("final record").state,
+        EnvState::Stopped
+    );
+    assert!(
+        !service_state.exists(),
+        "the reaper stopped the fake service"
+    );
+    let log = fs::read_to_string(colima_args).expect("fake runtime calls");
+    assert_eq!(log.matches("down --remove-orphans").count(), 1, "{log}");
+    let last_exec = log.rfind(" exec ").expect("the tasks ran in the fake container");
+    let down = log.find("down --remove-orphans").expect("the reaper ran down");
+    assert!(last_exec < down, "the stack stayed up across both tasks: {log}");
 }
 
 #[test]

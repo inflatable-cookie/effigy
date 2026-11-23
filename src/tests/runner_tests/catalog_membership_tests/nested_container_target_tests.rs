@@ -315,6 +315,7 @@ fn nested_container_fixture(name: &str) -> NestedContainerFixture {
             Some(format!("{}:{old_path}", root.join("bin").display())),
         ),
         ("EFFIGY_COMPOSE_BACKEND", Some("docker".to_owned())),
+        ("EFFIGY_CONTAINER_IDLE_TIMEOUT_SECS", Some("0".to_owned())),
         (
             "EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF",
             Some("1".to_owned()),

@@ -969,74 +969,17 @@ impl<'r> EnvRun<'r> {
         let Observed::Verified(holders, _) = self.holders() else {
             return Ok(());
         };
-        let cx = operation(
-            EffectClass::Observe,
-            CancelToken::default(),
-            Duration::from_secs(10),
-        )
-        .observe()
-        .expect("observe context");
-        let reader = match effigy_kernel::store::Store::read(&cx, self.root) {
-            Observed::Verified(reader, _) => reader,
-            _ => return Ok(()),
+        let ctx = EnvContext {
+            root: self.root,
+            cx: self.cx.clone(),
+            cleanup_budget: self.cleanup_budget,
         };
-        let interrupted = holders
-            .into_iter()
-            .filter(|holder| {
-                matches!(
-                    holder.liveness,
-                    Observed::Verified(Liveness::Interrupted, _)
-                )
-            })
-            .collect::<Vec<_>>();
-        let total = interrupted.len();
-        for (index, holder) in interrupted.into_iter().enumerate() {
+        settle_interrupted_holders(&ctx, &self.env, holders, |run, index, total| {
             self.phase(
-                format!(
-                    "settling interrupted run {} ({} of {total})",
-                    holder.run,
-                    index + 1
-                ),
+                format!("settling interrupted run {run} ({} of {total})", index + 1),
                 Some((index as u64, total as u64)),
             );
-            let Observed::Verified(summary, _) = effigy_kernel::run::summary(&reader, holder.run)
-            else {
-                continue;
-            };
-            let Some(owner) = summary
-                .invocation
-                .map(|invocation| invocation.spec().owner.clone())
-            else {
-                continue;
-            };
-            let next = Invocation::validated(
-                vec![
-                    OsString::from("effigy"),
-                    OsString::from("tasks"),
-                    OsString::from("status"),
-                    OsString::from("--all"),
-                ],
-                |_| true,
-            )
-            .map_err(|_| EnvError::Invalid("invalid recovery command".into()))?;
-            // A holder settlement is its own bounded cleanup: it is made now,
-            // not when the environment run opened (effigy#447).
-            let cleanup = self.cleanup()?;
-            match effigy_kernel::run::settle_interrupted(
-                &self.cx,
-                self.root,
-                &owner,
-                holder.run,
-                next,
-                &cleanup,
-                &mut EnvSettlement,
-            ) {
-                // A successor holds the owner gate and settles it first (K5).
-                Ok(_) | Err(RunError::Gate(_)) => {}
-                Err(error) => return Err(EnvError::from_run(&self.env.name, error)),
-            }
-        }
-        Ok(())
+        })
     }
 
     /// Journal one ordinary Compose apply and its complete gate-scoped ID
@@ -1287,14 +1230,15 @@ impl<'r> EnvRun<'r> {
             exempt,
             effect,
         )?;
-        let result = permit(&mut self.run, exempt).and_then(|mut permit| permit.publish_stopped());
-        self.kernel(result)?;
-        self.published = true;
-        let record = self
+        let mut record = self
             .engine_record()
             .cloned()
             .unwrap_or_else(|| EngineRecord::new(super::record::Retention::Held, project));
+        record.clear_idle_reap();
         self.write_record(&record)?;
+        let result = permit(&mut self.run, exempt).and_then(|mut permit| permit.publish_stopped());
+        self.kernel(result)?;
+        self.published = true;
         Ok(())
     }
 
@@ -1422,6 +1366,12 @@ impl<'r> EnvRun<'r> {
 
     /// Read this held activation's plan from its own root and capability.
     pub fn activate(&mut self, holders: &[(RunId, AttachMode)]) -> Result<(), EnvError> {
+        if let Some(mut record) = self.engine_record().cloned() {
+            if record.idle_reap_token.is_some() || record.idle_reap_after_epoch_ms.is_some() {
+                record.clear_idle_reap();
+                self.write_record(&record)?;
+            }
+        }
         self.phase_with_count("activating the environment", (0, holders.len() as u64));
         self.progress
             .event(format!("attaching {} run(s)", holders.len()));
@@ -1572,6 +1522,67 @@ fn fault(point: &'static str) -> std::io::Result<()> {
         let _ = point;
         Ok(())
     }
+}
+
+/// The caller holds Gate(Env). Only the interrupted holder's own gate is
+/// tried, fail-fast, so a successor already settling it can proceed.
+pub(super) fn settle_interrupted_holders(
+    ctx: &EnvContext<'_>,
+    env: &EnvRef,
+    holders: Vec<Holder>,
+    mut progress: impl FnMut(RunId, usize, usize),
+) -> Result<(), EnvError> {
+    let interrupted: Vec<_> = holders
+        .into_iter()
+        .filter(|holder| {
+            matches!(
+                holder.liveness,
+                Observed::Verified(Liveness::Interrupted, _)
+            )
+        })
+        .collect();
+    if interrupted.is_empty() {
+        return Ok(());
+    }
+    let reader = match effigy_kernel::store::Store::read(&ctx.observe(), ctx.root) {
+        Observed::Verified(reader, _) => reader,
+        _ => return Ok(()),
+    };
+    let total = interrupted.len();
+    for (index, holder) in interrupted.into_iter().enumerate() {
+        progress(holder.run, index, total);
+        let Observed::Verified(summary, _) = effigy_kernel::run::summary(&reader, holder.run)
+        else {
+            continue;
+        };
+        let Some(owner) = summary
+            .invocation
+            .map(|invocation| invocation.spec().owner.clone())
+        else {
+            continue;
+        };
+        let next = Invocation::validated(
+            ["effigy", "tasks", "status", "--all"]
+                .map(OsString::from)
+                .into(),
+            |_| true,
+        )
+        .map_err(|_| EnvError::Invalid("invalid recovery command".into()))?;
+        let cleanup = ctx.cleanup()?;
+        match effigy_kernel::run::settle_interrupted(
+            &ctx.cx,
+            ctx.root,
+            &owner,
+            holder.run,
+            next,
+            &cleanup,
+            &mut EnvSettlement,
+        ) {
+            Ok(_) | Err(RunError::Gate(_)) => {}
+            Err(error) => return Err(EnvError::from_run(&env.name, error)),
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn new_run_id() -> Result<RunId, EnvError> {

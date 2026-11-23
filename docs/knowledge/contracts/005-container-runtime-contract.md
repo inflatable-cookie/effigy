@@ -2188,9 +2188,10 @@ Contract:
 - the runtime-prep phase runs before user command dispatch
 - the command holds its environment through a session run for as long as it
   uses it ([053](053-environment-reconciler-contract.md) §4)
-- a stack the activation starts is held: it stops when the last run using it
-  ends (holder-based idle stop, no timer); `EFFIGY_DISABLE_HOST_CONTAINER_LEASE=1`
-  makes task-started stacks persistent instead
+- a stack the activation starts is held and stays warm for five minutes after
+  the last run using it ends. Another run can reuse it and restart the timer.
+  [Contract 053 §5](053-environment-reconciler-contract.md#5-retention-and-idle-stop)
+  defines the timeout and the environment variables that override it.
 - a stack that an explicit `effigy container up` left running is persistent:
   task activation borrows it and never stops it, and only an explicit teardown
   ends that ownership - every `effigy container down` form that stops the stack

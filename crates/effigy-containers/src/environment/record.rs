@@ -20,7 +20,7 @@ pub const RECORD_SCHEMA: &str = "effigy.environment.v1";
 pub enum Retention {
     /// An explicit `container up` owns it until `container down`.
     Persistent,
-    /// Started for its holders; idle stop runs when the last one settles.
+    /// Started for its holders; the last one's release starts the idle timeout.
     Held,
 }
 
@@ -28,7 +28,7 @@ impl Retention {
     pub fn label(self) -> &'static str {
         match self {
             Self::Persistent => "persistent (explicit `container up`)",
-            Self::Held => "held (stops when its last holder ends)",
+            Self::Held => "held (idle timeout starts after the last run)",
         }
     }
 }
@@ -40,6 +40,12 @@ pub struct EngineRecord {
     pub retention: Retention,
     /// The Compose project the environment's workloads run under.
     pub project: String,
+    /// Wall-clock deadline for stopping an idle held environment.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idle_reap_after_epoch_ms: Option<u64>,
+    /// Identifies the release that last armed the idle timer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idle_reap_token: Option<String>,
 }
 
 impl EngineRecord {
@@ -48,7 +54,14 @@ impl EngineRecord {
             schema: RECORD_SCHEMA.to_owned(),
             retention,
             project: project.to_owned(),
+            idle_reap_after_epoch_ms: None,
+            idle_reap_token: None,
         }
+    }
+
+    pub(super) fn clear_idle_reap(&mut self) {
+        self.idle_reap_after_epoch_ms = None;
+        self.idle_reap_token = None;
     }
 }
 

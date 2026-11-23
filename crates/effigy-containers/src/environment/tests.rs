@@ -4,8 +4,7 @@
 
 use super::*;
 use effigy_kernel::ctx::{CancelToken, EffectClass, Placement};
-use effigy_kernel::gate::Wait;
-use effigy_kernel::gate::{ForegroundDiag, HolderDiag};
+use effigy_kernel::gate::{ForegroundDiag, Gate, HolderDiag, Wait};
 use effigy_kernel::id::ResourceId;
 use effigy_kernel::id::{
     CheckoutId, CheckoutKind, ExecutionTarget, InvocationSpec, ResolvedInvocation, Route, RunId,
@@ -773,6 +772,136 @@ fn idle_stop_is_holder_based() {
         Idle::Kept("persistent")
     );
     assert_eq!(fake.calls(), ["apply"]);
+    assert_store_sound(&ctx);
+}
+
+#[test]
+fn environment_v1_records_without_a_timer_still_decode() {
+    let old = serde_json::json!({"schema": RECORD_SCHEMA, "retention": "held", "project": PROJECT});
+    let record: EngineRecord = serde_json::from_value(old.clone()).unwrap();
+    assert_eq!(record, EngineRecord::new(Retention::Held, PROJECT));
+    assert_eq!(serde_json::to_value(record).unwrap(), old);
+}
+
+#[test]
+fn idle_timer_arms_without_changing_the_active_generation() {
+    let home = home();
+    let root = root(home.path());
+    let ctx = EnvContext::new(&root, CancelToken::default()).unwrap();
+    let stack = env("stack");
+    let fake = Fake::new();
+    bring_up(&ctx, &stack, &fake, &closure("one"), Retention::Held, &[]).unwrap();
+    let generation = record(&ctx, &stack).generation;
+
+    let gate = Gate::acquire(
+        &ctx.cx,
+        &root,
+        std::slice::from_ref(&stack.resource),
+        Wait::FailFast,
+    )
+    .unwrap();
+    assert_eq!(
+        arm_idle_reap(&ctx, &stack, 100, "first").unwrap(),
+        IdleArm::Skipped("another transition holds it")
+    );
+    drop(gate);
+    let mut task = holder(&ctx, "test", 1);
+    hold(&mut task, &ctx, &stack, Wait::FailFast, true).unwrap();
+    assert_eq!(
+        arm_idle_reap(&ctx, &stack, 100, "first").unwrap(),
+        IdleArm::Skipped("holders remain")
+    );
+    // Dropping without settlement leaves an interrupted holder for arming to recover.
+    drop(task);
+    assert_eq!(
+        arm_idle_reap(&ctx, &stack, 100, "first").unwrap(),
+        IdleArm::Armed
+    );
+    let armed = record(&ctx, &stack);
+    assert_eq!(armed.generation, generation);
+    assert!(armed.active());
+    assert!(!armed.protected());
+    let engine = armed.engine().unwrap();
+    assert_eq!(engine.idle_reap_after_epoch_ms, Some(100));
+    assert_eq!(engine.idle_reap_token.as_deref(), Some("first"));
+
+    down(
+        &ctx,
+        &stack,
+        Operation::Down,
+        &selection(),
+        PROJECT,
+        None,
+        |_| fake.stop(),
+    )
+    .unwrap();
+    assert_eq!(
+        arm_idle_reap(&ctx, &stack, 100, "first").unwrap(),
+        IdleArm::Skipped("not active")
+    );
+    assert_eq!(record(&ctx, &stack).engine().unwrap().idle_reap_token, None);
+}
+
+#[test]
+fn idle_reap_requires_the_current_due_timer_and_no_holders() {
+    let home = home();
+    let root = root(home.path());
+    let ctx = EnvContext::new(&root, CancelToken::default()).unwrap();
+    let stack = env("stack");
+    let fake = Fake::new();
+    let up = |retention| bring_up(&ctx, &stack, &fake, &closure("one"), retention, &[]).unwrap();
+    let arm = |deadline, token| {
+        assert_eq!(
+            arm_idle_reap(&ctx, &stack, deadline, token).unwrap(),
+            IdleArm::Armed
+        );
+    };
+    let reap = |token, now| {
+        reap_if_idle_due(&ctx, &stack, token, now, |run| {
+            run.stop_with(&selection(), PROJECT, None, |_| fake.stop())
+        })
+        .unwrap()
+    };
+
+    up(Retention::Held);
+    arm(100, "first");
+    assert_eq!(
+        reap("first", 99),
+        Idle::Kept("idle deadline has not passed")
+    );
+
+    let mut task = holder(&ctx, "test", 1);
+    hold(&mut task, &ctx, &stack, Wait::FailFast, true).unwrap();
+    assert_eq!(reap("first", 100), Idle::Kept("holders remain"));
+    task.finish(WorkloadOutcome::Succeeded).unwrap();
+    task.settle(&settlement(&ctx), &mut EnvSettlement).unwrap();
+    assert_eq!(reap("first", 101), Idle::Kept("idle timer changed"));
+
+    arm(200, "second");
+    assert_eq!(reap("first", 200), Idle::Kept("idle timer changed"));
+    assert_eq!(
+        reap("second", 199),
+        Idle::Kept("idle deadline has not passed")
+    );
+    assert_eq!(fake.calls(), ["apply"]);
+    assert_eq!(reap("second", 200), Idle::Stopped);
+    let stopped = record(&ctx, &stack);
+    assert_eq!(stopped.state, EnvState::Stopped);
+    assert_eq!(stopped.engine().unwrap().idle_reap_after_epoch_ms, None);
+    assert_eq!(stopped.engine().unwrap().idle_reap_token, None);
+
+    up(Retention::Held);
+    arm(300, "third");
+    up(Retention::Persistent);
+    assert_eq!(reap("third", 300), Idle::Kept("persistent"));
+    assert_eq!(
+        arm_idle_reap(&ctx, &stack, 300, "third").unwrap(),
+        IdleArm::Skipped("persistent")
+    );
+    let persistent = record(&ctx, &stack);
+    assert_eq!(persistent.engine().unwrap().idle_reap_after_epoch_ms, None);
+    assert_eq!(persistent.engine().unwrap().idle_reap_token, None);
+    assert_eq!(fake.calls(), ["apply", "stop", "apply", "apply"]);
     assert_store_sound(&ctx);
 }
 

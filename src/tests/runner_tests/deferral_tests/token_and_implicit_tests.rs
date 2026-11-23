@@ -305,6 +305,7 @@ exit 0
         ("HOME", Some(temp_home.display().to_string())),
         ("EFFIGY_EXECUTABLE", Some(fake_effigy.display().to_string())),
         ("EFFIGY_COMPOSE_BACKEND", Some("docker".to_owned())),
+        ("EFFIGY_CONTAINER_IDLE_TIMEOUT_SECS", Some("0".to_owned())),
         (
             "EFFIGY_GATEWAY_MKCERT_BIN",
             Some(bin_dir.join("mkcert").display().to_string()),
@@ -817,7 +818,7 @@ project_name = "legacy-dev"
         "php_app bundle container deferral should succeed",
     );
 
-    // No timer: the stack the run started stopped as its hold was released.
+    // The zero timeout stops the stack as its hold is released.
     let log = fs::read_to_string(&docker_log).expect("read fake docker log");
     let exec = log.find(" exec ").expect("workspace exec");
     assert!(

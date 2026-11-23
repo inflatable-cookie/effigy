@@ -318,6 +318,18 @@ impl Attachments {
         mode: AttachMode,
         wait: Wait,
     ) -> Result<AttachmentTicket, RunError> {
+        Self::attach_updating_engine(run, env, mode, wait, |_| false)
+    }
+
+    /// Attach and optionally update the current engine record in the same
+    /// transaction. The callback edits the opaque JSON and reports if it changed.
+    pub fn attach_updating_engine(
+        run: &mut Run<'_>,
+        env: &Fence,
+        mode: AttachMode,
+        wait: Wait,
+        update: impl FnOnce(&mut Value) -> bool,
+    ) -> Result<AttachmentTicket, RunError> {
         run.can_effect()?;
         if env.resource.kind() != ResourceKind::Env || env.resource == run.owner.resource {
             return Err(RunError::refused("attachment needs a distinct environment"));
@@ -336,9 +348,18 @@ impl Attachments {
             let sequence = run.store.transaction(&run.cx.child(std::time::Duration::from_secs(30)), |txn| {
                 journal::check_fence(txn.conn(), &run.owner)?;
                 journal::check_fence(txn.conn(), env)?;
-                let active: bool = txn.conn().query_row("SELECT state='active' AND last_applied=cast(generation AS TEXT) FROM resources WHERE name=?1",
-                    [env.resource.name().to_string()],|r| r.get::<_,Option<bool>>(0))?.unwrap_or(false);
-                if !active { return Err(RunError::EnvNotActive); }
+                let (active, engine): (Option<bool>, Option<String>) = txn.conn().query_row(
+                    "SELECT state='active' AND last_applied=cast(generation AS TEXT),engine FROM resources WHERE name=?1",
+                    [env.resource.name().to_string()],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )?;
+                if active != Some(true) { return Err(RunError::EnvNotActive); }
+                if let Some(engine) = engine {
+                    let mut record = serde_json::from_str(&engine)?;
+                    if update(&mut record) {
+                        objects::write_engine_record(txn, env, &objects::encode_engine_record(&record)?)?;
+                    }
+                }
                 let spec = EffectSpec { target:env.clone(),kind:KIND.into(),payload:serde_json::to_value(mode)?,settlement:Settlement::Reconcile(Value::Null),required:true };
                 let sequence=journal::insert_effect(txn,run.id,&spec)?;
                 txn.conn().execute("INSERT INTO attachments(environment,run_id,env_generation,mode,state) VALUES (?1,?2,?3,?4,'attached')",
@@ -360,6 +381,31 @@ impl Attachments {
             run.poisoned = true;
         }
         result
+    }
+
+    /// Update only engine metadata under an already-held checkout environment
+    /// gate. No run is admitted and neither the generation nor state changes.
+    pub fn set_engine_record_under_gate(
+        cx: &EffectContext,
+        root: &StateRoot,
+        gate: &GateGuard,
+        env: &Fence,
+        record: &Value,
+    ) -> Result<(), RunError> {
+        if env.resource.kind() != ResourceKind::Env
+            || !gate
+                .covers_checkout(root, &env.resource)
+                .map_err(StoreError::from)?
+        {
+            return Err(RunError::refused(
+                "updating environment metadata needs its gate",
+            ));
+        }
+        cx.require(crate::ctx::Capability::AdapterEffect)
+            .map_err(|_| RunError::refused("updating environment metadata needs Mutate"))?;
+        let encoded = objects::encode_engine_record(record)?;
+        let mut store = Store::open(cx, root)?;
+        store.transaction(cx, |txn| objects::write_engine_record(txn, env, &encoded))
     }
     /// Only the holder's settle releases protection. No environment gate is
     /// acquired, so a waiting transition and its holder cannot deadlock.

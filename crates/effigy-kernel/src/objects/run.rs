@@ -9,6 +9,30 @@ use rusqlite::OptionalExtension;
 /// Bound for one engine record: a small policy document, never a payload.
 const ENGINE_RECORD_MAX: usize = 16 << 10;
 
+pub(super) fn encode_engine_record(record: &Value) -> Result<String, RunError> {
+    let encoded = serde_json::to_string(record)?;
+    if encoded.len() > ENGINE_RECORD_MAX {
+        return Err(StoreError::TooLarge {
+            limit: ENGINE_RECORD_MAX as u64,
+        }
+        .into());
+    }
+    Ok(encoded)
+}
+
+pub(super) fn write_engine_record(
+    txn: &mut crate::store::Txn<'_>,
+    owner: &Fence,
+    encoded: &str,
+) -> Result<(), RunError> {
+    journal::check_fence(txn.conn(), owner)?;
+    txn.conn().execute(
+        "UPDATE resources SET engine=?2,updated_at=?3 WHERE name=?1",
+        params![owner.resource.name().to_string(), encoded, txn.now()],
+    )?;
+    Ok(())
+}
+
 impl Objects {
     /// Journal, stage and publish a closure, then atomically publish its row and
     /// desired reference. A crash selects the previous or the complete new
@@ -344,22 +368,11 @@ impl Run<'_> {
         self.cx
             .require(Capability::SourceStore)
             .map_err(|_| RunError::refused("engine record needs Prepare or Mutate"))?;
-        let encoded = serde_json::to_string(record)?;
-        if encoded.len() > ENGINE_RECORD_MAX {
-            return Err(StoreError::TooLarge {
-                limit: ENGINE_RECORD_MAX as u64,
-            }
-            .into());
-        }
+        let encoded = encode_engine_record(record)?;
         let result = (|| {
             crate::fault_point!(EngineRecordBefore)?;
             self.store.transaction(&self.cx, |txn| {
-                journal::check_fence(txn.conn(), &self.owner)?;
-                txn.conn().execute(
-                    "UPDATE resources SET engine=?2,updated_at=?3 WHERE name=?1",
-                    params![self.owner.resource.name().to_string(), encoded, txn.now()],
-                )?;
-                Ok::<_, RunError>(())
+                write_engine_record(txn, &self.owner, &encoded)
             })?;
             crate::fault_point!(EngineRecordAfter)?;
             Ok(())
