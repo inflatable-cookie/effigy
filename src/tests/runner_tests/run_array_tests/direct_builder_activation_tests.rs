@@ -403,10 +403,7 @@ esac
             Some(state_dir.display().to_string()),
         ),
         ("EFFIGY_TEST_BUILDER_MODE", Some(mode.to_owned())),
-        (
-            "EFFIGY_TEST_HOST_CONTAINER_LEASE_HOME",
-            Some(root.join("lease-home").display().to_string()),
-        ),
+        ("EFFIGY_CONTAINER_IDLE_TIMEOUT_SECS", Some("0".to_owned())),
     ]);
 
     let result = if mode == "expired_binding" {

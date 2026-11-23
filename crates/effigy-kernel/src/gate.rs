@@ -196,6 +196,7 @@ impl std::error::Error for GateError {}
 /// Held gates. Dropping releases resource gates before their scope gates, so
 /// a scope removal never runs while a resource gate is still held.
 pub struct GateGuard {
+    root: crate::fs::DirectoryIdentity,
     gates: Vec<(ResourceId, GateFile)>,
     scopes: Vec<(String, GateFile)>,
     /// Actions released with this guard: session listener/key custody is freed
@@ -294,6 +295,15 @@ impl GateGuard {
     }
     pub fn covers(&self, id: &ResourceId) -> bool {
         self.gates.iter().any(|(held, _)| held == id)
+    }
+    pub(crate) fn covers_checkout(
+        &self,
+        root: &StateRoot,
+        id: &ResourceId,
+    ) -> Result<bool, FsError> {
+        Ok(matches!(id.scope(), Scope::Checkout(_))
+            && self.root == root.state_directory().identity()?
+            && self.covers(id))
     }
     /// Records the owning run in every diagnostic body. Failure loses only
     /// diagnostics.
@@ -418,6 +428,7 @@ impl Gate {
         scope_names.dedup();
 
         let mut guard = GateGuard {
+            root: root.state_directory().identity()?,
             gates: Vec::new(),
             scopes: Vec::new(),
             release_actions: Default::default(),

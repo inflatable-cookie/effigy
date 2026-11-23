@@ -201,9 +201,10 @@ pub(super) fn reconcile_in_owned(
         (Some(Retention::Persistent), _) | (_, Retention::Persistent) => Retention::Persistent,
         _ => Retention::Held,
     };
-    let mut record = previous.unwrap_or_else(|| EngineRecord::new(retention, request.project));
-    record.retention = retention;
-    record.project = request.project.to_owned();
+    let mut record = EngineRecord::new(retention, request.project);
+    if retention == Retention::Held {
+        record.idle_reap_activity = Some(run.id());
+    }
     run.write_record(&record)?;
     let observed = observe_holders(run);
     let unreadable = match &observed {

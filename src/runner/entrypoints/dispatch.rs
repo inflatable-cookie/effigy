@@ -130,13 +130,13 @@ pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, R
         Command::Runs(args) => crate::runner::run_control::run_runs(args),
         Command::InternalGateway(args) => run_internal_gateway(args),
         Command::InternalGatewayIdentity(args) => run_internal_gateway_identity(args),
-        Command::InternalGuestProbe(args) => crate::runner::workspace_client::guest_probe::run(args),
+        Command::InternalGuestProbe(args) => {
+            crate::runner::workspace_client::guest_probe::run(args)
+        }
         Command::InternalScriptRun(args) => run_internal_script_run(args),
-        // Retired with the lease: environments stop when their last holder
-        // ends (contract 053). A v0.14.1 reaper never reaches this binary.
-        Command::InternalContainerLeaseReaper(_) => Err(RunnerError::task_invocation(
-            "`__container-lease-reaper` is retired: held environments stop when the last run using them ends",
-        )),
+        Command::InternalContainerLeaseReaper(args) => {
+            crate::runner::environment::run_idle_reaper(args)
+        }
         Command::Task(task) => {
             let runtime_context = crate::runner::command_context::active_runtime_context()
                 .unwrap_or_else(|| {

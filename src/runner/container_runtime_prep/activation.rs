@@ -28,8 +28,8 @@ pub(in crate::runner) struct ContainerTaskActivation {
     /// The immutable snapshot used by every activation stage and its exec caller.
     pub(in crate::runner) policy: EffectiveContainerPolicy,
     pub(in crate::runner) system_was_running: bool,
-    /// This activation started a held environment: it stops when the last
-    /// run using it ends.
+    /// This activation started a held environment with idle cleanup after
+    /// the last run using it ends.
     pub(in crate::runner) started_held: bool,
     /// The command's hold on its environment, released when the activation
     /// drops at the end of the command, or earlier by a command whose own

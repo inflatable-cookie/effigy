@@ -6,11 +6,12 @@
 //! (or, for a managed run, through its own task run).
 
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use effigy_containers::environment::{
     self as engine, Applied, BackendError, BackendSelection, CreationOutcome, EnvContext, EnvError,
-    EnvRecord, EnvRef, HoldError, Idle, Operation, Retention, Session, Up,
+    EnvRecord, EnvRef, HoldError, Idle, IdleArm, IdleArmFence, Operation, Retention, Session, Up,
 };
 use effigy_containers::exec::ContainerExecError;
 use effigy_containers::EffectiveContainerPolicy;
@@ -24,8 +25,14 @@ use crate::runner::error::RunnerError;
 
 /// A managed run's task-run id: the bring-up it started attaches it.
 pub(in crate::runner) const HOLDER_ENV: &str = "EFFIGY_INTERNAL_ENVIRONMENT_HOLDER";
-/// Opts task-started environments out of holder-based idle stop.
+/// Opts task-started environments out of idle stop.
 const KEEP_RUNNING_ENV: &str = "EFFIGY_DISABLE_HOST_CONTAINER_LEASE";
+const IDLE_TIMEOUT_ENV: &str = "EFFIGY_CONTAINER_IDLE_TIMEOUT_SECS";
+const LEGACY_IDLE_TIMEOUT_ENV: &str = "EFFIGY_HOST_CONTAINER_LEASE_TIMEOUT_SECS";
+const DISABLE_REAPER_ENV: &str = "EFFIGY_DISABLE_HOST_CONTAINER_LEASE_REAPER";
+const DEFERRED_IDLE_ARM_ENV: &str = "EFFIGY_INTERNAL_CONTAINER_IDLE_ARM";
+const DEFAULT_IDLE_TIMEOUT_SECS: u64 = 300;
+const IDLE_REAPER_POLL: Duration = Duration::from_secs(1);
 const INVENTORY_BUDGET: Duration = Duration::from_secs(15);
 
 pub(in crate::runner) fn context(repo_root: &Path) -> Result<EnvContext<'static>, RunnerError> {
@@ -264,10 +271,7 @@ pub(in crate::runner) struct BringUp {
 
 /// The retention a task's ensure gives a stack it starts.
 pub(in crate::runner) fn task_retention() -> Retention {
-    if std::env::var(KEEP_RUNNING_ENV)
-        .ok()
-        .is_some_and(|value| matches!(value.trim(), "1" | "true" | "yes"))
-    {
+    if env_enabled(KEEP_RUNNING_ENV) {
         Retention::Persistent
     } else {
         Retention::Held
@@ -710,25 +714,58 @@ impl Drop for Held {
     }
 }
 
-/// Holder-based idle stop after a run released its hold. Never fails the
-/// command: an idle stop that cannot run leaves the stack running.
+fn env_enabled(name: &str) -> bool {
+    std::env::var(name)
+        .ok()
+        .is_some_and(|value| matches!(value.trim(), "1" | "true" | "yes"))
+}
+
+fn idle_timeout() -> Duration {
+    let value =
+        std::env::var_os(IDLE_TIMEOUT_ENV).or_else(|| std::env::var_os(LEGACY_IDLE_TIMEOUT_ENV));
+    Duration::from_secs(
+        value
+            .as_deref()
+            .and_then(std::ffi::OsStr::to_str)
+            .and_then(|value| value.trim().parse().ok())
+            .unwrap_or(DEFAULT_IDLE_TIMEOUT_SECS),
+    )
+}
+
+fn epoch_ms() -> u64 {
+    milliseconds(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default(),
+    )
+}
+
+fn milliseconds(duration: Duration) -> u64 {
+    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+}
+
+/// After a session settles, stop immediately or schedule its idle reap.
 pub(in crate::runner) fn release(repo_root: &Path, policy: &EffectiveContainerPolicy) {
     let (Ok(env), Ok(ctx)) = (env_ref(policy), context(&policy.repo_root)) else {
         return;
     };
-    let backend = backend(repo_root, policy);
-    let outcome = engine::reap_if_idle(&ctx, &env, |run| {
-        run.stop_with(&backend, &policy.project_name, None, |_| {
-            effigy_containers::exec::shutdown_container(repo_root, policy)
-                .map_err(|error| BackendError::Uncertain(error.to_string()))
-        })
-    });
+    let timeout = idle_timeout();
+    if !timeout.is_zero() {
+        if let Err(error) = schedule_idle_reap(repo_root, policy, &ctx, &env, timeout) {
+            eprintln!(
+                "[warn] environment `{}` was left running: could not schedule idle stop ({error})",
+                policy.name
+            );
+        }
+        return;
+    }
+    let outcome = engine::reap_if_idle(&ctx, &env, |run| stop_idle(run, repo_root, policy));
     match outcome {
         Ok(Idle::Stopped) => eprintln!(
             "[info] stopped environment `{}`: the last run using it ended. `effigy container up --detach` keeps an environment running",
             policy.name
         ),
-        Ok(Idle::Kept(_)) => {}
+        Ok(Idle::Busy | Idle::Kept(_)) => {}
         Err(error) => eprintln!(
             "[warn] environment `{}` was left running: idle stop failed ({error})",
             policy.name
@@ -736,10 +773,178 @@ pub(in crate::runner) fn release(repo_root: &Path, policy: &EffectiveContainerPo
     }
 }
 
+fn schedule_idle_reap(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    ctx: &EnvContext<'_>,
+    env: &EnvRef,
+    timeout: Duration,
+) -> Result<(), RunnerError> {
+    let token = super::task_engine::fresh_run_id()?.to_string();
+    let deadline = epoch_ms().saturating_add(milliseconds(timeout));
+    let deferred = match engine::arm_idle_reap(ctx, env, deadline, &token).map_err(error)? {
+        IdleArm::Armed => None,
+        IdleArm::Busy(fence) => Some(DeferredIdleArm { deadline, fence }),
+        IdleArm::Skipped(_) => return Ok(()),
+    };
+    if env_enabled(DISABLE_REAPER_ENV) {
+        return Ok(());
+    }
+    let mut command = Command::new(std::env::current_exe().map_err(RunnerError::Cwd)?);
+    command
+        .arg("__container-lease-reaper")
+        .arg("--repo-root")
+        .arg(repo_root)
+        .arg("--container")
+        .arg(&policy.name)
+        .arg("--token")
+        .arg(&token)
+        .env_remove(effigy_core::run_deadline::RUN_DEADLINE_ENV)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    if let Some(deferred) = deferred {
+        let pending = serde_json::to_string(&deferred)
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+        command.env(DEFERRED_IDLE_ARM_ENV, pending);
+    } else {
+        command.env_remove(DEFERRED_IDLE_ARM_ENV);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+
+        // SAFETY: setsid is async-signal-safe. last_os_error captures errno
+        // without allocating in the forked child before exec.
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setsid() == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+    }
+    let mut child = command
+        .spawn()
+        .map_err(|error| RunnerError::TaskCommandLaunch {
+            command: "__container-lease-reaper".to_owned(),
+            error,
+        })?;
+    // A command can hold more than one session before exiting. Collect each
+    // reaper that finishes while its original parent is still alive.
+    let _ = std::thread::Builder::new().spawn(move || child.wait());
+    Ok(())
+}
+
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+struct DeferredIdleArm {
+    deadline: u64,
+    fence: IdleArmFence,
+}
+
+pub(in crate::runner) fn run_idle_reaper(
+    args: effigy_cli::InternalContainerLeaseReaperArgs,
+) -> Result<String, RunnerError> {
+    let policy =
+        effigy_containers::load_container_policy(&args.repo_root, Some(&args.container_name))
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let deferred = match std::env::var(DEFERRED_IDLE_ARM_ENV) {
+        Ok(value) => Some(
+            serde_json::from_str(&value)
+                .map_err(|error| RunnerError::task_invocation(error.to_string()))?,
+        ),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(error) => return Err(RunnerError::task_invocation(error.to_string())),
+    };
+    drive_idle_reaper(
+        &args.repo_root,
+        &policy,
+        &args.token,
+        deferred,
+        std::thread::sleep,
+    )?;
+    Ok(String::new())
+}
+
+fn drive_idle_reaper(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    token: &str,
+    deferred: Option<DeferredIdleArm>,
+    mut pause: impl FnMut(Duration),
+) -> Result<(), RunnerError> {
+    if let Some(DeferredIdleArm { deadline, fence }) = deferred {
+        let env = env_ref(policy)?;
+        loop {
+            let ctx = context(&policy.repo_root)?;
+            match fence.retry(&ctx, &env, deadline, token).map_err(error)? {
+                IdleArm::Armed => break,
+                IdleArm::Busy(_) => pause(IDLE_REAPER_POLL),
+                IdleArm::Skipped(_) => return Ok(()),
+            }
+        }
+    }
+    while let Some(deadline) = idle_deadline(policy, token) {
+        let now = epoch_ms();
+        if now >= deadline {
+            let env = env_ref(policy)?;
+            let ctx = context(&policy.repo_root)?;
+            match engine::reap_if_idle_due(&ctx, &env, token, now, |run| {
+                stop_idle(run, repo_root, policy)
+            })
+            .map_err(error)?
+            {
+                Idle::Busy => pause(IDLE_REAPER_POLL),
+                _ => break,
+            }
+        } else {
+            pause(Duration::from_millis(deadline - now).min(IDLE_REAPER_POLL));
+        }
+    }
+    Ok(())
+}
+
+fn idle_deadline(policy: &EffectiveContainerPolicy, token: &str) -> Option<u64> {
+    let current = record(policy)?;
+    let engine = current.engine()?;
+    if current.active()
+        && engine.retention == Retention::Held
+        && engine.idle_reap_token.as_deref() == Some(token)
+    {
+        engine.idle_reap_after_epoch_ms
+    } else {
+        None
+    }
+}
+
+fn stop_idle(
+    run: &mut engine::EnvRun<'_>,
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<(), EnvError> {
+    let backend = engine::effective_backend(repo_root, policy, run.record().recorded_backend());
+    run.stop_with(&backend, &policy.project_name, None, |_| {
+        effigy_containers::exec::shutdown_container(repo_root, policy)
+            .map_err(|error| BackendError::Uncertain(error.to_string()))
+    })
+}
+
 /// The notice for a stack a command started and holds.
 pub(in crate::runner) fn emit_held_notice(container_name: &str) {
+    let seconds = idle_timeout().as_secs();
+    let linger = match seconds {
+        0 => "it stops when the last run using it ends".to_owned(),
+        seconds if seconds.is_multiple_of(60) => {
+            format!(
+                "it stays warm for {}m after the last run using it ends",
+                seconds / 60
+            )
+        }
+        seconds => format!("it stays warm for {seconds}s after the last run using it ends"),
+    };
     eprintln!(
-        "[info] environment `{container_name}` was started for this run; it stops when the last run using it ends. Run `effigy container up --detach` to keep it running, or set {KEEP_RUNNING_ENV}=1"
+        "[info] environment `{container_name}` was started for this run and {linger}. Run `effigy container up --detach` to keep it running indefinitely, or `effigy container down` to stop it now"
     );
 }
 
@@ -990,6 +1195,110 @@ mod tests {
         ] {
             let _env = EnvGuard::set_many(&[(KEEP_RUNNING_ENV, value.map(str::to_owned))]);
             assert_eq!(task_retention(), expected, "value: {value:?}");
+        }
+    }
+
+    #[test]
+    fn idle_timeout_defaults_and_uses_the_legacy_value_only_when_unset() {
+        let _lock = lock_test();
+        for (current, legacy, seconds) in [
+            (None, None, 300),
+            (None, Some("2"), 2),
+            (Some("0"), Some("2"), 0),
+            (Some(" 60 "), Some("2"), 60),
+            (Some("invalid"), Some("2"), 300),
+        ] {
+            let _env = EnvGuard::set_many(&[
+                (IDLE_TIMEOUT_ENV, current.map(str::to_owned)),
+                (LEGACY_IDLE_TIMEOUT_ENV, legacy.map(str::to_owned)),
+            ]);
+            assert_eq!(
+                idle_timeout(),
+                Duration::from_secs(seconds),
+                "{current:?}, {legacy:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_idle_reaper_retries_a_busy_gate_when_arming_or_stopping() {
+        use effigy_containers::environment::{EngineRecord, EnvRun, EnvState};
+        use effigy_kernel::gate::Gate;
+
+        let _lock = lock_test();
+        for phase in ["arming", "stopping"] {
+            let fixture = EnvironmentFixture::new(
+                phase,
+                "#!/bin/sh\ncase \"$*\" in *'down --remove-orphans'*) echo stop >> idle-reap.log;; esac\n",
+            );
+            let _env = fixture.env();
+            let policy = fixture.policy();
+            let env = env_ref(&policy).unwrap();
+            let ctx = context(&policy.repo_root).unwrap();
+            let mut up = EnvRun::begin(&ctx, &env, Operation::Up, Wait::FailFast).unwrap();
+            up.write_record(&EngineRecord::new(Retention::Held, &policy.project_name))
+                .unwrap();
+            up.activate(&[]).unwrap();
+            up.finish(true).unwrap();
+
+            let token = "idle-reap-test";
+            let deadline = 0;
+            if phase == "stopping" {
+                assert_eq!(
+                    engine::arm_idle_reap(&ctx, &env, deadline, token).unwrap(),
+                    IdleArm::Armed
+                );
+            }
+            let mut gate = Some(
+                Gate::acquire(
+                    &ctx.cx,
+                    ctx.root,
+                    std::slice::from_ref(&env.resource),
+                    Wait::FailFast,
+                )
+                .unwrap(),
+            );
+            let deferred = if phase == "arming" {
+                let IdleArm::Busy(fence) =
+                    engine::arm_idle_reap(&ctx, &env, deadline, token).unwrap()
+                else {
+                    panic!("the release needs to hand the arm to the detached reaper");
+                };
+                let pending = serde_json::to_string(&DeferredIdleArm { deadline, fence }).unwrap();
+                Some(serde_json::from_str(&pending).unwrap())
+            } else {
+                None
+            };
+
+            drive_idle_reaper(&fixture.repo_root, &policy, token, deferred, |delay| {
+                assert_eq!(delay, IDLE_REAPER_POLL);
+                let current = record(&policy).expect("environment still has its record");
+                assert!(
+                    current.active(),
+                    "the gate still protects the stack while {phase}"
+                );
+                let current = current.engine().unwrap();
+                if phase == "stopping" {
+                    assert_eq!(current.idle_reap_after_epoch_ms, Some(deadline));
+                    assert_eq!(current.idle_reap_token.as_deref(), Some(token));
+                } else {
+                    assert_eq!(current.idle_reap_token, None);
+                }
+                drop(
+                    gate.take()
+                        .expect("one busy attempt before the gate is released"),
+                );
+            })
+            .unwrap();
+            assert!(
+                gate.is_none(),
+                "the reaper retried after contention while {phase}"
+            );
+            assert_eq!(record(&policy).unwrap().state, EnvState::Stopped);
+            assert_eq!(
+                fs::read_to_string(fixture.repo_root.join("idle-reap.log")).unwrap(),
+                "stop\n"
+            );
         }
     }
 }

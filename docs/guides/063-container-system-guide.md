@@ -1297,18 +1297,24 @@ These use shared task activation instead of session ownership:
 - the task holds its environment while it runs: `container down`, a handover,
   a reset or an idle stop refuses until the task ends
 
-Holder-based idle stop:
+#### Idle stop
 
-- a stack a task had to start is held: it stops when the last run using it
-  ends. There is no timer.
-- an explicit `effigy container up` that leaves the stack running makes it
-  persistent: tasks borrow it and never stop it. Every `effigy container down`
-  that stops the stack ends that ownership - the checkout form, `--global`,
-  and the cwd-scoped form.
-- the notice that announces a held stack names `effigy container up --detach`
-  and `EFFIGY_DISABLE_HOST_CONTAINER_LEASE=1` as the ways to keep it running
+- A stack a task starts stays warm for five minutes after the last run using
+  it ends. If another task reuses it, the countdown starts again after that
+  task finishes.
+- Set `EFFIGY_CONTAINER_IDLE_TIMEOUT_SECS` to change the wait, or use `0` to
+  stop as soon as the last run ends. Effigy reads the legacy
+  `EFFIGY_HOST_CONTAINER_LEASE_TIMEOUT_SECS` only when the new variable is
+  unset. `EFFIGY_DISABLE_HOST_CONTAINER_LEASE_REAPER=1` skips launching the
+  detached reaper for a positive timeout.
+- An explicit `effigy container up` that leaves the stack running makes it
+  persistent. Tasks borrow it and every form of `effigy container down` ends
+  that ownership, including `--global` and the cwd-scoped form.
+- Run `effigy container up --detach` to keep the stack running indefinitely
+  or `effigy container down` to stop it now. Set
+  `EFFIGY_DISABLE_HOST_CONTAINER_LEASE=1` to make task-started stacks persistent.
 - `effigy container status` and `effigy doctor` show each environment's
-  backend, why that backend was chosen, and its record
+  backend, why that backend was chosen, and its record.
 
 The goal is one warm-runtime contract for non-shell tasks instead of separate
 behavior for deferred versus explicit container routing.

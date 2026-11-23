@@ -27,7 +27,10 @@ pub use creation::{
     CreationPreflight, CreationReceipt, CreationRefusal, CreationRequest, ImageCapability,
     ImageIdentity, RecordedCreation, StoredCreation, CREATE_EFFECT, CREATION_SCHEMA,
 };
-pub use hold::{hold, mode_for, reap_if_idle, Hold, HoldError, Idle, Session};
+pub use hold::{
+    arm_idle_reap, hold, mode_for, reap_if_idle, reap_if_idle_due, Hold, HoldError, Idle, IdleArm,
+    IdleArmFence, Session,
+};
 pub use ops::{
     activate, activate_with, down, reconcile, reconcile_observing, reconcile_observing_owned,
     reconcile_owned, reset, Applied, BringUp, Up,
