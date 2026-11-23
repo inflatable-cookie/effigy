@@ -241,5 +241,6 @@ fn shutdown_container_with_manager_plan(
         )?;
         crate::signals::run_compose_plan_capture(&plan)?;
     }
+    effigy_containers::exec::release_colima_virtiofs_dentry_caches_best_effort(repo_root, policy);
     Ok(())
 }

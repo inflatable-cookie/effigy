@@ -1,3 +1,4 @@
+mod colima_cache_drop;
 mod colima_cleanup;
 mod colima_runtime;
 mod compose_progress;
@@ -30,6 +31,9 @@ pub(crate) use process::error_is_timeout;
 pub use retained::RetainedComposeOwner;
 mod ssh_agent_preflight;
 
+pub use colima_cache_drop::{
+    drop_colima_virtiofs_dentry_caches, release_colima_virtiofs_dentry_caches_best_effort,
+};
 pub use colima_runtime::{
     colima_is_running, colima_is_running_with_deadline, colima_profile_warnings,
     ensure_colima_running, ensure_colima_running_report, ensure_runtime_backend_running,
