@@ -779,6 +779,27 @@ fn source_dir(
         .prepare_child(cx, &name)
         .map_err(|err| error(manifest, err.to_string()))
 }
+fn ensure_generation<'a>(
+    manifest: &Path,
+    objects: &DirFd,
+    generation_id: &str,
+    generation: &'a mut Option<DirFd>,
+    cx: &EffectContext,
+    run: &mut Run<'_>,
+) -> Result<&'a DirFd, ManifestError> {
+    if generation.is_none() {
+        let path = objects.path().join(generation_id);
+        let ticket = retained_intent(run, "sources:generation", &path, manifest)?;
+        let created = source_dir(objects, generation_id, cx, manifest)?;
+        run.applied(
+            &ticket,
+            serde_json::json!({"path":created.path().to_string_lossy()}),
+        )
+        .map_err(|err| error(manifest, err.to_string()))?;
+        *generation = Some(created);
+    }
+    Ok(generation.as_ref().expect("generation was initialized"))
+}
 fn retained_intent(
     run: &mut Run<'_>,
     kind: &str,
@@ -838,17 +859,12 @@ fn acquire_and_publish(
     home: &Path,
     progress: &SourceProgress,
 ) -> Result<BundleSyncReport, ManifestError> {
-    let ticket = retained_intent(run, "sources:generation", parent(manifest), manifest)?;
     let project = DirFd::open(parent(manifest)).map_err(|err| error(manifest, err.to_string()))?;
     let directory = source_dir(&project, ".effigy", cx, manifest)?;
     let cache = source_dir(&directory, "cache", cx, manifest)?;
     let objects = source_dir(&cache, "sources", cx, manifest)?;
-    let generation = source_dir(&objects, &run.id().to_string(), cx, manifest)?;
-    run.applied(
-        &ticket,
-        serde_json::json!({"path":generation.path().to_string_lossy()}),
-    )
-    .map_err(|err| error(manifest, err.to_string()))?;
+    let generation_id = run.id().to_string();
+    let mut generation = None;
     let mut imported = old.sources.clone();
     let mut imported_now = Vec::new();
     // Preserve the exact pre-upgrade bytes even when the first explicit sync
@@ -858,8 +874,10 @@ fn acquire_and_publish(
             continue;
         }
         if let Some(legacy) = legacy_root(manifest, selection).filter(|root| root.is_dir()) {
+            let generation =
+                ensure_generation(manifest, &objects, &generation_id, &mut generation, cx, run)?;
             let object = source_dir(
-                &generation,
+                generation,
                 &format!("import-{}", sha256_hex(name.as_bytes())),
                 cx,
                 manifest,
@@ -960,7 +978,9 @@ fn acquire_and_publish(
             }
             continue;
         };
-        let object = source_dir(&generation, &sha256_hex(name.as_bytes()), cx, manifest)?;
+        let generation =
+            ensure_generation(manifest, &objects, &generation_id, &mut generation, cx, run)?;
+        let object = source_dir(generation, &sha256_hex(name.as_bytes()), cx, manifest)?;
         let step = AcquisitionStep::start(
             progress,
             name,
@@ -969,15 +989,7 @@ fn acquire_and_publish(
             matches!(selection, BundleSelection::Path { .. }),
         );
         let acquired = acquire_source(
-            manifest,
-            name,
-            selection,
-            run,
-            cx,
-            home,
-            &generation,
-            &object,
-            progress,
+            manifest, name, selection, run, cx, home, generation, &object, progress,
         )
         .and_then(|(version, revision)| {
             if name == "bundle" {
@@ -1097,7 +1109,15 @@ fn acquire_and_publish(
             run,
         )?;
     }
-    prune_unpinned_generations(manifest, &objects, &pins, cx, run, progress)?;
+    prune_unpinned_generations(
+        manifest,
+        &objects,
+        &pins,
+        generation.as_ref().map(|_| generation_id.as_str()),
+        cx,
+        run,
+        progress,
+    )?;
     for note in &notes {
         progress.emit(SourceProgressEvent::Note {
             message: note.clone(),
@@ -1132,6 +1152,7 @@ fn prune_unpinned_generations(
     manifest: &Path,
     objects: &DirFd,
     pins: &BTreeMap<String, SourcePin>,
+    current_generation: Option<&str>,
     cx: &EffectContext,
     run: &mut Run<'_>,
     progress: &SourceProgress,
@@ -1174,7 +1195,9 @@ fn prune_unpinned_generations(
             Ok(()) => {
                 run.applied(&ticket, serde_json::json!({ "pruned": name.as_str() }))
                     .map_err(|err| error(manifest, err.to_string()))?;
-                pruned += 1;
+                if Some(name.as_str()) != current_generation {
+                    pruned += 1;
+                }
             }
             Err(error) => warn(
                 progress,
@@ -1775,6 +1798,129 @@ mod tests {
         )
     }
 
+    fn git_fixture(root: &Path) -> (PathBuf, SourcePreparation, PathBuf, String) {
+        let (manifest, mut preparation) = fixture(root);
+        preparation.executable = std::env::var_os("EFFIGY_EXECUTABLE")
+            .map(PathBuf::from)
+            .expect("focused Effigy tests provide the checkout executable");
+        preparation.next = Invocation::validated(vec!["bundle".into(), "sync".into()], |args| {
+            args == ["bundle", "sync"]
+        })
+        .expect("Effigy accepts bundle sync as a recovery invocation");
+        let remote = root.join("remote");
+        std::fs::create_dir(&remote).unwrap();
+        let output = std::process::Command::new("git")
+            .args(["init", "--quiet", "--initial-branch=main"])
+            .arg(&remote)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        write_remote_bundle(&remote, "echo remote");
+        let revision = commit_remote(&remote, "initial");
+        std::fs::write(
+            &manifest,
+            format!(
+                "[bundle]\nbase = {{ type = \"git\", url = {:?} }}\n",
+                remote.to_string_lossy()
+            ),
+        )
+        .unwrap();
+
+        let object = format!("cache/sources/pinned/{}", sha256_hex(b"bundle"));
+        let object_root = root.join(".effigy").join(&object);
+        std::fs::create_dir_all(&object_root).unwrap();
+        std::fs::write(
+            object_root.join("bundle.toml"),
+            "[bundle]\nname = \"fixture\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            object_root.join("effigy.toml"),
+            "[tasks.hello]\nrun = \"echo pinned\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join(".effigy").join(LOCK_FILE),
+            serde_json::to_vec(&serde_json::json!({
+                "version": 1,
+                "sources": {
+                    "bundle": {
+                        "declaration": {"type": "git", "url": remote.to_string_lossy(), "ref": null},
+                        "object": object,
+                        "version": "pinned-version",
+                        "revision": revision,
+                    }
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        (manifest, preparation, remote, revision)
+    }
+
+    fn write_remote_bundle(remote: &Path, task: &str) {
+        std::fs::write(remote.join("bundle.toml"), "[bundle]\nname = \"fixture\"\n").unwrap();
+        std::fs::write(
+            remote.join("effigy.toml"),
+            format!("[tasks.hello]\nrun = {task:?}\n"),
+        )
+        .unwrap();
+    }
+
+    fn commit_remote(remote: &Path, message: &str) -> String {
+        for args in [
+            vec!["add", "."],
+            vec![
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.com",
+                "commit",
+                "--quiet",
+                "-m",
+                message,
+            ],
+        ] {
+            let output = std::process::Command::new("git")
+                .arg("-C")
+                .arg(remote)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(remote)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    }
+
+    fn source_generation_names(root: &Path) -> Vec<String> {
+        let path = root.join(".effigy/cache/sources");
+        let mut names = std::fs::read_dir(path)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        names.sort();
+        names
+    }
+
     fn lock_bytes(root: &Path) -> Vec<u8> {
         std::fs::read(root.join(".effigy").join(LOCK_FILE)).unwrap()
     }
@@ -2258,5 +2404,77 @@ mod tests {
         );
         assert_eq!(parse_ls_remote(b"", "main"), None);
         assert_eq!(parse_ls_remote(b"not a ref line\n", "main"), None);
+    }
+
+    #[test]
+    fn unchanged_remote_check_does_not_create_a_generation_or_prune_note() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (manifest, mut prep, _remote, _revision) = git_fixture(tmp.path());
+        let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = std::sync::Arc::clone(&events);
+        prep.progress = SourceProgress::to(move |event| sink.lock().unwrap().push(event));
+
+        let report = prepare_bundle_sources(&manifest, &prep).unwrap().unwrap();
+
+        assert!(report.notes.is_empty(), "{:?}", report.notes);
+        assert_eq!(source_generation_names(tmp.path()), ["pinned"]);
+        assert!(!events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| matches!(event, SourceProgressEvent::Note { message } if message.contains("source generation"))));
+    }
+
+    #[test]
+    fn changed_remote_prunes_and_reports_the_previous_generation() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (manifest, mut prep, remote, previous_revision) = git_fixture(tmp.path());
+        write_remote_bundle(&remote, "echo advanced");
+        let revision = commit_remote(&remote, "advanced");
+        assert_ne!(revision, previous_revision);
+        let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = std::sync::Arc::clone(&events);
+        prep.progress = SourceProgress::to(move |event| sink.lock().unwrap().push(event));
+
+        let report = prepare_bundle_sources(&manifest, &prep).unwrap().unwrap();
+
+        assert_eq!(
+            report.sources["bundle"].version_hint.as_deref(),
+            Some(revision.as_str())
+        );
+        assert!(source_generation_names(tmp.path())
+            .iter()
+            .all(|name| name != "pinned"));
+        assert!(events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| matches!(event, SourceProgressEvent::Note { message } if message == "pruned 1 source generation nothing pins")));
+    }
+
+    #[test]
+    fn failed_refresh_removes_its_generation_without_a_prune_note() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (manifest, mut prep, remote, previous_revision) = git_fixture(tmp.path());
+        std::fs::write(remote.join("effigy.toml"), "[tasks.hello]\nrun = 42\n").unwrap();
+        let revision = commit_remote(&remote, "invalid bundle");
+        assert_ne!(revision, previous_revision);
+        let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = std::sync::Arc::clone(&events);
+        prep.progress = SourceProgress::to(move |event| sink.lock().unwrap().push(event));
+
+        let report = prepare_bundle_sources(&manifest, &prep).unwrap().unwrap();
+
+        assert!(!report.warnings.is_empty());
+        assert_eq!(
+            report.sources["bundle"].version_hint.as_deref(),
+            Some(previous_revision.as_str())
+        );
+        assert_eq!(source_generation_names(tmp.path()), ["pinned"]);
+        assert!(!events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| matches!(event, SourceProgressEvent::Note { message } if message.contains("source generation"))));
     }
 }
