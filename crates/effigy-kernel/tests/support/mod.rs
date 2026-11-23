@@ -335,9 +335,11 @@ pub struct Helper {
     child: Child,
     stdin: Option<ChildStdin>,
     lines: Receiver<String>,
+    _terminal: effigy_ui::steps::TerminalGuard,
 }
 impl Helper {
     pub fn spawn(test: &str, envs: &[(&str, &str)]) -> Self {
+        let terminal = effigy_ui::steps::suspend_terminal();
         let mut command = Command::new(std::env::current_exe().unwrap());
         command
             .args([
@@ -350,7 +352,7 @@ impl Helper {
             .env(HELPER_ENV, test)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit());
+            .stderr(terminal.inherit_stdio());
         for (key, value) in envs {
             command.env(key, value);
         }
@@ -368,6 +370,7 @@ impl Helper {
             stdin: child.stdin.take(),
             child,
             lines,
+            _terminal: terminal,
         }
     }
     pub fn pid(&self) -> u32 {
@@ -409,7 +412,8 @@ impl Helper {
 /// Reads one stdin line in a helper; `None` at EOF.
 pub fn read_command() -> Option<String> {
     let mut line = String::new();
-    match std::io::stdin().read_line(&mut line) {
+    let read = effigy_ui::steps::prompt_terminal_stdio(|input, _| input.read_line(&mut line));
+    match read {
         Ok(0) | Err(_) => None,
         Ok(_) => Some(line.trim().to_string()),
     }

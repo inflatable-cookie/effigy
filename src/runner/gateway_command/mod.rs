@@ -509,16 +509,15 @@ fn parse_gateway_reload_answer(line: Option<&str>) -> GatewayReloadAnswer {
 /// Ask the one reload question on stderr and read one line from stdin. EOF or
 /// an unreadable line keeps the gateway, so a closed stdin never reloads it.
 fn prompt_gateway_reload(running: &str, current: &str) -> GatewayReloadAnswer {
-    use std::io::Write as _;
-    effigy_ui::steps::prompt_terminal(|| {
-        let mut stderr = std::io::stderr();
+    use std::io::{BufRead as _, Write as _};
+    effigy_ui::steps::prompt_terminal_stderr(|stdin, stderr| {
         let _ = write!(
             stderr,
             "Gateway is running build {running} (current is {current}). Reload gateway now? [Y/n]: "
         );
         let _ = stderr.flush();
         let mut answer = String::new();
-        match std::io::stdin().read_line(&mut answer) {
+        match stdin.read_line(&mut answer) {
             Ok(0) => GatewayReloadAnswer::Keep,
             Ok(_) => parse_gateway_reload_answer(Some(&answer)),
             Err(_) => GatewayReloadAnswer::Keep,
@@ -583,11 +582,12 @@ fn run_managed_gateway_start(command: &str) -> Result<(), RunnerError> {
     // Keep the operator terminal available to sudo/osascript authentication,
     // while bounding the complete managed startup handoff and retaining its
     // output for an actionable failure.
+    let _terminal = effigy_ui::steps::suspend_terminal();
     let mut start = ProcessCommand::new("sh");
     start
         .arg("-lc")
         .arg(command)
-        .stdin(Stdio::inherit())
+        .stdin(_terminal.inherit_stdio())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     #[cfg(unix)]
@@ -2773,6 +2773,35 @@ fn setup_step<T>(
     }
 }
 
+/// Run an interactive/foreground setup stage (`mkcert -install`, elevated `sudo`
+/// setup) without an animated spinner so administrator/keychain prompts on
+/// `/dev/tty` are never overwritten or left with ghost spinner lines.
+fn setup_foreground_step<T>(
+    action: &str,
+    awaiting: &str,
+    work: impl FnOnce(&ProgressSource) -> std::io::Result<T>,
+) -> std::io::Result<T> {
+    let frame = ProgressFrame::new(action).waiting_for(awaiting);
+    let progress = ProgressSource::new(if action.starts_with("applying platform setup") {
+        frame.label("Applying gateway setup (approve the administrator prompt if it appears)")
+    } else if action.starts_with("removing platform setup") {
+        frame.label("Removing gateway setup (approve the administrator prompt if it appears)")
+    } else {
+        frame
+    });
+    let step = effigy_ui::steps::streaming_step(progress.clone());
+    match work(&progress) {
+        Ok(value) => {
+            step.succeed(&progress.summary());
+            Ok(value)
+        }
+        Err(error) => {
+            step.fail(&error.to_string());
+            Err(error)
+        }
+    }
+}
+
 fn run_gateway_setup(
     extra: &[String],
     remove: bool,
@@ -2908,7 +2937,7 @@ fn run_gateway_setup(
                 ));
             }
             if !remove {
-                setup_step(
+                setup_foreground_step(
                     "trusting mkcert's local CA (approve any keychain prompt)",
                     "mkcert's local CA in this user's trust store",
                     |_| setup::command(run, cx, mkcert_install_argv()?, true),
@@ -2921,7 +2950,7 @@ fn run_gateway_setup(
                 remove,
                 &suffixes,
             );
-            setup_step(
+            setup_foreground_step(
                 if remove {
                     "removing platform setup (approve the administrator prompt if it appears)"
                 } else {

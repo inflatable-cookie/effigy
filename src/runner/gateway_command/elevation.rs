@@ -157,8 +157,9 @@ fn bounded_reader_output_with_timeout(
 
     #[cfg(not(unix))]
     {
+        let _terminal = effigy_ui::steps::suspend_terminal();
         command
-            .stdin(Stdio::inherit())
+            .stdin(_terminal.inherit_stdio())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
         let mut child = command.spawn().ok()?;
@@ -264,8 +265,9 @@ fn bounded_gateway_command_output_with_timeout(
     timeout: Duration,
     max_bytes_per_stream: usize,
 ) -> Result<Output, BoundedGatewayCommandError> {
+    let _terminal = effigy_ui::steps::suspend_terminal();
     command
-        .stdin(Stdio::inherit())
+        .stdin(_terminal.inherit_stdio())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let mut child = command

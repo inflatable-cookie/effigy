@@ -71,14 +71,17 @@ pub(in crate::runner) fn run_handoff_local_shell_command(
     for (key, value) in env {
         process.env(key, value);
     }
-    if capture {
+    let _terminal = if capture {
         process.stdin(Stdio::null());
         process.stdout(Stdio::piped()).stderr(Stdio::piped());
+        None
     } else {
-        process.stdin(Stdio::inherit());
-        process.stdout(Stdio::inherit());
-        process.stderr(Stdio::inherit());
-    }
+        let guard = effigy_ui::steps::suspend_terminal();
+        process.stdin(guard.inherit_stdio());
+        process.stdout(guard.inherit_stdio());
+        process.stderr(guard.inherit_stdio());
+        Some(guard)
+    };
     super::owned_children::configure_owned_process_group(&mut process);
     process
         .output()
@@ -103,9 +106,10 @@ pub(in crate::runner) fn run_handoff_local_interactive_shell(
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_owned());
     let mut process = Command::new(&shell);
     process.arg("-i").current_dir(&execution.working_dir);
-    process.stdin(Stdio::inherit());
-    process.stdout(Stdio::inherit());
-    process.stderr(Stdio::inherit());
+    let _terminal = effigy_ui::steps::suspend_terminal();
+    process.stdin(_terminal.inherit_stdio());
+    process.stdout(_terminal.inherit_stdio());
+    process.stderr(_terminal.inherit_stdio());
     super::owned_children::configure_owned_process_group(&mut process);
     let status = process
         .spawn()
@@ -170,6 +174,7 @@ pub(in crate::runner) fn run_handoff_local_direct_command_with_options(
     for (key, value) in env {
         process.env(key, value);
     }
+    let _terminal = (!capture).then(effigy_ui::steps::suspend_terminal);
     let stdin = match stdin_file {
         Some(path) => Stdio::from(std::fs::File::open(path).map_err(|error| {
             RunnerError::task_invocation(format!(
@@ -179,14 +184,20 @@ pub(in crate::runner) fn run_handoff_local_direct_command_with_options(
             ))
         })?),
         None if capture => Stdio::null(),
-        None => Stdio::inherit(),
+        None => _terminal
+            .as_ref()
+            .expect("terminal suspended when not capturing")
+            .inherit_stdio(),
     };
     process.stdin(stdin);
     if capture {
         process.stdout(Stdio::piped()).stderr(Stdio::piped());
     } else {
-        process.stdout(Stdio::inherit());
-        process.stderr(Stdio::inherit());
+        let guard = _terminal
+            .as_ref()
+            .expect("terminal suspended when not capturing");
+        process.stdout(guard.inherit_stdio());
+        process.stderr(guard.inherit_stdio());
     }
     super::owned_children::configure_owned_process_group(&mut process);
     if capture {

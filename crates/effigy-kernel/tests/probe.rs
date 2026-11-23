@@ -41,9 +41,11 @@ struct Observer {
     guard: ProcessIdentity,
     identity: ProcessIdentity,
     exit: Option<std::process::ExitStatus>,
+    _terminal: effigy_ui::steps::TerminalGuard,
 }
 impl Observer {
     fn start(home: &std::path::Path, mode: &str, address: std::net::SocketAddr) -> Self {
+        let terminal = effigy_ui::steps::suspend_terminal();
         let mut child = Command::new(fixture())
             .arg("probe-observer")
             .arg(home)
@@ -51,7 +53,7 @@ impl Observer {
             .arg(address.to_string())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
+            .stderr(terminal.inherit_stdio())
             .spawn()
             .unwrap();
         let input = child.stdin.take().unwrap();
@@ -66,6 +68,7 @@ impl Observer {
             output,
             guard: serde_json::from_value(value["guard"].clone()).unwrap(),
             identity: serde_json::from_value(value["observer"].clone()).unwrap(),
+            _terminal: terminal,
         }
     }
     fn go(&mut self) {
@@ -676,6 +679,7 @@ mod checked_control {
         released: bool,
         exit: Option<std::process::ExitStatus>,
         settled: Option<bool>,
+        _terminal: effigy_ui::steps::TerminalGuard,
     }
 
     impl Control {
@@ -687,6 +691,7 @@ mod checked_control {
             output.set_write_timeout(Some(BOUND))?;
             let input: OwnedFd = child_socket.try_clone()?.into();
             let stdout: OwnedFd = child_socket.into();
+            let terminal = effigy_ui::steps::suspend_terminal();
             let child = Command::new(fixture())
                 .arg("probe-observer")
                 .arg(home)
@@ -698,7 +703,7 @@ mod checked_control {
                 )
                 .stdin(Stdio::from(input))
                 .stdout(Stdio::from(stdout))
-                .stderr(Stdio::inherit())
+                .stderr(terminal.inherit_stdio())
                 .spawn()?;
             // No fallible operation between spawn and transfer to the owner.
             Ok(Self {
@@ -720,6 +725,7 @@ mod checked_control {
                 released: false,
                 exit: None,
                 settled: None,
+                _terminal: terminal,
             })
         }
 

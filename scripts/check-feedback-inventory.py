@@ -16,6 +16,8 @@ failure, so a site cannot be hidden instead of migrated.
 The build covers every workspace target (`--workspace --all-targets`) and not a
 chosen package list: a crate compiled only as another package's dependency is
 never linted as a package, so a wrapper there would escape a `-p` selection.
+Terminal hand-over diagnostics also apply to test targets. Only the reviewed
+helpers in `crates/effigy-ui/src/steps/terminal.rs` may use the raw methods.
 
 A compiler diagnostic only exists for the constructors we mark, so the check
 also owns the crate itself: `indicatif` may be named only inside the reviewed
@@ -40,8 +42,10 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 MARKER = 'feedback legacy spinner: migrate to a live progress source'
+TERMINAL_MARKER = 'terminal hand-over:'
 SINK_MODULE = 'crates/effigy-ui/src/steps'
 SINK_FILE = f'{SINK_MODULE}/mod.rs'
+TERMINAL_SINK_FILE = f'{SINK_MODULE}/terminal.rs'
 SINK_CONSTRUCTION = 'let bar = self.multi().add(ProgressBar::new_spinner());'
 # The one reviewed spinner sink: `Step::start_bar` builds the only
 # `ProgressBar` in the workspace. `config/feedback-lint/clippy.toml` disallows
@@ -104,32 +108,56 @@ def entries(messages):
     result = []
     for message in messages:
         diagnostic = message.get('message', {})
-        if message.get('reason') != 'compiler-message' or MARKER not in json.dumps(diagnostic):
+        if message.get('reason') != 'compiler-message':
+            continue
+        reason = diagnostic.get('message', '')
+        notes = [child.get('message', '') for child in diagnostic.get('children', [])]
+        messages_at_site = [reason, *notes]
+        if any(TERMINAL_MARKER in message for message in messages_at_site):
+            kind = 'terminal'
+            terminal_notes = [note for note in notes if TERMINAL_MARKER in note]
+            reason = ': '.join([reason, *terminal_notes])
+        elif any(MARKER in message for message in messages_at_site):
+            kind = 'spinner'
+        else:
             continue
         for span in diagnostic.get('spans', []):
             if not span.get('is_primary'):
                 continue
             file = span['file_name']
-            # Test diagnostics are not a production migration obligation.
-            if '/tests/' in file or file.endswith('/tests.rs'):
+            if kind == 'terminal' and file == TERMINAL_SINK_FILE:
+                continue
+            if kind == 'spinner' and is_test_file(file):
                 continue
             text = '\n'.join(line['text'].strip() for line in span.get('text', []))
-            result.append((file, text, span['line_start'], span['column_start']))
+            result.append((file, text, span['line_start'], span['column_start'], kind, reason))
     result = list(dict.fromkeys(result))
     # Only the unique infrastructure sink is exempt. A duplicate makes every
     # matching diagnostic visible to the check.
-    matching = [entry for entry in result if (entry[0], entry[1], entry[3]) == SINK]
+    matching = [
+        entry for entry in result
+        if entry[4] == 'spinner' and (entry[0], entry[1], entry[3]) == SINK
+    ]
     if len(matching) == 1:
         result.remove(matching[0])
     return result
 
 
 def check(observed):
-    return [
-        f'{file}:{line}: {text}; feedback legacy spinner: migrate to a live progress source: '
-        f'{migration(text)}'
-        for file, text, line, _ in observed
-    ]
+    errors = []
+    for entry in observed:
+        file, text, line = entry[0], entry[1], entry[2]
+        kind = entry[4] if len(entry) > 4 else 'spinner'
+        reason = entry[5] if len(entry) > 5 else ''
+        if kind == 'terminal':
+            detail = reason or TERMINAL_MARKER
+            errors.append(f'{file}:{line}: {text}; {detail}')
+        else:
+            errors.append(
+                f'{file}:{line}: {text}; feedback legacy spinner: migrate to a live progress source: '
+                f'{migration(text)}'
+            )
+    return errors
 
 
 RAW_STRING = re.compile(r'(?:br|rb|r)(#*)"')
@@ -291,7 +319,11 @@ def source_files(root, *directories):
 
 def is_test_file(relative):
     """Test targets are not production migration or sink obligations."""
-    return '/tests/' in relative or relative.endswith('/tests.rs')
+    return (
+        relative.startswith('tests/')
+        or '/tests/' in relative
+        or relative.endswith('/tests.rs')
+    )
 
 
 def in_sink_module(relative):

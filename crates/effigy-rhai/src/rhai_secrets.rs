@@ -433,9 +433,8 @@ pub(crate) fn read_rhai_secret_passphrase(
     }
     // The progress display is cleared for the prompt: a question hidden under
     // a live spinner is a question nobody answers (effigy#1036).
-    let value =
-        effigy_ui::steps::prompt_terminal(|| rpassword::prompt_password("Vault passphrase: "))
-            .map_err(|error| RhaiHostError::new(format!("failed to read secret input: {error}")))?;
+    let value = effigy_ui::steps::prompt_terminal_password("Vault passphrase: ")
+        .map_err(|error| RhaiHostError::new(format!("failed to read secret input: {error}")))?;
     Ok(Some(SecretValue::new(value)))
 }
 

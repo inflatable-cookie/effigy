@@ -12,4 +12,9 @@ disallowed-methods = [
   { path = "indicatif::ProgressBar::with_draw_target", reason = "feedback legacy spinner: migrate to a live progress source" },
   { path = "indicatif::ProgressBar::hidden", reason = "feedback legacy spinner: migrate to a live progress source" },
   { path = "indicatif::ProgressBar::with_style", reason = "feedback legacy spinner: migrate to a live progress source" },
+  { path = "std::io::Stdin::read_line", reason = "terminal hand-over: use effigy_ui::steps::prompt_terminal_stdio or effigy_ui::steps::prompt_terminal_stderr" },
+  { path = "std::io::Stdin::lock", reason = "terminal hand-over: use effigy_ui::steps::prompt_terminal_stdio or effigy_ui::steps::prompt_terminal_stderr" },
+  { path = "rpassword::prompt_password", reason = "terminal hand-over: use effigy_ui::steps::prompt_terminal_password" },
+  { path = "rpassword::read_password", reason = "terminal hand-over: use effigy_ui::steps::prompt_terminal_password" },
+  { path = "std::process::Stdio::inherit", reason = "terminal hand-over: hold effigy_ui::steps::suspend_terminal() and use TerminalGuard::inherit_stdio" },
 ]

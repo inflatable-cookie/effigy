@@ -85,12 +85,12 @@ fn group_live(pgid: libc::pid_t) -> bool {
 }
 
 #[derive(Debug)]
-pub(crate) struct TerminalLease {
+struct ForegroundPgrpLease {
     fd: RawFd,
     pgid: libc::pid_t,
     owner: libc::pid_t,
 }
-impl TerminalLease {
+impl ForegroundPgrpLease {
     /// Hands the controlling terminal to the workload's own process group.
     ///
     /// `None` means this owner holds no terminal to give: stdin is not a
@@ -140,7 +140,7 @@ impl TerminalLease {
         }))
     }
 }
-impl Drop for TerminalLease {
+impl Drop for ForegroundPgrpLease {
     fn drop(&mut self) {
         // Restoration usually happens from the background, once the workload
         // has exited. Block TTOU on this thread, as taking does.
@@ -162,6 +162,51 @@ impl Drop for TerminalLease {
         // SAFETY: hands the terminal to the owner's own group or to a group
         // this owner still leases to a running foreground child.
         unsafe { libc::tcsetpgrp(self.fd, next) };
+    }
+}
+
+/// Holds the controlling-terminal hand-over for a foreground or inherited-terminal
+/// child, suspending `effigy_ui::steps` spinners before `tcsetpgrp` / `child.go()`
+/// and keeping them suspended until after the foreground process group is restored.
+#[derive(Debug)]
+pub(crate) struct TerminalLease {
+    // Field drop order is declaration order: restore `tcsetpgrp` first, then
+    // release the `effigy_ui::steps` terminal suspension.
+    _pgrp: Option<ForegroundPgrpLease>,
+    _steps: effigy_ui::steps::TerminalGuard,
+}
+impl TerminalLease {
+    /// Suspend spinners unconditionally for a `Terminal::Foreground` child (even
+    /// if `tcsetpgrp` is skipped because stdin is not a tty while stderr may be),
+    /// then lease the controlling terminal's foreground group if available.
+    fn for_foreground(pid: u32) -> io::Result<Self> {
+        let steps = effigy_ui::steps::suspend_terminal();
+        let pgrp = ForegroundPgrpLease::take(pid)?;
+        Ok(Self {
+            _pgrp: pgrp,
+            _steps: steps,
+        })
+    }
+
+    /// Best-effort terminal hand-over for `Terminal::Inherit { capture }`:
+    /// suspend spinners whenever the child inherits stdout/stderr (`!capture`)
+    /// or takes a foreground process-group lease on stdin.
+    fn for_inherit(pid: u32, capture: bool) -> Option<Self> {
+        // SAFETY: isatty only observes this process's own stdin.
+        let stdin_is_tty = unsafe { libc::isatty(libc::STDIN_FILENO) } == 1;
+        if capture && !stdin_is_tty {
+            return None;
+        }
+        let steps = effigy_ui::steps::suspend_terminal();
+        let pgrp = ForegroundPgrpLease::take(pid).ok().flatten();
+        if !capture || pgrp.is_some() {
+            Some(Self {
+                _pgrp: pgrp,
+                _steps: steps,
+            })
+        } else {
+            None
+        }
     }
 }
 /// Whether the blocked leader puts the whole eligible workload group in a
@@ -646,14 +691,15 @@ impl Blocked {
             crate::fault::note_anchor(u32::from_ne_bytes(bytes));
         }
         if matches!(spec.terminal, Terminal::Foreground) {
-            child.streams.as_mut().expect("streams present").2 = TerminalLease::take(pid as u32)?;
+            child.streams.as_mut().expect("streams present").2 =
+                Some(TerminalLease::for_foreground(pid as u32)?);
         }
-        if matches!(spec.terminal, Terminal::Inherit { .. }) {
+        if let Terminal::Inherit { capture } = spec.terminal {
             // Best effort: without the terminal an interactive child stops on
             // its first read, but a non-interactive one is unaffected. A
             // foreign foreground program or a non-terminal stdin takes no lease.
             child.streams.as_mut().expect("streams present").2 =
-                TerminalLease::take(pid as u32).ok().flatten();
+                TerminalLease::for_inherit(pid as u32, capture);
         }
         Ok(child)
     }

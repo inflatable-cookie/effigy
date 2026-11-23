@@ -653,7 +653,7 @@ fn sentinel(
     adapter: &mut impl SettlementAdapter,
     validate_next: impl Fn(&[OsString]) -> bool,
 ) -> Result<(), RunError> {
-    let mut input = std::io::stdin().lock();
+    let mut input = std::io::stdin();
     nonblocking(input.as_raw_fd())?;
     let config: serde_json::Value = serde_json::from_slice(&read_frame(&mut input)?)?;
     if config.get("memory").and_then(serde_json::Value::as_bool) == Some(true) {

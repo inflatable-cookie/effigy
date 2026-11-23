@@ -192,8 +192,9 @@ fn run_child(kind: &str, home: &Path, fault: Option<(usize, &str)>) -> std::proc
         .env(SCENARIO, kind)
         .env("HOME", home)
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::inherit());
+        .stdout(Stdio::null());
+    let _terminal = effigy_ui::steps::suspend_terminal();
+    command.stderr(_terminal.inherit_stdio());
     if let Some((index, fault)) = fault {
         command.env("EFFIGY_KERNEL_TEST_FAULT", format!("{index}:{fault}"));
     }
@@ -530,6 +531,7 @@ fn race_remove(home: &Path) {
 fn gate_two_process_scope_removal_race_never_yields_two_holders() {
     let home = home();
     drop(root(home.path()));
+    let terminal = effigy_ui::steps::suspend_terminal();
     let spawn = |kind: &str| {
         let mut command = Command::new(std::env::current_exe().unwrap());
         command
@@ -544,7 +546,7 @@ fn gate_two_process_scope_removal_race_never_yields_two_holders() {
             .env("HOME", home.path())
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::inherit());
+            .stderr(terminal.inherit_stdio());
         command.spawn().unwrap()
     };
     let children: Vec<_> = ["race-acquire", "race-remove", "race-acquire", "race-remove"]

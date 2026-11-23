@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::ffi::OsString;
 use std::path::Path;
-use std::process::{Command as ProcessCommand, Output, Stdio};
+use std::process::{Command as ProcessCommand, Output};
 use std::time::Instant;
 
 use effigy_containers::{
@@ -469,12 +469,13 @@ fn run_exec_process_plan(
     }
 
     let resolved_program = resolve_host_program(plan.program.as_os_str());
+    let _terminal = effigy_ui::steps::suspend_terminal();
     let mut child = ProcessCommand::new(&resolved_program)
         .current_dir(&plan.repo_root)
         .args(&plan.args)
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
+        .stdin(_terminal.inherit_stdio())
+        .stdout(_terminal.inherit_stdio())
+        .stderr(_terminal.inherit_stdio())
         .spawn()
         .map_err(|error| RunnerError::TaskCommandLaunch {
             command: format!(

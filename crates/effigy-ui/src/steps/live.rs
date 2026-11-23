@@ -56,9 +56,14 @@ impl StreamingGuard {
 
 impl Drop for StreamingGuard {
     fn drop(&mut self) {
+        let _active = self
+            .sink
+            .active
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         if self.sink.streaming.fetch_sub(1, Ordering::SeqCst) == 1 && !self.sink.is_suspended() {
             if let Some(multi) = self.sink.multi.get() {
-                multi.set_draw_target(ProgressDrawTarget::stderr());
+                multi.set_draw_target(self.sink.restore_draw_target());
             }
         }
     }

@@ -543,12 +543,13 @@ fn custody_signal_and_owner_kill_matrix_settles_without_survivors() {
         for signal in [libc::SIGHUP, libc::SIGINT, libc::SIGTERM, libc::SIGKILL] {
             eprintln!("matrix {placement} signal={signal}");
             let home = home();
+            let terminal = effigy_ui::steps::suspend_terminal();
             let mut owner = ChildGuard(
                 Command::new(fixture())
                     .arg(placement)
                     .arg(home.path())
                     .stdout(Stdio::null())
-                    .stderr(Stdio::inherit())
+                    .stderr(terminal.inherit_stdio())
                     .spawn()
                     .unwrap(),
             );
@@ -560,6 +561,7 @@ fn custody_signal_and_owner_kill_matrix_settles_without_survivors() {
                 owner_exit = owner.0.try_wait().unwrap();
                 owner_exit.is_some()
             });
+            drop(terminal);
             use std::os::unix::process::ExitStatusExt;
             let exit = owner_exit.unwrap();
             let provenance = format!(
@@ -710,12 +712,13 @@ fn custody_dead_sentinel_is_reported_as_a_gap_and_settles() {
 #[test]
 fn custody_sentinel_recovers_nonce_descendant_after_leader_and_owner_die() {
     let home = home();
+    let terminal = effigy_ui::steps::suspend_terminal();
     let mut owner = ChildGuard(
         Command::new(fixture())
             .arg("inline-orphan")
             .arg(home.path())
             .stdout(Stdio::null())
-            .stderr(Stdio::inherit())
+            .stderr(terminal.inherit_stdio())
             .spawn()
             .unwrap(),
     );
@@ -764,12 +767,13 @@ fn custody_sentinel_recovers_nonce_descendant_after_leader_and_owner_die() {
 #[test]
 fn owner_loss_settles_through_the_run_sentinel_and_retires_its_anchor() {
     let home = home();
+    let terminal = effigy_ui::steps::suspend_terminal();
     let mut owner = ChildGuard(
         Command::new(fixture())
             .arg("anchor-owner-loss")
             .arg(home.path())
             .stdout(Stdio::null())
-            .stderr(Stdio::inherit())
+            .stderr(terminal.inherit_stdio())
             .spawn()
             .unwrap(),
     );
@@ -1170,12 +1174,13 @@ fn custody_retires_an_anchor_whose_image_cleared_its_evidence() {
 #[test]
 fn custody_recovery_settles_an_empty_group_after_its_anchor_exits() {
     let home = home();
+    let terminal = effigy_ui::steps::suspend_terminal();
     let mut owner = ChildGuard(
         Command::new(fixture())
             .arg("anchor-gone-orphan")
             .arg(home.path())
             .stdout(Stdio::null())
-            .stderr(Stdio::inherit())
+            .stderr(terminal.inherit_stdio())
             .spawn()
             .unwrap(),
     );

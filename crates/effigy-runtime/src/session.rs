@@ -157,7 +157,7 @@ where
         ContainerAction::Logs,
         "docker compose logs --follow",
     )?;
-    let mut child = spawn_compose_plan_inherit(&plan)?;
+    let (mut child, _terminal) = spawn_compose_plan_inherit(&plan)?;
     let termination_reason = loop {
         if flag.load(std::sync::atomic::Ordering::Relaxed) {
             break "signal";

@@ -488,6 +488,93 @@ fn unused(value: u8) { let _ = value; }
             (root / 'src' / 'ordinary.rs').write_text(source)
             self.assertEqual(lint.suppression_errors(root), [])
 
+    def test_terminal_handover_disallowed_methods_fail_outside_terminal_rs(self):
+        def terminal_diag(file, line, text, reason):
+            return {
+                'reason': 'compiler-message',
+                'message': {
+                    'message': reason.split(': terminal hand-over:', 1)[0],
+                    'children': [{'message': reason.split(': ', 1)[1]}],
+                    'spans': [{
+                        'is_primary': True,
+                        'file_name': file,
+                        'line_start': line,
+                        'column_start': 5,
+                        'text': [{'text': text}],
+                    }],
+                },
+            }
+
+        disallowed = [
+            terminal_diag(
+                'src/runner/prompt.rs',
+                10,
+                'std::io::stdin().read_line(&mut line)?;',
+                'use of a disallowed method `std::io::Stdin::read_line`: terminal hand-over: use effigy_ui::steps::prompt_terminal_stdio or effigy_ui::steps::prompt_terminal_stderr',
+            ),
+            terminal_diag(
+                'src/runner/prompt.rs',
+                12,
+                'let mut stdin = std::io::stdin().lock();',
+                'use of a disallowed method `std::io::Stdin::lock`: terminal hand-over: use effigy_ui::steps::prompt_terminal_stdio or effigy_ui::steps::prompt_terminal_stderr',
+            ),
+            terminal_diag(
+                'src/runner/secret.rs',
+                20,
+                'rpassword::prompt_password("Passphrase: ")',
+                'use of a disallowed method `rpassword::prompt_password`: terminal hand-over: use effigy_ui::steps::prompt_terminal_password',
+            ),
+            terminal_diag(
+                'src/runner/child.rs',
+                30,
+                'cmd.stdin(Stdio::inherit())',
+                'use of a disallowed method `std::process::Stdio::inherit`: terminal hand-over: hold effigy_ui::steps::suspend_terminal() and use TerminalGuard::inherit_stdio',
+            ),
+        ]
+        reviewed = [
+            terminal_diag(
+                'crates/effigy-ui/src/steps/terminal.rs',
+                50,
+                'let mut stdin = std::io::stdin().lock();',
+                'use of a disallowed method `std::io::Stdin::lock`: terminal hand-over: use effigy_ui::steps::prompt_terminal_stdio or effigy_ui::steps::prompt_terminal_stderr',
+            ),
+            terminal_diag(
+                'crates/effigy-ui/src/steps/terminal.rs',
+                70,
+                'rpassword::prompt_password(prompt)',
+                'use of a disallowed method `rpassword::prompt_password`: terminal hand-over: use effigy_ui::steps::prompt_terminal_password',
+            ),
+            terminal_diag(
+                'crates/effigy-ui/src/steps/terminal.rs',
+                85,
+                'Stdio::inherit()',
+                'use of a disallowed method `std::process::Stdio::inherit`: terminal hand-over: hold effigy_ui::steps::suspend_terminal() and use TerminalGuard::inherit_stdio',
+            ),
+        ]
+        # Reviewed implementations in `crates/effigy-ui/src/steps/terminal.rs` are exempt.
+        self.assertEqual(lint.entries(reviewed), [])
+        # Every direct call outside `terminal.rs` fails the check.
+        observed = lint.entries(disallowed + reviewed)
+        errors = lint.check(observed)
+        self.assertEqual(len(errors), 4, errors)
+        self.assertIn('src/runner/prompt.rs:10:', errors[0])
+        self.assertIn('prompt_terminal_stdio', errors[0])
+        self.assertIn('src/runner/prompt.rs:12:', errors[1])
+        self.assertIn('prompt_terminal_stdio', errors[1])
+        self.assertIn('src/runner/secret.rs:20:', errors[2])
+        self.assertIn('prompt_terminal_password', errors[2])
+        self.assertIn('src/runner/child.rs:30:', errors[3])
+        self.assertIn('TerminalGuard::inherit_stdio', errors[3])
+
+        for file in ('tests/prompt.rs', 'crates/effigy-ui/src/steps/tests.rs',
+                     'crates/effigy-kernel/tests/support/terminal.rs'):
+            with self.subTest(file=file):
+                for diagnostic in disallowed:
+                    diagnostic['message']['spans'][0]['file_name'] = file
+                errors = lint.check(lint.entries(disallowed))
+                self.assertEqual(len(errors), 4, errors)
+                self.assertTrue(all(error.startswith(f'{file}:') for error in errors))
+
 
 if __name__ == '__main__':
     unittest.main()

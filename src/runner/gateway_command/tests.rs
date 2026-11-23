@@ -2089,6 +2089,47 @@ fn platform_phase_frames_name_the_operation_while_the_child_runs() {
     assert_eq!(lines, vec!["✓ applied the platform setup for test"]);
 }
 
+#[test]
+fn setup_foreground_step_does_not_animate_spinner_and_preserves_summary() {
+    let (done, lines) = effigy_ui::steps::capture_lines(|| {
+        setup_foreground_step(
+            "applying platform setup (approve the administrator prompt if it appears)",
+            "the administrator-approved setup child to apply DNS, trust and broker for test",
+            |progress| {
+                assert_eq!(
+                    progress.frame_at(Duration::ZERO),
+                    "Applying gateway setup (approve the administrator prompt if it appears)"
+                );
+                progress.update(|_| ProgressFrame::new("applied the platform setup for test"));
+                Ok(())
+            },
+        )
+    });
+    done.expect("foreground setup stage");
+    assert_eq!(lines, vec!["✓ applied the platform setup for test"]);
+
+    let (failed, lines) = effigy_ui::steps::capture_lines(|| {
+        setup_foreground_step::<()>(
+            "removing platform setup (approve the administrator prompt if it appears)",
+            "the administrator-approved setup child to remove DNS, trust and broker for test",
+            |progress| {
+                assert_eq!(
+                    progress.frame_at(Duration::ZERO),
+                    "Removing gateway setup (approve the administrator prompt if it appears)"
+                );
+                Err(std::io::Error::other(
+                    "the administrator declined the elevation prompt",
+                ))
+            },
+        )
+    });
+    assert!(failed.is_err());
+    assert_eq!(
+        lines,
+        vec!["✗ the administrator declined the elevation prompt"]
+    );
+}
+
 /// The progress the readiness probes in these tests report into, shaped the
 /// way `wait_for_private_gateway_ready` builds it: the listener address lives
 /// in the probe's sub-step, not in the awaited sentence.

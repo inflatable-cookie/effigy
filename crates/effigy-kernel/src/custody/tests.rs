@@ -1124,6 +1124,7 @@ fn fault_matrix_registration_spawn_and_socket_kill_enospc() {
     ] {
         for fault in ["kill", "enospc"] {
             let home = home();
+            let terminal = effigy_ui::steps::suspend_terminal();
             let mut child = OwnedChild(
                 Command::new(std::env::current_exe().unwrap())
                     .args(["--exact", "custody::tests::fault_child", "--nocapture"])
@@ -1132,7 +1133,7 @@ fn fault_matrix_registration_spawn_and_socket_kill_enospc() {
                     .env("EFFIGY_KERNEL_CUSTODY_FAULT_KIND", fault)
                     .stdin(Stdio::null())
                     .stdout(Stdio::null())
-                    .stderr(Stdio::inherit())
+                    .stderr(terminal.inherit_stdio())
                     .spawn()
                     .unwrap(),
             );
@@ -1141,6 +1142,7 @@ fn fault_matrix_registration_spawn_and_socket_kill_enospc() {
                 exit = child.0.try_wait().unwrap();
                 exit.is_some()
             });
+            drop(terminal);
             if fault == "kill" {
                 assert_eq!(
                     exit.unwrap().signal(),
@@ -5067,5 +5069,78 @@ fn process_intent_identity_is_typed_not_derived_debug_text() {
             &serde_json::to_vec(&finite).expect("identity encoding")
         ))
         .expect("digest value")
+    );
+}
+
+#[test]
+fn foreground_child_suspends_steps_while_running_and_restores_after_exit() {
+    // Terminal suspension is process-wide, including other custody tests.
+    const ISOLATED: &str = "EFFIGY_KERNEL_TEST_FOREGROUND_STEPS";
+    if std::env::var_os(ISOLATED).is_none() {
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "custody::tests::foreground_child_suspends_steps_while_running_and_restores_after_exit",
+            ])
+            .env(ISOLATED, "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "isolated foreground test failed: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    let home = home();
+    let cx = cx();
+    let gate = home.path().join("release");
+    let spec = ProcessSpec {
+        argv: vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            "i=0; while [ ! -f \"$1\" ] && [ $i -lt 500 ]; do i=$((i+1)); sleep 0.01; done".into(),
+            "sh".into(),
+            gate.as_os_str().into(),
+        ],
+        cwd: home.path().to_path_buf(),
+        env: BTreeMap::new(),
+        grace: Duration::from_millis(50),
+        lifetime: Lifetime::Finite(Duration::from_secs(10)),
+        terminal: Terminal::Foreground,
+        label: "foreground steps suspension".into(),
+    };
+    assert!(
+        !effigy_ui::steps::is_terminal_suspended(),
+        "steps start unsuspended before spawning a foreground child"
+    );
+    let mut blocked = spawn::Blocked::fork_with_nonce(
+        &spec,
+        "EFFIGY_CUSTODY_NONCE",
+        "foreground-steps-proof",
+        cx.operation(),
+    )
+    .expect("fork foreground child");
+    assert!(
+        effigy_ui::steps::is_terminal_suspended(),
+        "Terminal::Foreground must suspend effigy_ui::steps before child.go()"
+    );
+    let pid = blocked.pid;
+    let (_stdout, _stderr, lease) = blocked.take_streams();
+    let lease = lease.expect("Terminal::Foreground always acquires a TerminalLease");
+    blocked.go().expect("release barrier");
+    blocked.executed(cx.operation()).expect("child execed");
+    assert!(
+        effigy_ui::steps::is_terminal_suspended(),
+        "effigy_ui::steps remains suspended while foreground child runs"
+    );
+
+    std::fs::write(&gate, b"go").expect("release gate");
+    wait(|| spawn::reap(pid).ok().flatten().is_some());
+    drop(lease);
+    assert!(
+        !effigy_ui::steps::is_terminal_suspended(),
+        "dropping TerminalLease after child exit restores effigy_ui::steps"
     );
 }

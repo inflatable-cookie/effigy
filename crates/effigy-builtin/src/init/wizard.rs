@@ -45,17 +45,9 @@ pub(super) fn run_init_wizard<F>(
 where
     F: FnOnce() -> Result<Starter, BuiltinError>,
 {
-    let stdin = io::stdin();
-    let stdout = io::stdout();
-    let mut input = io::BufReader::new(stdin.lock());
-    let mut output = stdout.lock();
-    run_init_wizard_from_io(
-        ports,
-        target_root,
-        load_default_starter,
-        &mut input,
-        &mut output,
-    )
+    effigy_ui::steps::prompt_terminal_stdio(|stdin, stdout| {
+        run_init_wizard_from_io(ports, target_root, load_default_starter, stdin, stdout)
+    })
 }
 
 fn run_init_wizard_from_io<F>(

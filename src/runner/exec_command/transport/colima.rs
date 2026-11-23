@@ -88,16 +88,17 @@ pub(super) fn run_colima_direct_exec(
 
     let suppress_exit_noise = looks_like_interactive_shell_exec(&parsed);
     let resolved_program = resolve_host_program("colima");
+    let _terminal = effigy_ui::steps::suspend_terminal();
     let mut command = ProcessCommand::new(&resolved_program);
     command
         .current_dir(repo_root)
         .args(&resolved)
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
+        .stdin(_terminal.inherit_stdio())
+        .stdout(_terminal.inherit_stdio())
         .stderr(if suppress_exit_noise {
             Stdio::piped()
         } else {
-            Stdio::inherit()
+            _terminal.inherit_stdio()
         });
     let mut child = command
         .spawn()

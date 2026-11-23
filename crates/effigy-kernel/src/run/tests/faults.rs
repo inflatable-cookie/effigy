@@ -205,6 +205,7 @@ fn exercise(residue: bool) {
         }
         let home = home();
         prepare(home.path());
+        let terminal = effigy_ui::steps::suspend_terminal();
         let mut child = Command::new(std::env::current_exe().unwrap())
             .args([HELPER, "--exact", "--ignored", "--test-threads=1"])
             .env("HOME", home.path())
@@ -215,7 +216,7 @@ fn exercise(residue: bool) {
             )
             .env("EFFIGY_KERNEL_TEST_FAULT", format!("{index}:kill"))
             .stdout(Stdio::null())
-            .stderr(Stdio::inherit())
+            .stderr(terminal.inherit_stdio())
             .spawn()
             .unwrap();
         let deadline = Instant::now() + Duration::from_secs(20);
@@ -230,6 +231,7 @@ fn exercise(residue: bool) {
             }
             std::thread::sleep(Duration::from_millis(2));
         };
+        drop(terminal);
         assert_eq!(
             exit.signal(),
             Some(libc::SIGKILL),

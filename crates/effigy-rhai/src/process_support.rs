@@ -207,8 +207,9 @@ pub(crate) fn run_process_streaming_with_options(
             .map_err(|error| rhai_runtime_error(crate::failed_to_read_path(stdin_file, error)))?;
         process.stdin(Stdio::from(file));
     }
-    process.stdout(Stdio::inherit());
-    process.stderr(Stdio::inherit());
+    let _terminal = effigy_ui::steps::suspend_terminal();
+    process.stdout(_terminal.inherit_stdio());
+    process.stderr(_terminal.inherit_stdio());
     for (key, value) in &resolved.env {
         process.env(key, value);
     }

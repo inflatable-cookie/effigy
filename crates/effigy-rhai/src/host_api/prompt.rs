@@ -55,15 +55,17 @@ fn ensure_interactive() -> Result<(), Box<EvalAltResult>> {
 }
 
 fn prompt_line(prompt: &str) -> Result<String, Box<EvalAltResult>> {
-    let mut stdout = io::stdout().lock();
-    stdout
-        .write_all(prompt.as_bytes())
-        .and_then(|_| stdout.flush())
-        .map_err(|error| rhai_runtime_error(format!("failed to render prompt: {error}")))?;
+    use std::io::BufRead as _;
+    effigy_ui::steps::prompt_terminal_stdio(|stdin, stdout| {
+        stdout
+            .write_all(prompt.as_bytes())
+            .and_then(|_| stdout.flush())
+            .map_err(|error| rhai_runtime_error(format!("failed to render prompt: {error}")))?;
 
-    let mut line = String::new();
-    io::stdin()
-        .read_line(&mut line)
-        .map_err(|error| rhai_runtime_error(format!("failed to read prompt response: {error}")))?;
-    Ok(line.trim_end_matches(['\r', '\n']).to_owned())
+        let mut line = String::new();
+        stdin.read_line(&mut line).map_err(|error| {
+            rhai_runtime_error(format!("failed to read prompt response: {error}"))
+        })?;
+        Ok(line.trim_end_matches(['\r', '\n']).to_owned())
+    })
 }
