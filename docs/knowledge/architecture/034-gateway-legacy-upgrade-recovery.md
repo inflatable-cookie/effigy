@@ -86,8 +86,10 @@ Legacy root dependencies that required separation:
   or failing to provide a newly registered domain's DNS.
 - Creating `lo0` aliases for the bounded `127.1.0.1`–`127.1.0.250` pool requires
   administrator privileges. The bind broker applies those interface changes
-  on demand, while the allocation registry remains user state. Setup retires
-  the legacy launch job and clears its pool aliases.
+  on demand, while the allocation registry remains user state. Setup reserves
+  the standard DNS socket before retiring the legacy launch job and holds it
+  through the platform update. A running or starting gateway owns that socket,
+  so setup preserves its aliases and reports how to retry after stopping it.
 - HTTP and HTTPS currently bind `127.0.0.1:80` and `127.0.0.1:443`. Effigy
   currently treats all Unix low ports as requiring elevation. The claim that
   recent macOS permits every unprivileged low-port bind is insufficient:

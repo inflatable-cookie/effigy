@@ -2837,7 +2837,7 @@ fn run_gateway_setup(
                             "the DNS, trust and broker setup for {}",
                             suffixes.join(", ")
                         ),
-                        |_| setup::remove_platform(run, cx, uid, &suffixes),
+                        |_| setup::remove_platform(run, cx, &config, uid, &suffixes),
                     );
                 }
                 setup_step(

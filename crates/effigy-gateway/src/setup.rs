@@ -3,6 +3,8 @@
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::io::{self, Read};
+#[cfg(any(target_os = "macos", test))]
+use std::net::{SocketAddr, UdpSocket};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -528,6 +530,7 @@ fn platform_command(
 #[cfg(any(target_os = "macos", test))]
 pub(crate) struct MacosPlatform<'a> {
     pub identity: (u32, u32),
+    pub dns_bind: SocketAddr,
     pub helper: &'a Path,
     pub etc: &'a DirFd,
     pub jobs: &'a DirFd,
@@ -624,7 +627,8 @@ pub(crate) fn apply_macos(
         platform.jobs,
         platform.library,
     );
-    retire_macos_loopback_job(run, cx, jobs, command, report)?;
+    let _gateway_reservation =
+        retire_macos_loopback_job(run, cx, jobs, platform.dns_bind, command, report)?;
     report(&format!(
         "writing the resolver files for {}",
         suffixes.join(", ")
@@ -687,12 +691,27 @@ fn retire_macos_loopback_job(
     run: &mut Run<'_>,
     cx: &EffectContext,
     jobs: &DirFd,
+    dns_bind: SocketAddr,
     command: &mut impl FnMut(&mut Run<'_>, &EffectContext, Vec<OsString>) -> io::Result<(i32, Vec<u8>)>,
     report: &mut dyn FnMut(&str),
-) -> io::Result<()> {
+) -> io::Result<Option<UdpSocket>> {
     if !broker::owned_job(cx, jobs, LEGACY_LOOPBACK_PLIST)? {
-        return Ok(());
+        return Ok(None);
     }
+    // Every standard gateway binds DNS before starting its TCP aliases and
+    // keeps that socket until shutdown. Reserving it also excludes an older
+    // daemon starting before it has published a process record.
+    let reservation = UdpSocket::bind(dns_bind).map_err(|failure| {
+        let action = if failure.kind() == io::ErrorKind::AddrInUse {
+            ". Run `effigy gateway down` and retry setup when the gateway has stopped."
+        } else {
+            "."
+        };
+        io::Error::new(
+            failure.kind(),
+            format!("cannot retire legacy loopback aliases while gateway DNS {dns_bind} is unavailable ({failure}){action}"),
+        )
+    })?;
     report("retiring the legacy gateway loopback launch job");
     broker::stop_job(
         run,
@@ -728,7 +747,8 @@ fn retire_macos_loopback_job(
     remove_managed_with(cx, jobs, LEGACY_LOOPBACK_PLIST, |path| {
         platform_command(run, cx, command, vec!["/bin/rm".into(), path.into()])?;
         Ok(())
-    })
+    })?;
+    Ok(Some(reservation))
 }
 
 /// The Linux platform action's targets: the root-owned unit directory and the
@@ -836,6 +856,7 @@ pub fn apply_platform(
             suffixes,
             &MacosPlatform {
                 identity: (operator, user.gid.as_raw()),
+                dns_bind: config.dns.bind_addr,
                 helper: &std::env::current_exe()?,
                 etc: &etc,
                 jobs: &jobs,
@@ -953,16 +974,18 @@ pub fn remove_receipt(run: &mut Run<'_>, cx: &EffectContext, home: &Path) -> io:
 pub fn remove_platform(
     run: &mut Run<'_>,
     cx: &EffectContext,
+    config: &GatewayConfig,
     uid: u32,
     suffixes: &[String],
 ) -> io::Result<()> {
     #[cfg(target_os = "macos")]
     {
         let jobs = DirFd::open(Path::new("/Library/LaunchDaemons")).map_err(error)?;
-        retire_macos_loopback_job(
+        let _gateway_reservation = retire_macos_loopback_job(
             run,
             cx,
             &jobs,
+            config.dns.bind_addr,
             &mut |run, cx, argv| command_outcome(run, cx, argv, false),
             &mut |_| {},
         )?;
@@ -1009,7 +1032,7 @@ pub fn remove_platform(
         }
         crate::linux_operator::remove_current_capability(uid)?;
     }
-    let _ = (uid, suffixes);
+    let _ = (config, uid, suffixes);
     Ok(())
 }
 /// Repair only the three explicit legacy registries and leaf-certificate
@@ -2075,6 +2098,7 @@ pub(crate) mod tests {
                 &["test".to_owned()],
                 &MacosPlatform {
                     identity: (uid, 20),
+                    dns_bind: config.dns.bind_addr,
                     helper: &helper,
                     etc: &etc,
                     jobs: &jobs,
@@ -2107,7 +2131,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn macos_upgrade_retires_the_owned_job_and_only_its_pool_and_resolver_backups() {
+    fn macos_upgrade_retires_the_owned_job_after_the_gateway_stops() {
         with_run(|run, cx, home| {
             let platform = FakePlatform::new(home);
             let etc = platform.dir("private/etc");
@@ -2129,14 +2153,21 @@ pub(crate) mod tests {
             std::fs::write(&foreign_backup, b"# Foreign resolver\n").unwrap();
             std::os::unix::fs::symlink(&owned_backup, &symlink_backup).unwrap();
             let uid = nix::unistd::Uid::effective().as_raw();
+            let running_gateway = UdpSocket::bind("127.0.0.1:0").unwrap();
             let mac = MacosPlatform {
                 identity: (uid, 20),
+                dns_bind: running_gateway.local_addr().unwrap(),
                 helper: &helper,
                 etc: &etc,
                 jobs: &jobs,
                 library: &library,
             };
             let mut adapter = |run: &mut Run<'_>, cx: &EffectContext, argv: Vec<OsString>| {
+                assert_eq!(
+                    UdpSocket::bind(mac.dns_bind).unwrap_err().kind(),
+                    io::ErrorKind::AddrInUse,
+                    "a gateway cannot start during platform changes"
+                );
                 let (_, fallback) = platform.run(run, cx, argv.clone())?;
                 if argv[0] == "/bin/rm" {
                     let path = Path::new(&argv[1]);
@@ -2157,8 +2188,20 @@ pub(crate) mod tests {
             assert!(platform.calls.borrow().is_empty());
             assert_eq!(std::fs::read(&legacy).unwrap(), b"foreign launch job");
 
-            std::fs::write(&legacy, format!("<!-- {MARKER} -->\n")).unwrap();
+            let definition = format!("<!-- {MARKER} -->\n");
+            std::fs::write(&legacy, &definition).unwrap();
+            let busy = apply_macos(run, cx, &suffixes, &mac, &mut adapter, &mut |_| {})
+                .expect_err("setup must preserve the running gateway");
+            assert_eq!(busy.kind(), io::ErrorKind::AddrInUse);
+            assert!(busy.to_string().contains("`effigy gateway down`"), "{busy}");
+            assert!(platform.calls.borrow().is_empty());
+            assert_eq!(std::fs::read_to_string(&legacy).unwrap(), definition);
+            assert!(owned_backup.exists());
+            assert!(!resolvers.path().join("test").exists());
+
+            drop(running_gateway);
             apply_macos(run, cx, &suffixes, &mac, &mut adapter, &mut |_| {}).unwrap();
+            UdpSocket::bind(mac.dns_bind).expect("setup releases DNS for the next gateway");
 
             assert!(!legacy.exists());
             assert!(!owned_backup.exists());

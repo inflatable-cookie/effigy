@@ -1757,9 +1757,11 @@ machine gateway; it prints the structured warning instead.
 Setup includes suffixes already present in the route table and the managed
 `test` suffix. Re-run setup when adding a new resolver suffix. On macOS, setup
 writes scoped `/etc/resolver` files and installs a root-owned, socket-activated
-bind broker. Re-run setup when upgrading from a build that installed the
-loopback boot job. Setup retires that job, clears its pool aliases and removes
-Effigy-owned resolver backups.
+bind broker. When upgrading from a build that installed the loopback boot job,
+run `effigy gateway down` before re-running setup. Setup keeps any running
+gateway's interfaces intact, then retires the job and clears its pool aliases
+once the gateway is stopped. The operator setup command starts the gateway
+when it finishes. Setup also removes Effigy-owned resolver backups.
 
 The broker checks the setup-pinned operator UID with `getpeereid`. When direct
 port 80/443 binds fail, it supplies those listeners on `127.0.0.1` or a pool

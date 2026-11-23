@@ -1192,8 +1192,8 @@ async fn run_gateway_with_cancel(
     // Create shutdown channel.
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
-    // Resolver and alias installation belongs exclusively to gateway setup.
-    // Route reloads update the table and clear the DNS cache without host mutations.
+    // Setup owns the resolver files. Route reloads update the table and clear
+    // the DNS cache. The TCP alias manager reconciles the listeners and aliases.
     let watcher_path = runtime_config.route_table_path.clone();
     let idle_shutdown = IdleShutdown {
         generation: Arc::new(AtomicU64::new(0)),
@@ -1234,8 +1234,12 @@ async fn run_gateway_with_cancel(
     // Run DNS and proxy concurrently. Keep every task in one owned set so a
     // shutdown signal can stop and join all listeners before identity cleanup.
     let (publication_tx, publication_rx) = watch::channel(config.is_private());
+    // Keep the DNS address occupied until the TCP alias manager has drained.
+    // macOS setup reserves this address before retiring legacy loopback aliases.
+    let dns_socket = Arc::new(listeners.dns);
     let mut server_tasks = tokio::task::JoinSet::new();
     let prebound_https_listener = {
+        let dns_socket = Arc::clone(&dns_socket);
         let dns_config = runtime_config.dns.clone();
         let proxy_config = runtime_config.proxy.clone();
         let dns_table = Arc::clone(&shared_table);
@@ -1256,7 +1260,7 @@ async fn run_gateway_with_cancel(
                         }
                     }
                     run_dns_server_on(
-                        listeners.dns,
+                        &dns_socket,
                         dns_config,
                         dns_table,
                         dns_stats,
