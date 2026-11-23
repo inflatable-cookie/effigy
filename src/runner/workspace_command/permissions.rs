@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::time::Instant;
 
@@ -123,6 +124,16 @@ pub(in crate::runner) trait WorkspaceAccessBackend {
         identity: &ResolvedWorkspaceIdentity,
         directory: &str,
     ) -> Result<(), PermissionPrepError>;
+    /// Reports, per path, whether a declared named-volume mountpoint is still
+    /// mounted in the running container's mount namespace. A detached submount
+    /// leaves the host directory underneath visible, so callers must check this
+    /// before any mkdir, scan or chown.
+    fn verify_named_volume_mounts(
+        &self,
+        paths: &[String],
+    ) -> Result<Vec<bool>, PermissionPrepError> {
+        Ok(vec![true; paths.len()])
+    }
 
     fn inspect_many(
         &mut self,
@@ -314,6 +325,28 @@ pub(super) fn prepare_workspace_permissions(
                 format!("refusing to follow symlink `{path}`"),
             ));
         }
+    }
+    // A detached named volume leaves the host directory visible underneath the
+    // declared path. Verify the live mount table before any mkdir, scan or
+    // chown, so Effigy never edits that host tree.
+    let declared_named_volumes = declared_named_volume_paths(plan);
+    let named_volume_paths = targets
+        .iter()
+        .filter(|target| {
+            target.mount_kind == WorkspaceMountKind::NamedVolume
+                && declared_named_volumes.contains(&target.path)
+        })
+        .map(|target| target.path.clone())
+        .collect::<Vec<_>>();
+    if let Some(path) = unmounted_named_volumes(&*backend, &named_volume_paths)?
+        .into_iter()
+        .next()
+    {
+        return Err(detached_named_volume_error(
+            &identity,
+            target_for_probe_path(&targets, &path),
+            context,
+        ));
     }
     for target in targets.iter().filter(|target| {
         target.mount_kind != WorkspaceMountKind::Image
@@ -824,6 +857,35 @@ fn require_batch_len(
     )))
 }
 
+/// Mount points the plan declares as named volumes. Derived paths such as a
+/// home volume's `.cache` are subdirectories of a mount, not mountpoints, so
+/// only these exact declared paths are checked against the mount table.
+fn declared_named_volume_paths(plan: &WorkspaceOwnershipPlan) -> BTreeSet<String> {
+    plan.targets
+        .iter()
+        .filter(|target| target.mount_kind == WorkspaceMountKind::NamedVolume)
+        .map(|target| target.path.clone())
+        .collect()
+}
+
+/// Returns the paths the live container no longer mounts, in input order.
+fn unmounted_named_volumes(
+    backend: &impl WorkspaceAccessBackend,
+    paths: &[String],
+) -> Result<Vec<String>, PermissionPrepError> {
+    if paths.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mounted = backend.verify_named_volume_mounts(paths)?;
+    require_batch_len("named-volume mount", paths.len(), mounted.len())?;
+    Ok(paths
+        .iter()
+        .zip(mounted)
+        .filter(|(_, mounted)| !*mounted)
+        .map(|(path, _)| path.clone())
+        .collect())
+}
+
 fn nested_verify_paths(target: &PreparedTarget) -> Vec<String> {
     rust_nested_probe_paths(&target.path, target.rust_cache)
 }
@@ -860,7 +922,21 @@ fn fail_with_identity(
     reason: String,
 ) -> PermissionPrepError {
     let mut message = format!(
-        "{reason}\nruntime profile=`{}` project=`{}` container=`{}` service=`{}` path=`{}` user=`{}` uid={} gid={} mount={} source=`{}`",
+        "{reason}\n{}",
+        runtime_identity_line(identity, target, context)
+    );
+    message.push('\n');
+    message.push_str(&safe_repair_guidance(identity, target, context));
+    PermissionPrepError::new(message)
+}
+
+fn runtime_identity_line(
+    identity: &ResolvedWorkspaceIdentity,
+    target: &PreparedTarget,
+    context: &PermissionPrepContext,
+) -> String {
+    format!(
+        "runtime profile=`{}` project=`{}` container=`{}` service=`{}` path=`{}` user=`{}` uid={} gid={} mount={} source=`{}`",
         context.profile,
         context.project_name,
         context.container_name,
@@ -871,10 +947,65 @@ fn fail_with_identity(
         identity.gid,
         mount_kind_label(target.mount_kind),
         target.source.as_deref().unwrap_or("-"),
-    );
-    message.push('\n');
-    message.push_str(&safe_repair_guidance(identity, target, context));
-    PermissionPrepError::new(message)
+    )
+}
+
+/// Detached submounts cannot be repaired by chown: the container sees the host
+/// directory, not the volume. Only recreating the containers restores the mount,
+/// so this names that recovery and never the safe-repair chown.
+fn detached_named_volume_error(
+    identity: &ResolvedWorkspaceIdentity,
+    target: &PreparedTarget,
+    context: &PermissionPrepContext,
+) -> PermissionPrepError {
+    PermissionPrepError::new(format!(
+        "declared named-volume mount `{}` is detached from the running container: it is absent from /proc/self/mountinfo, so the container sees the host directory underneath instead of the volume. A host tool likely replaced that directory under a VirtioFS mountpoint. Effigy will not scan or change the host directory.\n{}\nrecover with: effigy container down && effigy container up --detach",
+        target.path,
+        runtime_identity_line(identity, target, context),
+    ))
+}
+
+/// Mount points from `/proc/self/mountinfo`, with kernel octal escapes decoded
+/// and trailing slashes normalized. Field 5 (index 4) is the mount point; the
+/// kernel escapes spaces and tabs, so whitespace splitting is safe.
+fn parse_mountinfo_mountpoints(raw: &str) -> BTreeSet<String> {
+    raw.lines()
+        .filter_map(|line| line.split_whitespace().nth(4))
+        .map(|escaped| normalize_mount_path(&unescape_mountinfo_field(escaped)))
+        .collect()
+}
+
+fn unescape_mountinfo_field(raw: &str) -> String {
+    let bytes = raw.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'\\' && index + 4 <= bytes.len() {
+            let digits = &bytes[index + 1..index + 4];
+            if digits.iter().all(|digit| (b'0'..=b'7').contains(digit)) {
+                let value = digits
+                    .iter()
+                    .fold(0u32, |acc, digit| acc * 8 + u32::from(digit - b'0'));
+                if let Ok(byte) = u8::try_from(value) {
+                    decoded.push(byte);
+                    index += 4;
+                    continue;
+                }
+            }
+        }
+        decoded.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8_lossy(&decoded).into_owned()
+}
+
+fn normalize_mount_path(path: &str) -> String {
+    let trimmed = path.trim_end_matches('/');
+    if trimmed.is_empty() {
+        "/".to_owned()
+    } else {
+        trimmed.to_owned()
+    }
 }
 
 fn mount_kind_label(kind: WorkspaceMountKind) -> &'static str {
@@ -1035,6 +1166,27 @@ pub(in crate::runner) fn diagnose_workspace_ownership(
                     && is_dependency_tree_path(&target.path))
         })
         .collect::<Vec<_>>();
+    // A detached volume's path is the host directory underneath; probing it
+    // would report host state as container state, so it is reported alone.
+    let named_volume_paths = targets
+        .iter()
+        .filter(|target| target.mount_kind == WorkspaceMountKind::NamedVolume)
+        .map(|target| target.path.clone())
+        .collect::<Vec<_>>();
+    let detached_paths = match unmounted_named_volumes(&*backend, &named_volume_paths) {
+        Ok(paths) => paths,
+        Err(error) => return unavailable_workspace_diagnosis(policy, Some(identity), error),
+    };
+    let detached_samples = detached_paths
+        .iter()
+        .map(|path| {
+            format!("{path}\tdetached named volume; recover with effigy container down && effigy container up --detach")
+        })
+        .collect::<Vec<_>>();
+    let targets = targets
+        .into_iter()
+        .filter(|target| !detached_paths.contains(&target.path))
+        .collect::<Vec<_>>();
     let mut target_samples = vec![Vec::new(); targets.len()];
     let mut root_paths = targets
         .iter()
@@ -1112,6 +1264,7 @@ pub(in crate::runner) fn diagnose_workspace_ownership(
     for target_result in target_samples {
         samples.extend(target_result);
     }
+    samples.extend(detached_samples);
     if samples.is_empty() {
         WorkspaceOwnershipDiagnosis {
             status: WorkspaceOwnershipProbeStatus::Clean,
@@ -1440,6 +1593,31 @@ impl WorkspaceAccessBackend for ComposeAccessBackend<'_> {
         );
         let output = self.exec_as(identity, &argv, &label, false)?;
         parse_workspace_access_batch_output(&output.stdout, paths.len())
+    }
+
+    fn verify_named_volume_mounts(
+        &self,
+        paths: &[String],
+    ) -> Result<Vec<bool>, PermissionPrepError> {
+        if paths.is_empty() {
+            return Ok(Vec::new());
+        }
+        // `cat` runs in the container's mount namespace, so its /proc/self
+        // reports submounts that the host can no longer see through VirtioFS.
+        let output = self.exec_root(
+            &["cat", "/proc/self/mountinfo"],
+            "workspace named-volume mount verification",
+        )?;
+        if output.trim().is_empty() {
+            return Err(PermissionPrepError::new(
+                "workspace named-volume mount verification read an empty /proc/self/mountinfo",
+            ));
+        }
+        let mounted = parse_mountinfo_mountpoints(&output);
+        Ok(paths
+            .iter()
+            .map(|path| mounted.contains(&normalize_mount_path(path)))
+            .collect())
     }
 
     fn mkdir_p(&mut self, path: &str) -> Result<(), PermissionPrepError> {
@@ -2020,6 +2198,7 @@ mod memory_backend {
         root: MemoryNode,
         pub chown_log: Vec<String>,
         pub chmod_log: Vec<String>,
+        pub mkdir_log: Vec<String>,
         pub created_locks: Vec<String>,
         pub inspect_log: RefCell<Vec<String>>,
         pub list_unowned_calls: Cell<usize>,
@@ -2034,6 +2213,8 @@ mod memory_backend {
         protected: BTreeSet<String>,
         foreign: BTreeSet<String>,
         read_only: BTreeSet<String>,
+        /// Mountpoints the live mount table no longer reports.
+        detached: BTreeSet<String>,
     }
 
     impl MemoryAccessBackend {
@@ -2054,6 +2235,7 @@ mod memory_backend {
                 },
                 chown_log: Vec::new(),
                 chmod_log: Vec::new(),
+                mkdir_log: Vec::new(),
                 created_locks: Vec::new(),
                 inspect_log: RefCell::new(Vec::new()),
                 list_unowned_calls: Cell::new(0),
@@ -2065,7 +2247,12 @@ mod memory_backend {
                 protected: BTreeSet::new(),
                 foreign: BTreeSet::new(),
                 read_only: BTreeSet::new(),
+                detached: BTreeSet::new(),
             }
+        }
+
+        pub(super) fn detach(&mut self, path: impl Into<String>) {
+            self.detached.insert(path.into());
         }
 
         pub(super) fn protect(&mut self, path: impl Into<String>) {
@@ -2179,6 +2366,7 @@ mod memory_backend {
                     "refusing to mkdir over file `{path}`"
                 ))),
                 PathPresence::Missing => {
+                    self.mkdir_log.push(path.to_owned());
                     self.add_dir(path, 0, 0, 0o755);
                     Ok(())
                 }
@@ -2555,6 +2743,20 @@ mod memory_backend {
                 children.remove(".effigy-write-probe");
             }
             Ok(())
+        }
+
+        fn verify_named_volume_mounts(
+            &self,
+            paths: &[String],
+        ) -> Result<Vec<bool>, PermissionPrepError> {
+            if paths.is_empty() {
+                return Ok(Vec::new());
+            }
+            self.exec_calls.set(self.exec_calls.get() + 1);
+            Ok(paths
+                .iter()
+                .map(|path| !self.detached.contains(path))
+                .collect())
         }
 
         fn probe_access_many(
@@ -2961,6 +3163,165 @@ mod tests {
     }
 
     #[test]
+    fn mountinfo_reads_mountpoints_from_virtiofs_and_ext4_lines() {
+        let raw = "\
+1 0 0:1 / / rw,relatime - overlay overlay rw,lowerdir=/var/lib/overlay
+36 35 98:0 / /proc rw,nosuid,nodev,noexec,relatime shared:5 - proc proc rw
+212 210 254:1 / /workspace-root/acowtancy/node_modules rw,relatime shared:31 - ext4 /dev/vdb rw
+210 180 0:63 / /workspace-root/acowtancy rw,nosuid,relatime shared:12 - virtiofs mac rw,tag=mac
+";
+        let mounted = parse_mountinfo_mountpoints(raw);
+        assert_eq!(mounted.len(), 4);
+        assert!(mounted.contains("/"));
+        assert!(mounted.contains("/proc"));
+        assert!(mounted.contains("/workspace-root/acowtancy"));
+        assert!(mounted.contains("/workspace-root/acowtancy/node_modules"));
+    }
+
+    #[test]
+    fn mountinfo_without_the_submount_omits_the_detached_volume() {
+        let raw =
+            "210 180 0:63 / /workspace-root/acowtancy rw,relatime shared:12 - virtiofs mac rw\n";
+        let mounted = parse_mountinfo_mountpoints(raw);
+        assert!(mounted.contains("/workspace-root/acowtancy"));
+        assert!(!mounted.contains("/workspace-root/acowtancy/node_modules"));
+    }
+
+    #[test]
+    fn mountinfo_mountpoints_normalize_trailing_slashes_and_keep_root() {
+        let raw = "1 0 0:1 / / rw\n2 1 0:2 / /workspace/cache/ rw\n";
+        let mounted = parse_mountinfo_mountpoints(raw);
+        assert!(mounted.contains("/"));
+        assert!(mounted.contains("/workspace/cache"));
+        assert!(!mounted.contains("/workspace/cache/"));
+        assert_eq!(normalize_mount_path("/"), "/");
+        assert_eq!(
+            normalize_mount_path("/workspace/cache//"),
+            "/workspace/cache"
+        );
+    }
+
+    #[test]
+    fn mountinfo_decodes_kernel_octal_escapes_and_ignores_malformed_lines() {
+        let raw = "\
+301 210 0:70 / /mnt/my\\040dir rw - virtiofs mac rw
+302 210 0:71 / /mnt/tab\\011x rw - virtiofs mac rw
+303 210 0:72 / /mnt/back\\134slash rw - virtiofs mac rw
+304 210 0:73 / /mnt/nl\\012x rw - virtiofs mac rw
+305 210 0:74 / /mnt/literal\\zz rw - virtiofs mac rw
+306 210 0:75 / /mnt/over\\777 rw - virtiofs mac rw
+
+short line
+";
+        let mounted = parse_mountinfo_mountpoints(raw);
+        assert!(mounted.contains("/mnt/my dir"));
+        assert!(mounted.contains("/mnt/tab\tx"));
+        assert!(mounted.contains("/mnt/back\\slash"));
+        assert!(mounted.contains("/mnt/nl\nx"));
+        assert!(mounted.contains("/mnt/literal\\zz"));
+        assert!(mounted.contains("/mnt/over\\777"));
+        assert_eq!(mounted.len(), 6);
+    }
+
+    fn detached_volume_fixture() -> MemoryAccessBackend {
+        // The host VirtioFS directory the container sees once the submount is gone.
+        let mut backend = MemoryAccessBackend::new(vec![identity("dev", 501, 20)]);
+        backend.add_dir("/workspace/target", 0, 0, 0o755);
+        backend.add_dir("/workspace/target/debug", 0, 0, 0o755);
+        backend.add_file("/workspace/target/debug/.cargo-build-lock", 0, 0, 0o644);
+        backend.detach("/workspace/target");
+        backend
+    }
+
+    fn detached_volume_plan() -> WorkspaceOwnershipPlan {
+        WorkspaceOwnershipPlan {
+            targets: vec![owned_target(
+                "/workspace/target",
+                Some(WorkspaceRustCacheKind::RustTarget),
+            )],
+        }
+    }
+
+    #[test]
+    fn detached_named_volume_refuses_before_scanning_or_chowning_the_host_directory() {
+        let mut backend = detached_volume_fixture();
+        let error = prepare_workspace_permissions(
+            "dev",
+            &detached_volume_plan(),
+            None,
+            &context(),
+            &mut backend,
+        )
+        .expect_err("a detached named volume must not be repaired");
+
+        assert!(error
+            .message
+            .contains("detached from the running container"));
+        assert!(error
+            .message
+            .contains("recover with: effigy container down && effigy container up --detach"));
+        assert!(error.message.contains("profile=`effigy`"));
+        assert!(error.message.contains("project=`acowtancy-dev`"));
+        assert!(error.message.contains("container=`web`"));
+        assert!(error.message.contains("service=`workspace`"));
+        assert!(error.message.contains("path=`/workspace/target`"));
+        assert!(error.message.contains("mount=named-volume"));
+        assert!(error.message.contains("source=`vol-workspace-target`"));
+        assert!(!error.message.contains("safe repair"));
+        assert!(!error.message.contains("chown -R"));
+
+        assert_eq!(backend.list_unowned_calls.get(), 0, "no recursive scan");
+        assert_eq!(backend.bulk_calls, 0, "no bulk chown");
+        assert!(backend.chown_log.is_empty(), "no chown on the host tree");
+        assert!(backend.chmod_log.is_empty());
+        assert!(backend.created_locks.is_empty());
+        assert!(backend.mkdir_log.is_empty());
+        assert_eq!(
+            backend.owner_of("/workspace/target/debug/.cargo-build-lock"),
+            Some((0, 0)),
+            "host ownership is left as found"
+        );
+    }
+
+    #[test]
+    fn detached_named_volume_missing_on_host_is_not_created_by_mkdir() {
+        let mut backend = MemoryAccessBackend::new(vec![identity("dev", 501, 20)]);
+        backend.detach("/workspace/target");
+        let error = prepare_workspace_permissions(
+            "dev",
+            &detached_volume_plan(),
+            None,
+            &context(),
+            &mut backend,
+        )
+        .expect_err("a detached named volume must not be recreated on the host");
+
+        assert!(error
+            .message
+            .contains("detached from the running container"));
+        assert!(
+            backend.mkdir_log.is_empty(),
+            "mkdir runs after the mount check"
+        );
+        assert_eq!(backend.owner_of("/workspace/target"), None);
+    }
+
+    #[test]
+    fn derived_home_subpaths_are_not_checked_as_mountpoints() {
+        // `.cache` under a named-volume home is a directory inside the mount,
+        // not a mountpoint, so the mount table must not mark it detached.
+        let mut backend = MemoryAccessBackend::new(vec![identity("dev", 501, 20)]);
+        backend.add_dir("/home/dev", 501, 20, 0o755);
+        backend.add_dir("/home/dev/.cache", 501, 20, 0o755);
+        backend.detach("/home/dev/.cache");
+        let plan = WorkspaceOwnershipPlan {
+            targets: vec![owned_target("/home/dev", None)],
+        };
+        prepare_workspace_permissions("dev", &plan, Some("/home/dev"), &context(), &mut backend)
+            .expect("derived subpaths are not declared mountpoints");
+    }
+
+    #[test]
     fn numeric_uid_1000_is_distinct_from_501() {
         let mut backend = MemoryAccessBackend::new(vec![
             identity("dev", 1000, 1000),
@@ -3293,6 +3654,40 @@ volumes:
             .samples
             .iter()
             .any(|sample| sample.contains("/workspace/target/debug")));
+    }
+
+    #[test]
+    fn doctor_reports_detached_named_volume_without_probing_the_host_directory() {
+        let mut policy = effective_container_policy("web", "demo-web", "workspace", "compose.yml");
+        policy.workspace_user = Some("dev".to_owned());
+        policy.compose_files = Vec::new();
+        policy.managed_volumes = vec![ManagedVolume {
+            name: "demo-target".to_owned(),
+            service: "workspace".to_owned(),
+            persist: false,
+            size_bytes: None,
+            mount_point: None,
+            mount_target: Some("/workspace/target".to_owned()),
+        }];
+        let mut backend = detached_volume_fixture();
+        let finding = diagnose_workspace_ownership(&policy, Ok(true), &[], &mut backend);
+
+        assert_eq!(finding.status, WorkspaceOwnershipProbeStatus::Finding);
+        assert!(finding
+            .samples
+            .iter()
+            .any(|sample| sample.starts_with("/workspace/target\t")
+                && sample.contains("detached named volume")));
+        assert!(!finding
+            .samples
+            .iter()
+            .any(|sample| sample.contains("/workspace/target/debug")));
+        assert_eq!(backend.list_unowned_calls.get(), 0);
+        assert!(backend
+            .inspect_log
+            .borrow()
+            .iter()
+            .all(|path| !path.starts_with("/workspace/target")));
     }
 
     #[test]
@@ -3816,9 +4211,10 @@ services:
         );
         assert_eq!(first_repair_count, 3);
         assert_eq!(backend.bulk_calls, first_repair_count);
+        // One constant mount-table read per prep; it does not scale with volumes.
         assert_eq!(
-            repeated_calls, 4,
-            "identity, metadata, ownership, and access batches"
+            repeated_calls, 5,
+            "identity, mount-table, metadata, ownership, and access batches"
         );
         assert!(bulk_calls < 60, "bulk must be O(volumes): {bulk_calls}");
         assert!(backend
