@@ -2402,3 +2402,233 @@ fn legacy_bytes_are_imported_before_a_failed_remote_update() {
     assert!(ok, "{output}");
     assert!(output.contains("original"), "{output}");
 }
+
+fn git_source_fixture(
+    root: &Path,
+) -> (PathBuf, effigy_manifest::SourcePreparation, PathBuf, String) {
+    let manifest = root.join("effigy.toml");
+    let home = root.join("home");
+    fs::create_dir(&home).unwrap();
+    let preparation = effigy_manifest::SourcePreparation {
+        home,
+        executable: PathBuf::from(env!("CARGO_BIN_EXE_effigy")),
+        cancel: Default::default(),
+        budget: Duration::from_secs(30),
+        next: effigy_kernel::outcome::Invocation::validated(
+            vec!["bundle".into(), "sync".into()],
+            |args| args == ["bundle", "sync"],
+        )
+        .unwrap(),
+        progress: effigy_manifest::SourceProgress::silent(),
+    };
+    let remote = root.join("remote");
+    fs::create_dir(&remote).unwrap();
+    let output = Command::new("git")
+        .args(["init", "--quiet", "--initial-branch=main"])
+        .arg(&remote)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    write_remote_bundle(&remote, "echo remote");
+    let revision = commit_remote(&remote, "initial");
+    fs::write(
+        &manifest,
+        format!(
+            "[bundle]\nbase = {{ type = \"git\", url = {} }}\n",
+            toml::Value::String(remote.to_string_lossy().into_owned())
+        ),
+    )
+    .unwrap();
+
+    let object = format!(
+        "cache/sources/pinned/{}",
+        effigy_core::git_source::sha256_hex(b"bundle")
+    );
+    let object_root = root.join(".effigy").join(&object);
+    fs::create_dir_all(&object_root).unwrap();
+    fs::write(
+        object_root.join("bundle.toml"),
+        "[bundle]\nname = \"fixture\"\n",
+    )
+    .unwrap();
+    fs::write(
+        object_root.join("effigy.toml"),
+        "[tasks.hello]\nrun = \"echo pinned\"\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join(".effigy").join("sources.lock.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "version": 1,
+            "sources": {
+                "bundle": {
+                    "declaration": {"type": "git", "url": remote.to_string_lossy(), "ref": null},
+                    "object": object,
+                    "version": "pinned-version",
+                    "revision": revision,
+                }
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    (manifest, preparation, remote, revision)
+}
+
+fn write_remote_bundle(remote: &Path, task: &str) {
+    fs::write(remote.join("bundle.toml"), "[bundle]\nname = \"fixture\"\n").unwrap();
+    fs::write(
+        remote.join("effigy.toml"),
+        format!(
+            "[tasks.hello]\nrun = {}\n",
+            toml::Value::String(task.to_owned())
+        ),
+    )
+    .unwrap();
+}
+
+fn commit_remote(remote: &Path, message: &str) -> String {
+    for args in [
+        vec!["add", "."],
+        vec![
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.com",
+            "commit",
+            "--quiet",
+            "-m",
+            message,
+        ],
+    ] {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(remote)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(remote)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap().trim().to_owned()
+}
+
+fn source_generation_names(root: &Path) -> Vec<String> {
+    let path = root.join(".effigy/cache/sources");
+    let mut names = fs::read_dir(path)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    names.sort();
+    names
+}
+
+fn capture_source_progress(
+    preparation: &mut effigy_manifest::SourcePreparation,
+) -> std::sync::Arc<std::sync::Mutex<Vec<effigy_manifest::SourceProgressEvent>>> {
+    let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = std::sync::Arc::clone(&events);
+    preparation.progress =
+        effigy_manifest::SourceProgress::to(move |event| sink.lock().unwrap().push(event));
+    events
+}
+
+#[test]
+fn unchanged_remote_check_does_not_create_a_generation_or_prune_note() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (manifest, mut preparation, _remote, _revision) = git_source_fixture(tmp.path());
+    let lock_before = fs::read(tmp.path().join(".effigy/sources.lock.json")).unwrap();
+    let events = capture_source_progress(&mut preparation);
+
+    let report = effigy_manifest::prepare_bundle_sources(&manifest, &preparation)
+        .unwrap()
+        .unwrap();
+
+    assert!(report.notes.is_empty(), "{:?}", report.notes);
+    assert_eq!(source_generation_names(tmp.path()), ["pinned"]);
+    assert_eq!(
+        fs::read(tmp.path().join(".effigy/sources.lock.json")).unwrap(),
+        lock_before
+    );
+    assert!(!events.lock().unwrap().iter().any(|event| matches!(
+        event,
+        effigy_manifest::SourceProgressEvent::Note { message }
+            if message.contains("source generation")
+    )));
+}
+
+#[test]
+fn changed_remote_prunes_and_reports_the_previous_generation() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (manifest, mut preparation, remote, previous_revision) = git_source_fixture(tmp.path());
+    write_remote_bundle(&remote, "echo advanced");
+    let revision = commit_remote(&remote, "advanced");
+    assert_ne!(revision, previous_revision);
+    let events = capture_source_progress(&mut preparation);
+
+    let report = effigy_manifest::prepare_bundle_sources(&manifest, &preparation)
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(
+        report.sources["bundle"].version_hint.as_deref(),
+        Some(revision.as_str())
+    );
+    assert!(source_generation_names(tmp.path())
+        .iter()
+        .all(|name| name != "pinned"));
+    assert!(events.lock().unwrap().iter().any(|event| matches!(
+        event,
+        effigy_manifest::SourceProgressEvent::Note { message }
+            if message == "pruned 1 source generation nothing pins"
+    )));
+}
+
+#[test]
+fn failed_refresh_removes_its_generation_without_a_prune_note() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (manifest, mut preparation, remote, previous_revision) = git_source_fixture(tmp.path());
+    fs::write(remote.join("effigy.toml"), "[tasks.hello]\nrun = 42\n").unwrap();
+    let revision = commit_remote(&remote, "invalid bundle");
+    assert_ne!(revision, previous_revision);
+    let lock_before = fs::read(tmp.path().join(".effigy/sources.lock.json")).unwrap();
+    let events = capture_source_progress(&mut preparation);
+
+    let report = effigy_manifest::prepare_bundle_sources(&manifest, &preparation)
+        .unwrap()
+        .unwrap();
+
+    assert!(!report.warnings.is_empty());
+    assert_eq!(
+        report.sources["bundle"].version_hint.as_deref(),
+        Some(previous_revision.as_str())
+    );
+    assert_eq!(source_generation_names(tmp.path()), ["pinned"]);
+    assert_eq!(
+        fs::read(tmp.path().join(".effigy/sources.lock.json")).unwrap(),
+        lock_before
+    );
+    assert!(!events.lock().unwrap().iter().any(|event| matches!(
+        event,
+        effigy_manifest::SourceProgressEvent::Note { message }
+            if message.contains("source generation")
+    )));
+}
