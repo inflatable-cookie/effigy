@@ -37,8 +37,9 @@ ignore = [
     # thiserror 2 stack, so its ignore is removed instead of kept as an unused
     # exception. Reviewed 2026-11-19.
     # smartstring is unmaintained; Rhai uses it internally and currently offers
-    # no feature or release that removes it. No vulnerability. Reviewed 2026-08-11.
-    { id = "RUSTSEC-2026-0249", reason = "reviewed 2026-08-11: unmaintained-only; transitive via Rhai runtime; no safe upgrade yet" },
+    # no feature or release that removes it. No vulnerability. Re-checked
+    # 2026-11-23: still in the graph via the rhai runtime, so the ignore stays.
+    { id = "RUSTSEC-2026-0249", reason = "reviewed 2026-11-23: unmaintained-only; transitive via Rhai runtime; no safe upgrade yet" },
     # chrono is unmaintained as of RUSTSEC-2026-0543 and every version is
     # affected; there is no safe upgrade. Effigy uses it first-party (state,
     # runtime, release, manifest, gateway, rhai), so leaving it is a scheduled
