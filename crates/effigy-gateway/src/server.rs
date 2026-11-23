@@ -843,12 +843,16 @@ async fn bind_private_gateway_listeners(
                     .all(|addr| matches!(addr.port(), 80 | 443))
                 && error.kind() == std::io::ErrorKind::PermissionDenied =>
         {
+            // Keep broker failures inside `direct` so they map through
+            // GatewayError::ProxyBindError below with full broker context,
+            // instead of early-returning as an opaque GatewayError::Io.
             let endpoints = [config.proxy.bind_addr, https_bind_addr];
-            let handed =
-                tokio::task::spawn_blocking(move || crate::bind_broker::request(endpoints))
-                    .await
-                    .map_err(std::io::Error::other)??;
-            Ok(handed.into_tokio()?)
+            match tokio::task::spawn_blocking(move || crate::bind_broker::request(endpoints)).await
+            {
+                Err(join) => Err(std::io::Error::other(join)),
+                Ok(Err(failure)) => Err(failure),
+                Ok(Ok(handed)) => handed.into_tokio(),
+            }
         }
         other => other,
     };
