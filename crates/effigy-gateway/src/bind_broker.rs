@@ -22,6 +22,12 @@ pub fn label(uid: u32) -> String {
 pub fn socket_path(uid: u32) -> PathBuf {
     PathBuf::from(format!("/private/var/run/{}.sock", label(uid)))
 }
+/// The broker job's stderr log, as routed by setup's launchd definition.
+pub fn log_path(uid: u32) -> PathBuf {
+    PathBuf::from(format!("/private/var/log/{}.log", label(uid)))
+}
+/// The longest the broker may take to answer one request, in either direction.
+const REPLY_TIMEOUT: Duration = Duration::from_secs(3);
 
 // The gateway's standard endpoint and its setup-installed alias range. Keep
 // this policy independent of operator-writable JSON and request parameters;
@@ -91,8 +97,8 @@ fn bounded(stream: &UnixStream) -> io::Result<()> {
         }
     }
 
-    stream.set_read_timeout(Some(Duration::from_secs(3)))?;
-    stream.set_write_timeout(Some(Duration::from_secs(3)))
+    stream.set_read_timeout(Some(REPLY_TIMEOUT))?;
+    stream.set_write_timeout(Some(REPLY_TIMEOUT))
 }
 fn peer_uid(stream: &UnixStream) -> io::Result<u32> {
     #[cfg(target_os = "macos")]
@@ -235,6 +241,133 @@ fn activated_socket_matches(raw: &Path, expected: &Path) -> bool {
     canonical(path) == canonical(expected)
 }
 
+/// The filesystem facts the staged-socket check reads. Production reads disk;
+/// tests supply them, so every trust rule runs without root.
+#[cfg(any(target_os = "macos", test))]
+trait Namespace {
+    /// Metadata of `path` without following a final symlink.
+    fn node(&self, path: &Path) -> Option<Node>;
+    fn canonical(&self, path: &Path) -> Option<PathBuf>;
+}
+
+#[cfg(any(target_os = "macos", test))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Kind {
+    Directory,
+    Socket,
+    Symlink,
+    Other,
+}
+
+#[cfg(any(target_os = "macos", test))]
+#[derive(Clone, Copy, Debug)]
+struct Node {
+    kind: Kind,
+    uid: u32,
+    gid: u32,
+    mode: u32,
+}
+
+#[cfg(target_os = "macos")]
+struct Disk;
+
+#[cfg(target_os = "macos")]
+impl Namespace for Disk {
+    fn node(&self, path: &Path) -> Option<Node> {
+        let meta = std::fs::symlink_metadata(path).ok()?;
+        let file_type = meta.file_type();
+        let kind = if file_type.is_symlink() {
+            Kind::Symlink
+        } else if file_type.is_dir() {
+            Kind::Directory
+        } else if file_type.is_socket() {
+            Kind::Socket
+        } else {
+            Kind::Other
+        };
+        Some(Node {
+            kind,
+            uid: meta.uid(),
+            gid: meta.gid(),
+            mode: meta.mode(),
+        })
+    }
+    fn canonical(&self, path: &Path) -> Option<PathBuf> {
+        std::fs::canonicalize(path).ok()
+    }
+}
+
+/// Accepts launchd's private staging of the activated broker socket. On boot
+/// launchd binds `/var/run/com.apple.launchd.<token>/broker`, then renames the
+/// socket to `expected`; `getsockname` keeps the pre-rename path. Accept that
+/// path only when the root-owned, private staging directory and the renamed
+/// root-owned, non-world-accessible socket both check out.
+#[cfg(any(target_os = "macos", test))]
+fn staged_socket_accepted(raw: &Path, expected: &Path, ns: &impl Namespace) -> bool {
+    let path = activated_socket_path(raw);
+    if path.file_name() != Some(std::ffi::OsStr::new("broker")) {
+        return false;
+    }
+    let Some(staging) = path.parent() else {
+        return false;
+    };
+    let Some(token) = staging
+        .file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.strip_prefix("com.apple.launchd."))
+    else {
+        return false;
+    };
+    if token.is_empty() || token.contains('/') {
+        return false;
+    }
+    let Some(run) = staging.parent() else {
+        return false;
+    };
+    let run_path = Path::new("/private/var/run");
+    if ns.canonical(run).as_deref() != Some(run_path) {
+        return false;
+    }
+    let Some(run_node) = ns.node(run_path) else {
+        return false;
+    };
+    if !socket_parent_trusted(
+        run_node.uid,
+        run_node.gid,
+        run_node.mode,
+        run_node.kind == Kind::Directory,
+    ) {
+        return false;
+    }
+    let Some(dir) = ns.node(staging) else {
+        return false;
+    };
+    if dir.kind != Kind::Directory || dir.uid != 0 || dir.mode & 0o077 != 0 {
+        return false;
+    }
+    let Some(socket) = ns.node(expected) else {
+        return false;
+    };
+    socket.kind == Kind::Socket && socket.uid == 0 && socket.mode & 0o007 == 0
+}
+
+/// Names the broker, its socket and log, and setup when a request gets no reply
+/// in time. Other I/O failures pass through unchanged.
+fn no_reply(uid: u32, failure: io::Error) -> io::Error {
+    if matches!(
+        failure.kind(),
+        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+    ) {
+        return error(format!(
+            "bind broker did not answer within {}s on {}; check {} or re-run `effigy gateway setup`",
+            REPLY_TIMEOUT.as_secs(),
+            socket_path(uid).display(),
+            log_path(uid).display()
+        ));
+    }
+    failure
+}
+
 /// Connect only to setup's root-owned socket under the root-owned run directory.
 pub fn request(addresses: [SocketAddr; 2]) -> io::Result<HandedListeners> {
     let uid = nix::unistd::Uid::effective().as_raw();
@@ -255,7 +388,7 @@ pub fn request(addresses: [SocketAddr; 2]) -> io::Result<HandedListeners> {
     if peer_uid(&stream)? != 0 {
         return Err(error("bind broker is not root-owned"));
     }
-    receive(&mut stream, addresses)
+    receive(&mut stream, addresses).map_err(|failure| no_reply(uid, failure))
 }
 /// Binary entry. The privileged process reads only setup-pinned arguments and
 /// launchd's socket, never HOME, routes, certificates, or the kernel Store.
@@ -280,7 +413,9 @@ pub fn entry(uid: u32) -> io::Result<()> {
     let listener = UnixListener::from(fd);
     if let Some(raw) = listener.local_addr()?.as_pathname() {
         let expected = socket_path(uid);
-        if !activated_socket_matches(raw, &expected) {
+        if !activated_socket_matches(raw, &expected)
+            && !staged_socket_accepted(raw, &expected, &Disk)
+        {
             eprintln!(
                 "effigy bind broker: unexpected socket {:?} (expected {})",
                 activated_socket_path(raw),
@@ -483,5 +618,196 @@ mod tests {
             .unwrap()
             .expect_err("invalid adoption receipt");
         assert!(error.to_string().contains("not acknowledged"));
+    }
+
+    const STAGED: &str = "/private/var/run/com.apple.launchd.dvGRrkujvv";
+    const EXPECTED: &str = "/private/var/run/dev.effigy.gateway.bind-broker.501.sock";
+
+    /// In-memory namespace. `/var` is a symlink to `/private`, as on macOS.
+    #[derive(Default)]
+    struct Fake {
+        nodes: std::collections::HashMap<PathBuf, Node>,
+    }
+    fn normalize(path: &Path) -> PathBuf {
+        match path.strip_prefix("/var/run") {
+            Ok(rest) => Path::new("/private/var/run").join(rest),
+            Err(_) => path.to_path_buf(),
+        }
+    }
+    impl Namespace for Fake {
+        fn node(&self, path: &Path) -> Option<Node> {
+            self.nodes.get(&normalize(path)).copied()
+        }
+        fn canonical(&self, path: &Path) -> Option<PathBuf> {
+            let path = normalize(path);
+            self.nodes.contains_key(&path).then_some(path)
+        }
+    }
+    fn node(kind: Kind, uid: u32, gid: u32, mode: u32) -> Node {
+        Node {
+            kind,
+            uid,
+            gid,
+            mode,
+        }
+    }
+    fn with(mut fake: Fake, path: &str, value: Node) -> Fake {
+        fake.nodes.insert(PathBuf::from(path), value);
+        fake
+    }
+    fn launchd_fake() -> Fake {
+        let fake = with(
+            Fake::default(),
+            "/private/var/run",
+            node(Kind::Directory, 0, 1, 0o40775),
+        );
+        let fake = with(fake, STAGED, node(Kind::Directory, 0, 0, 0o40700));
+        with(fake, EXPECTED, node(Kind::Socket, 0, 0, 0o140600))
+    }
+    fn staged(raw: &str, fake: &Fake) -> bool {
+        staged_socket_accepted(Path::new(raw), Path::new(EXPECTED), fake)
+    }
+
+    #[test]
+    fn launchd_staged_broker_socket_is_accepted_when_it_checks_out() {
+        let fake = launchd_fake();
+        assert!(staged(
+            "/var/run/com.apple.launchd.dvGRrkujvv/broker",
+            &fake
+        ));
+        assert!(staged(
+            "/private/var/run/com.apple.launchd.dvGRrkujvv/broker",
+            &fake
+        ));
+        // launchd may hand back the NUL-padded sun_path buffer.
+        assert!(staged(
+            "/var/run/com.apple.launchd.dvGRrkujvv/broker\0\0\0",
+            &fake
+        ));
+    }
+
+    #[test]
+    fn launchd_staged_broker_socket_refuses_wrong_socket_name_and_parent() {
+        let fake = launchd_fake();
+        assert!(!staged(
+            "/var/run/com.apple.launchd.dvGRrkujvv/foreign.sock",
+            &fake
+        ));
+        let fake = with(
+            fake,
+            "/private/var/run/launchd.dvGRrkujvv",
+            node(Kind::Directory, 0, 0, 0o40700),
+        );
+        assert!(!staged("/private/var/run/launchd.dvGRrkujvv/broker", &fake));
+        assert!(!staged("/private/var/run/com.apple.launchd./broker", &fake));
+    }
+
+    #[test]
+    fn launchd_staged_broker_socket_refuses_staging_outside_the_run_directory() {
+        let fake = with(
+            launchd_fake(),
+            "/private/tmp",
+            node(Kind::Directory, 0, 0, 0o41777),
+        );
+        let fake = with(
+            fake,
+            "/private/tmp/com.apple.launchd.dvGRrkujvv",
+            node(Kind::Directory, 0, 0, 0o40700),
+        );
+        assert!(!staged(
+            "/private/tmp/com.apple.launchd.dvGRrkujvv/broker",
+            &fake
+        ));
+        // An unmapped parent cannot canonicalise to the trusted run directory.
+        assert!(!staged("/tmp/com.apple.launchd.dvGRrkujvv/broker", &fake));
+    }
+
+    #[test]
+    fn launchd_staged_broker_socket_refuses_untrusted_staging_directory() {
+        for mode in [0o40750, 0o40755, 0o40777] {
+            let fake = with(launchd_fake(), STAGED, node(Kind::Directory, 0, 0, mode));
+            assert!(!staged(
+                "/var/run/com.apple.launchd.dvGRrkujvv/broker",
+                &fake
+            ));
+        }
+        let fake = with(
+            launchd_fake(),
+            STAGED,
+            node(Kind::Directory, 501, 0, 0o40700),
+        );
+        assert!(!staged(
+            "/var/run/com.apple.launchd.dvGRrkujvv/broker",
+            &fake
+        ));
+        let fake = with(launchd_fake(), STAGED, node(Kind::Symlink, 0, 0, 0o120777));
+        assert!(!staged(
+            "/var/run/com.apple.launchd.dvGRrkujvv/broker",
+            &fake
+        ));
+    }
+
+    #[test]
+    fn launchd_staged_broker_socket_refuses_untrusted_run_directory() {
+        let fake = with(
+            launchd_fake(),
+            "/private/var/run",
+            node(Kind::Directory, 0, 1, 0o40777),
+        );
+        assert!(!staged(
+            "/var/run/com.apple.launchd.dvGRrkujvv/broker",
+            &fake
+        ));
+    }
+
+    #[test]
+    fn launchd_staged_broker_socket_refuses_untrusted_expected_socket() {
+        let base = || launchd_fake();
+        let raw = "/var/run/com.apple.launchd.dvGRrkujvv/broker";
+        assert!(!staged(
+            raw,
+            &with(base(), EXPECTED, node(Kind::Socket, 0, 0, 0o140666))
+        ));
+        assert!(!staged(
+            raw,
+            &with(base(), EXPECTED, node(Kind::Socket, 0, 0, 0o140707))
+        ));
+        assert!(!staged(
+            raw,
+            &with(base(), EXPECTED, node(Kind::Socket, 501, 0, 0o140600))
+        ));
+        assert!(!staged(
+            raw,
+            &with(base(), EXPECTED, node(Kind::Directory, 0, 0, 0o40700))
+        ));
+        assert!(!staged(
+            raw,
+            &with(base(), EXPECTED, node(Kind::Symlink, 0, 0, 0o120777))
+        ));
+        let mut missing = launchd_fake();
+        missing.nodes.remove(Path::new(EXPECTED));
+        assert!(!staged(raw, &missing));
+    }
+
+    #[test]
+    fn bind_reply_timeout_names_the_broker_log_and_setup() {
+        let socket = socket_path(501).display().to_string();
+        let log = log_path(501).display().to_string();
+        for failure in [
+            io::Error::from(io::ErrorKind::TimedOut),
+            io::Error::from_raw_os_error(nix::errno::Errno::EAGAIN as i32),
+        ] {
+            let message = no_reply(501, failure).to_string();
+            assert!(
+                message.contains("bind broker did not answer within 3s"),
+                "{message}"
+            );
+            assert!(message.contains(&socket), "{message}");
+            assert!(message.contains(&log), "{message}");
+            assert!(message.contains("effigy gateway setup"), "{message}");
+            assert!(!message.contains("os error 35"), "{message}");
+        }
+        let passthrough = no_reply(501, io::Error::from(io::ErrorKind::BrokenPipe));
+        assert_eq!(passthrough.kind(), io::ErrorKind::BrokenPipe);
     }
 }
