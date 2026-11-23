@@ -1128,6 +1128,22 @@ fn listener_command_runtime_detection_is_narrow() {
 }
 
 #[test]
+fn colima_ssh_mux_listener_is_runtime_managed_but_a_plain_ssh_forward_is_not() {
+    // The full command line macOS reports for Colima/Lima's own ControlMaster:
+    // OpenSSH's setproctitle rewrites argv[0] to this title. Before the kernel
+    // read, a sandboxed run could only fall back to lsof's short `ssh` column
+    // and refused the container's own port forwarder as an unrelated listener.
+    assert!(listener_command_looks_runtime_managed(
+        "ssh: /Users/tom/.colima/_lima/colima-effigy/ssh.sock [mux]"
+    ));
+    // Neither the short name nor an unrelated forward carries a runtime marker.
+    assert!(!listener_command_looks_runtime_managed("ssh"));
+    assert!(!listener_command_looks_runtime_managed(
+        "ssh -N -L 49178:127.0.0.1:80 user@host"
+    ));
+}
+
+#[test]
 fn parse_runtime_port_binding_range_tracks_host_and_container_ports() {
     assert_eq!(
         parse_runtime_port_binding_range("0.0.0.0:41001->80/tcp").expect("binding"),

@@ -149,15 +149,11 @@ fn wait_until_gone(pids: impl IntoIterator<Item = u32>, grace: Duration) -> Vec<
 }
 
 /// A PID's command line, for the failure report.
+///
+/// The kernel read works inside `sandbox-exec`, where macOS refuses the setuid
+/// `/bin/ps` the sweep used to call.
 fn describe(pid: u32) -> String {
-    let output = std::process::Command::new("ps")
-        .args(["-o", "command=", "-p", &pid.to_string()])
-        .output();
-    let description = output
-        .ok()
-        .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
-        .unwrap_or_default();
-    description.split_whitespace().collect::<Vec<_>>().join(" ")
+    effigy_process::process_command_line(pid).unwrap_or_default()
 }
 
 /// Live PIDs of this user carrying the suite marker. macOS hides another
@@ -211,4 +207,28 @@ fn holders(_marker: &Path, token: &str) -> Vec<u32> {
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn holders(_marker: &Path, _token: &str) -> Vec<u32> {
     Vec::new()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A PID's description is the kernel's own command line for it, which is
+    /// readable inside `sandbox-exec`, where macOS refuses the setuid `/bin/ps`
+    /// this report used to call.
+    #[test]
+    fn describe_reports_the_kernel_command_line_on_one_line() {
+        let described = describe(std::process::id());
+        assert!(
+            !described.trim().is_empty(),
+            "own command line: {described:?}"
+        );
+        assert!(!described.contains('\n'), "one line: {described:?}");
+    }
+
+    /// A PID that exists no more describes as nothing instead of a stale name.
+    #[test]
+    fn describe_of_an_absent_pid_is_empty() {
+        assert_eq!(describe(0), "");
+    }
 }

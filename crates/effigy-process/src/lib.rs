@@ -11,6 +11,7 @@ mod diagnostics;
 mod identity;
 mod lifecycle;
 mod locks;
+mod process_command;
 mod signal;
 mod streams;
 mod supervisor_control;
@@ -22,6 +23,7 @@ pub use identity::{
     boot_identity, boot_identity_uncached, compare_boot_identity, legacy_boot_time_identity,
     process_start_identity, process_start_identity_matches, BootIdentityComparison,
 };
+pub use process_command::process_command_line;
 pub use signal::{
     interrupted_signal, process_group_member_ids, process_is_running, surviving_group_member_ids,
     terminate_process_tree, ProcessTreeError,

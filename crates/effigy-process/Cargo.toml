@@ -7,6 +7,9 @@ publish = false
 description = "Process supervision subsystem for Effigy (spawn, stdio streaming, shutdown, diagnostics)"
 
 [dependencies]
+# Kernel process inspection (KERN_PROCARGS2, libproc) answers in-process what a
+# setuid `/bin/ps` is refused under macOS `sandbox-exec`.
+libc = "0.2"
 nix = { version = "0.31", default-features = false, features = ["process", "signal"] }
 
 [lints]

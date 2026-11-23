@@ -1264,6 +1264,7 @@ name = "effigy-process"
 version = "0.14.1"
 dependencies = [
  "effigy-test-support",
+ "libc",
  "nix 0.31.3",
 ]
 

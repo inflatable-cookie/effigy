@@ -204,6 +204,33 @@ fn invalid_group(group: u32) -> std::io::Error {
 /// Read one snapshot of the live process table.
 #[cfg(unix)]
 fn read_process_table() -> Result<Vec<ProcessRow>, std::io::Error> {
+    let ps_error = match read_process_table_with_ps() {
+        Ok(rows) => return Ok(rows),
+        Err(error) => error,
+    };
+    // macOS `/bin/ps` is setuid root, so `sandbox-exec` refuses the `execve`
+    // with `EPERM` before the listing program can run at all. Public libproc
+    // answers the same four facts in-process, so a supervised run under a
+    // Seatbelt profile still enumerates its own tree.
+    #[cfg(target_os = "macos")]
+    if blocked_setuid_ps(&ps_error) {
+        return read_process_table_libproc();
+    }
+    Err(ps_error)
+}
+
+/// Whether `ps` failed because this platform refused to execute it at all.
+///
+/// macOS `/bin/ps` is setuid root, so a `sandbox-exec` Seatbelt profile refuses
+/// `execve` with `EPERM` before the program runs, whatever the profile allows.
+#[cfg(target_os = "macos")]
+fn blocked_setuid_ps(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::PermissionDenied
+        || error.raw_os_error() == Some(libc::EPERM)
+}
+
+#[cfg(unix)]
+fn read_process_table_with_ps() -> Result<Vec<ProcessRow>, std::io::Error> {
     let output = ProcessCommand::new("ps")
         .args(["-Ao", "pid=,ppid=,pgid=,stat="])
         .output()?;
@@ -213,6 +240,123 @@ fn read_process_table() -> Result<Vec<ProcessRow>, std::io::Error> {
         ));
     }
     parse_process_table(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// Read the same snapshot through public macOS libproc.
+///
+/// `proc_listallpids` names every PID and `proc_pidinfo(PROC_PIDTBSDINFO)`
+/// answers one row's parent, group and status. Neither is setuid, so both work
+/// inside `sandbox-exec`. A PID that vanished or belongs to another user is
+/// skipped: its row cannot be read, and it cannot be a member or descendant of
+/// a process this supervisor started. The caller's own PID must appear, so a
+/// wholly broken libproc call is reported rather than read as an empty tree.
+#[cfg(target_os = "macos")]
+fn read_process_table_libproc() -> Result<Vec<ProcessRow>, std::io::Error> {
+    let mut pids = vec![0i32; 1 << 17];
+    // SAFETY: `pids` is an aligned writable allocation sized by the byte count
+    // passed below, which stays well inside `i32::MAX`.
+    let count = unsafe {
+        libc::proc_listallpids(
+            pids.as_mut_ptr().cast(),
+            (pids.len() * std::mem::size_of::<i32>()) as i32,
+        )
+    };
+    if count <= 0 {
+        // libproc answers 0 both for an empty inventory and for a failure; the
+        // empty inventory is impossible here, so this is a failure.
+        let error = std::io::Error::last_os_error();
+        return Err(if error.raw_os_error() == Some(0) {
+            std::io::Error::other("process inventory unavailable")
+        } else {
+            error
+        });
+    }
+    if count as usize >= pids.len() {
+        return Err(std::io::Error::other("process inventory is truncated"));
+    }
+    pids.truncate(count as usize);
+    let own_pid = std::process::id();
+    let mut rows = Vec::with_capacity(pids.len());
+    let mut own_pid_seen = false;
+    for pid in pids {
+        if pid <= 0 {
+            continue;
+        }
+        match read_bsdinfo(pid) {
+            Ok(info) => {
+                own_pid_seen |= info.pbi_pid == own_pid;
+                rows.push(ProcessRow {
+                    pid: info.pbi_pid.cast_signed(),
+                    parent: info.pbi_ppid.cast_signed(),
+                    group: info.pbi_pgid,
+                    // `SZOMB` is the kernel's exited-but-unreaped state.
+                    zombie: info.pbi_status == libc::SZOMB,
+                });
+            }
+            Err(error) if is_unreadable_row(&error) => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    if !own_pid_seen {
+        return Err(std::io::Error::other(
+            "process inventory did not name the caller",
+        ));
+    }
+    Ok(rows)
+}
+
+/// One PID's `proc_bsdinfo`, or the errno that refused it.
+#[cfg(target_os = "macos")]
+fn read_bsdinfo(pid: i32) -> Result<libc::proc_bsdinfo, std::io::Error> {
+    let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::uninit();
+    let size = std::mem::size_of::<libc::proc_bsdinfo>();
+    // SAFETY: an aligned writable destination of exactly the byte count passed,
+    // for a positive PID taken from the inventory. No initialized field is read
+    // unless the full structure size was returned.
+    let read = unsafe {
+        libc::proc_pidinfo(
+            pid,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            info.as_mut_ptr().cast(),
+            size as i32,
+        )
+    };
+    if read != size as i32 {
+        return Err(if read <= 0 {
+            std::io::Error::last_os_error()
+        } else {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "macOS process info returned a partial structure",
+            )
+        });
+    }
+    // SAFETY: `proc_pidinfo` returned exactly the initialized destination size.
+    let info = unsafe { info.assume_init() };
+    if info.pbi_pid != pid as u32 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "macOS process info returned a different PID",
+        ));
+    }
+    Ok(info)
+}
+
+/// Whether one PID's unreadable row is expected rather than a broken reader.
+///
+/// `ESRCH` is a process that exited between the inventory and the read, and
+/// `EPERM` is another user's process; neither can be a member or descendant of
+/// a process this supervisor started. Errno 0 is libproc refusing to answer
+/// with no reason recorded, which is what a process the kernel has already torn
+/// down reads as, so it is a row that is not there rather than a broken reader.
+/// A wholly broken libproc fails the caller's own row instead.
+#[cfg(target_os = "macos")]
+fn is_unreadable_row(error: &std::io::Error) -> bool {
+    matches!(
+        error.raw_os_error(),
+        Some(libc::ESRCH) | Some(libc::EPERM) | Some(0)
+    )
 }
 
 /// Parse `ps -Ao pid=,ppid=,pgid=,stat=` output.
@@ -390,6 +534,8 @@ fn signal_process_tree(root_pid: i32, signal: Signal) -> Result<(), ProcessTreeE
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    #[cfg(target_os = "macos")]
+    use std::os::unix::process::CommandExt;
 
     fn row(pid: i32, parent: i32, group: u32, zombie: bool) -> ProcessRow {
         ProcessRow {
@@ -474,5 +620,122 @@ mod tests {
         let error = ProcessTreeError::Unenumerated(error.expect("the read failure is reported"));
         assert!(error.is_unenumerated());
         assert!(error.to_string().contains("not signalled"));
+    }
+
+    /// The setuid helper is replaced only when the platform refused to execute
+    /// it; a listing that ran and failed stays a failure.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn only_an_unexecutable_ps_falls_back_to_libproc() {
+        assert!(blocked_setuid_ps(&std::io::Error::from_raw_os_error(
+            libc::EPERM
+        )));
+        assert!(blocked_setuid_ps(&std::io::Error::from_raw_os_error(
+            libc::EACCES
+        )));
+        assert!(!blocked_setuid_ps(&std::io::Error::other("exit status 1")));
+        assert!(!blocked_setuid_ps(&std::io::Error::from_raw_os_error(
+            libc::EAGAIN
+        )));
+    }
+
+    /// A PID that vanished or belongs to another user is skipped, so one
+    /// unreadable row never invalidates the whole snapshot.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn vanished_and_foreign_rows_are_skipped() {
+        assert!(is_unreadable_row(&std::io::Error::from_raw_os_error(
+            libc::ESRCH
+        )));
+        assert!(is_unreadable_row(&std::io::Error::from_raw_os_error(
+            libc::EPERM
+        )));
+        assert!(!is_unreadable_row(&std::io::Error::other("broken reader")));
+    }
+
+    /// Public libproc answers the whole table in-process, so supervision keeps
+    /// working under `sandbox-exec`, where the setuid `/bin/ps` is refused.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn libproc_table_names_this_process_its_parent_and_a_child_group() {
+        let own_pid = std::process::id();
+        let parent_pid = nix::unistd::getppid().as_raw();
+        let own_group = nix::unistd::getpgid(None)
+            .expect("own process group")
+            .as_raw();
+
+        // One live child as the leader of its own group, exactly the shape of
+        // an Effigy-owned workload group. `process_group(0)` puts the child in a
+        // fresh group whose ID is its own PID.
+        let mut child = ProcessCommand::new("sleep")
+            .arg("5")
+            .process_group(0)
+            .spawn()
+            .expect("spawn a child in its own group");
+        let child_pid = i32::try_from(child.id()).expect("child pid");
+
+        let table = read_process_table_libproc().expect("libproc process table");
+        let own = table
+            .iter()
+            .find(|row| row.pid == own_pid as i32)
+            .expect("the snapshot names the caller");
+        assert_eq!(own.group, own_group as u32);
+        assert!(!own.zombie, "the caller is live");
+        assert!(
+            table.iter().any(|row| row.pid == parent_pid),
+            "the snapshot names the caller's parent {parent_pid}"
+        );
+        let child_row = table
+            .iter()
+            .find(|row| row.pid == child_pid)
+            .expect("the snapshot names the spawned child");
+        assert_eq!(child_row.parent, own_pid as i32);
+        assert_eq!(child_row.group, child.id());
+        assert!(!child_row.zombie);
+        assert_eq!(group_member_ids(&table, child.id()), vec![child.id()]);
+
+        child.kill().expect("stop the child");
+        child.wait().expect("reap the child");
+    }
+
+    /// An exited child the supervisor has not reaped never counts as a live
+    /// group member.
+    ///
+    /// The kernel answers no `proc_bsdinfo` for a zombie this libproc path can
+    /// read, so such a child drops out of the snapshot instead of standing in it
+    /// as a live member; a row the kernel does answer during the exit window is
+    /// marked by its `SZOMB` status. Either way the group's live membership
+    /// excludes it, which is what keeps a retired process group available.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn libproc_table_excludes_an_exited_unreaped_child_from_live_members() {
+        let mut child = ProcessCommand::new("true")
+            // Its own group, so its exit is observable as the group emptying.
+            .process_group(0)
+            .spawn()
+            .expect("spawn a child that exits at once");
+        let child_pid = i32::try_from(child.id()).expect("child pid");
+        let group = child.id();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let mut observed_row = None;
+        let mut excluded = false;
+        while std::time::Instant::now() < deadline {
+            let table = read_process_table_libproc().expect("libproc process table");
+            if !group_member_ids(&table, group).contains(&group) {
+                observed_row = table.iter().find(|row| row.pid == child_pid).copied();
+                excluded = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        child.wait().expect("reap the child");
+        assert!(
+            excluded,
+            "an exited unreaped child stops being a live group member"
+        );
+        assert!(
+            observed_row.is_none_or(|row| row.zombie),
+            "a row answered for the exited child is marked as a zombie"
+        );
     }
 }
