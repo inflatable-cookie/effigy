@@ -1824,8 +1824,8 @@ mod tests {
         std::fs::write(
             &manifest,
             format!(
-                "[bundle]\nbase = {{ type = \"git\", url = {:?} }}\n",
-                remote.to_string_lossy()
+                "[bundle]\nbase = {{ type = \"git\", url = {} }}\n",
+                toml::Value::String(remote.to_string_lossy().into_owned())
             ),
         )
         .unwrap();
@@ -1866,7 +1866,10 @@ mod tests {
         std::fs::write(remote.join("bundle.toml"), "[bundle]\nname = \"fixture\"\n").unwrap();
         std::fs::write(
             remote.join("effigy.toml"),
-            format!("[tasks.hello]\nrun = {task:?}\n"),
+            format!(
+                "[tasks.hello]\nrun = {}\n",
+                toml::Value::String(task.to_owned())
+            ),
         )
         .unwrap();
     }
