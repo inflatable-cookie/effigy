@@ -49,11 +49,13 @@ fn a_nested_child_through_a_scrubbing_wrapper_stays_bounded() {
 #[ignore = "PTY fixture launched by both pane proofs"]
 fn non_streaming_live_step_fixture() {
     use effigy_ui::steps::{configure_from_terminal, live_step, ProgressSource};
+    use std::io::{self, BufRead, BufReader};
 
     configure_from_terminal(false, false);
     let step = live_step(ProgressSource::waiting_for("fixture-animation"));
     let mut release = String::new();
-    std::io::stdin().read_line(&mut release).unwrap();
+    // The PTY harness sends a single release frame while observing the live step.
+    BufReader::new(io::stdin()).read_line(&mut release).unwrap();
     assert_eq!(release, "release\n");
     step.succeed("animation complete");
 }

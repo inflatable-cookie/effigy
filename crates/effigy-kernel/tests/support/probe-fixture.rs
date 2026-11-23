@@ -6,7 +6,7 @@ use effigy_kernel::{
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
-use std::io::{BufRead, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
 use std::os::unix::process::CommandExt;
 use std::path::Path;
@@ -126,7 +126,9 @@ pub fn run(entry: &str, args: &[OsString], cancel: CancelToken) {
     // Harness may kill or stop the guard before allowing registration. The
     // proof's budget starts when the harness releases it, never before.
     let mut line = String::new();
-    std::io::stdin().lock().read_line(&mut line).unwrap();
+    BufReader::new(std::io::stdin())
+        .read_line(&mut line)
+        .unwrap();
     // The controlled fixture must refuse EOF/partial go, including cleanup
     // before the harness has consumed readiness. Ordinary fixture is unchanged.
     if std::env::var_os("EFFIGY_FIXTURE_PROBE_CHECKED").is_some() && line != "go\n" {

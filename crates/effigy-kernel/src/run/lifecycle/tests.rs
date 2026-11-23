@@ -1714,6 +1714,7 @@ fn retained_interpolation_crash_child() {
 #[test]
 fn retained_interpolation_owner_sigkill_leaves_cleanup_with_the_same_helper() {
     let mut home = LayeredHome::new();
+    let terminal = effigy_ui::steps::suspend_terminal();
     let mut command = std::process::Command::new(std::env::current_exe().unwrap());
     command
         .args([
@@ -1725,7 +1726,7 @@ fn retained_interpolation_owner_sigkill_leaves_cleanup_with_the_same_helper() {
         .env("EFFIGY_RETAINED_OWNER_HOME", home.path())
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::inherit());
+        .stderr(terminal.inherit_stdio());
     let mut owner = LayeredChild::spawn(&mut command, home.path()).unwrap();
     let deadline = Instant::now() + Duration::from_secs(15);
     while !home.path().join("ready").exists() {
@@ -1752,6 +1753,7 @@ fn retained_interpolation_owner_sigkill_leaves_cleanup_with_the_same_helper() {
         owner.wait(Duration::from_secs(5)).unwrap().signal(),
         Some(libc::SIGKILL)
     );
+    drop(terminal);
     let deadline = Instant::now() + Duration::from_secs(15);
     while directory.join("compose-fixture.env").exists() || !helpers.iter().all(layered_helper_gone)
     {

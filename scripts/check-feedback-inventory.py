@@ -16,6 +16,8 @@ failure, so a site cannot be hidden instead of migrated.
 The build covers every workspace target (`--workspace --all-targets`) and not a
 chosen package list: a crate compiled only as another package's dependency is
 never linted as a package, so a wrapper there would escape a `-p` selection.
+Terminal hand-over diagnostics also apply to test targets. Only the reviewed
+helpers in `crates/effigy-ui/src/steps/terminal.rs` may use the raw methods.
 
 A compiler diagnostic only exists for the constructors we mark, so the check
 also owns the crate itself: `indicatif` may be named only inside the reviewed
@@ -108,30 +110,26 @@ def entries(messages):
         diagnostic = message.get('message', {})
         if message.get('reason') != 'compiler-message':
             continue
-        rendered_json = json.dumps(diagnostic)
-        is_spinner = MARKER in rendered_json
-        is_terminal = TERMINAL_MARKER in rendered_json
-        if not is_spinner and not is_terminal:
-            continue
         reason = diagnostic.get('message', '')
-        for child in diagnostic.get('children', []):
-            child_msg = child.get('message', '')
-            if TERMINAL_MARKER in child_msg:
-                reason = f'{reason}: {child_msg}' if reason else child_msg
-                break
+        notes = [child.get('message', '') for child in diagnostic.get('children', [])]
+        messages_at_site = [reason, *notes]
+        if any(TERMINAL_MARKER in message for message in messages_at_site):
+            kind = 'terminal'
+            terminal_notes = [note for note in notes if TERMINAL_MARKER in note]
+            reason = ': '.join([reason, *terminal_notes])
+        elif any(MARKER in message for message in messages_at_site):
+            kind = 'spinner'
+        else:
+            continue
         for span in diagnostic.get('spans', []):
             if not span.get('is_primary'):
                 continue
             file = span['file_name']
-            # Test diagnostics are not a production migration obligation.
-            if is_test_file(file):
+            if kind == 'terminal' and file == TERMINAL_SINK_FILE:
                 continue
-            # Only the reviewed terminal hand-over implementations in
-            # `crates/effigy-ui/src/steps/terminal.rs` may call raw Stdin/rpassword/Stdio::inherit.
-            if is_terminal and not is_spinner and file == TERMINAL_SINK_FILE:
+            if kind == 'spinner' and is_test_file(file):
                 continue
             text = '\n'.join(line['text'].strip() for line in span.get('text', []))
-            kind = 'terminal' if (is_terminal and not is_spinner) else 'spinner'
             result.append((file, text, span['line_start'], span['column_start'], kind, reason))
     result = list(dict.fromkeys(result))
     # Only the unique infrastructure sink is exempt. A duplicate makes every

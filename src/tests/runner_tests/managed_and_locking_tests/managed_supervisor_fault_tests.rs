@@ -163,6 +163,7 @@ fn supervisor_killed_at_every_journal_crossing_settles_without_orphans() {
         serde_json::to_vec(&armed).expect("crossing plan"),
     )
     .expect("write crossing plan");
+    let terminal = effigy_ui::steps::suspend_terminal();
     let workers: Vec<_> = (0..SHARDS)
         .map(|shard| {
             let child = Command::new(std::env::current_exe().expect("test executable"))
@@ -178,8 +179,8 @@ fn supervisor_killed_at_every_journal_crossing_settles_without_orphans() {
                 .env_remove(FAULT)
                 .env_remove(TRACE)
                 .stdin(Stdio::null())
-                .stdout(Stdio::inherit())
-                .stderr(Stdio::inherit())
+                .stdout(terminal.inherit_stdio())
+                .stderr(terminal.inherit_stdio())
                 .spawn()
                 .expect("matrix worker");
             eprintln!("supervisor matrix shard {shard}: pid {}", child.id());
@@ -192,6 +193,7 @@ fn supervisor_killed_at_every_journal_crossing_settles_without_orphans() {
         .into_iter()
         .map(|(shard, mut worker)| (shard, worker.wait().expect("matrix worker wait")))
         .collect();
+    drop(terminal);
     let mut failed = Vec::new();
     for (shard, status) in &outcomes {
         if !status.success() {

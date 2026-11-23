@@ -1124,6 +1124,7 @@ fn fault_matrix_registration_spawn_and_socket_kill_enospc() {
     ] {
         for fault in ["kill", "enospc"] {
             let home = home();
+            let terminal = effigy_ui::steps::suspend_terminal();
             let mut child = OwnedChild(
                 Command::new(std::env::current_exe().unwrap())
                     .args(["--exact", "custody::tests::fault_child", "--nocapture"])
@@ -1132,7 +1133,7 @@ fn fault_matrix_registration_spawn_and_socket_kill_enospc() {
                     .env("EFFIGY_KERNEL_CUSTODY_FAULT_KIND", fault)
                     .stdin(Stdio::null())
                     .stdout(Stdio::null())
-                    .stderr(Stdio::inherit())
+                    .stderr(terminal.inherit_stdio())
                     .spawn()
                     .unwrap(),
             );
@@ -1141,6 +1142,7 @@ fn fault_matrix_registration_spawn_and_socket_kill_enospc() {
                 exit = child.0.try_wait().unwrap();
                 exit.is_some()
             });
+            drop(terminal);
             if fault == "kill" {
                 assert_eq!(
                     exit.unwrap().signal(),
@@ -5072,6 +5074,25 @@ fn process_intent_identity_is_typed_not_derived_debug_text() {
 
 #[test]
 fn foreground_child_suspends_steps_while_running_and_restores_after_exit() {
+    // Terminal suspension is process-wide, including other custody tests.
+    const ISOLATED: &str = "EFFIGY_KERNEL_TEST_FOREGROUND_STEPS";
+    if std::env::var_os(ISOLATED).is_none() {
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "custody::tests::foreground_child_suspends_steps_while_running_and_restores_after_exit",
+            ])
+            .env(ISOLATED, "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "isolated foreground test failed: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
     let home = home();
     let cx = cx();
     let gate = home.path().join("release");

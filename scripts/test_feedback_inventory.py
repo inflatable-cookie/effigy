@@ -493,7 +493,8 @@ fn unused(value: u8) { let _ = value; }
             return {
                 'reason': 'compiler-message',
                 'message': {
-                    'message': reason,
+                    'message': reason.split(': terminal hand-over:', 1)[0],
+                    'children': [{'message': reason.split(': ', 1)[1]}],
                     'spans': [{
                         'is_primary': True,
                         'file_name': file,
@@ -564,6 +565,15 @@ fn unused(value: u8) { let _ = value; }
         self.assertIn('prompt_terminal_password', errors[2])
         self.assertIn('src/runner/child.rs:30:', errors[3])
         self.assertIn('TerminalGuard::inherit_stdio', errors[3])
+
+        for file in ('tests/prompt.rs', 'crates/effigy-ui/src/steps/tests.rs',
+                     'crates/effigy-kernel/tests/support/terminal.rs'):
+            with self.subTest(file=file):
+                for diagnostic in disallowed:
+                    diagnostic['message']['spans'][0]['file_name'] = file
+                errors = lint.check(lint.entries(disallowed))
+                self.assertEqual(len(errors), 4, errors)
+                self.assertTrue(all(error.startswith(f'{file}:') for error in errors))
 
 
 if __name__ == '__main__':
