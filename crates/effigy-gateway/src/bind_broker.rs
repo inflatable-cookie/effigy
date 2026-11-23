@@ -784,6 +784,14 @@ mod tests {
             raw,
             &with(base(), EXPECTED, node(Kind::Symlink, 0, 0, 0o120777))
         ));
+        // A regular file is neither directory, socket, nor symlink, so the
+        // expected-socket trust check refuses it. This also constructs
+        // Kind::Other on every platform, keeping the variant live outside
+        // the macOS-only Disk reader under -D warnings.
+        assert!(!staged(
+            raw,
+            &with(base(), EXPECTED, node(Kind::Other, 0, 0, 0o100600))
+        ));
         let mut missing = launchd_fake();
         missing.nodes.remove(Path::new(EXPECTED));
         assert!(!staged(raw, &missing));
