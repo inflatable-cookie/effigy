@@ -3,6 +3,8 @@
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::io::{self, Read};
+#[cfg(any(target_os = "macos", test))]
+use std::net::{SocketAddr, UdpSocket};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -488,19 +490,10 @@ fn managed_file(
         bytes,
         ReplaceOpts {
             mode: 0o644,
-            keep_previous: true,
+            keep_previous: !resolver,
         },
     )
     .map_err(error)
-}
-/// Fixed native boot job: no mutable operator script or Effigy executable runs
-/// with privilege. Every alias is explicit, and the job repeats after reboot.
-pub fn macos_boot_job() -> Vec<u8> {
-    let script = crate::loopback::pool()
-        .map(|address| format!("/sbin/ifconfig lo0 alias {address} up || exit $?"))
-        .collect::<Vec<_>>()
-        .join("; ");
-    format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!-- {MARKER} -->\n<plist version=\"1.0\"><dict><key>Label</key><string>dev.effigy.gateway.loopback</string><key>RunAtLoad</key><true/><key>ProgramArguments</key><array><string>/bin/sh</string><string>-c</string><string>{script}</string></array></dict></plist>\n").into_bytes()
 }
 /// A dedicated dummy link scopes split DNS to approved suffixes and has no
 /// default-route role. It does not replace the host's global DNS configuration.
@@ -537,6 +530,7 @@ fn platform_command(
 #[cfg(any(target_os = "macos", test))]
 pub(crate) struct MacosPlatform<'a> {
     pub identity: (u32, u32),
+    pub dns_bind: SocketAddr,
     pub helper: &'a Path,
     pub etc: &'a DirFd,
     pub jobs: &'a DirFd,
@@ -613,7 +607,7 @@ fn without_phase_lines(output: &[u8]) -> Vec<u8> {
     kept
 }
 
-/// The macOS platform action: local resolver files, the loopback boot job and
+/// The macOS platform action: local resolver files, legacy loopback cleanup and
 /// the privileged bind broker. `report` names each operation before it starts,
 /// so the operator's step shows the object being changed rather than one
 /// combined label for the whole action.
@@ -633,6 +627,8 @@ pub(crate) fn apply_macos(
         platform.jobs,
         platform.library,
     );
+    let _gateway_reservation =
+        retire_macos_loopback_job(run, cx, jobs, platform.dns_bind, command, report)?;
     report(&format!(
         "writing the resolver files for {}",
         suffixes.join(", ")
@@ -644,15 +640,7 @@ pub(crate) fn apply_macos(
         let contents = format!("# {MARKER}\nnameserver 127.0.0.1\nport 15353\n");
         managed_file(run, cx, &resolvers, suffix, contents.as_bytes(), true)?;
     }
-    report("installing the gateway loopback launch job");
-    managed_file(
-        run,
-        cx,
-        jobs,
-        "dev.effigy.gateway.loopback.plist",
-        &macos_boot_job(),
-        false,
-    )?;
+    remove_resolver_backups(run, cx, &resolvers, command)?;
     let helpers = library
         .prepare_setup_child(
             cx,
@@ -661,40 +649,106 @@ pub(crate) fn apply_macos(
         )
         .map_err(error)?;
     report("installing the privileged bind broker");
-    broker::install(run, cx, jobs, &helpers, (uid, gid), helper, &mut *command)?;
-    // Observe the real interface before adding missing aliases. Repeated setup
-    // never treats a failed or unavailable observation as absence.
-    report("observing the loopback interface");
+    broker::install(run, cx, jobs, &helpers, (uid, gid), helper, command)
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn remove_resolver_backups(
+    run: &mut Run<'_>,
+    cx: &EffectContext,
+    resolvers: &DirFd,
+    command: &mut impl FnMut(&mut Run<'_>, &EffectContext, Vec<OsString>) -> io::Result<(i32, Vec<u8>)>,
+) -> io::Result<()> {
+    let observe = cx.operation().observe().map_err(error)?;
+    for name in resolvers.observe_entries(&observe, 4096).map_err(error)? {
+        let Some(name) = name.to_str().filter(|name| name.ends_with(".prev")) else {
+            continue;
+        };
+        let name = FileName::new(name).map_err(error)?;
+        if matches!(
+            read_record::<Bytes>(&observe, resolvers, &name),
+            Observed::Verified(bytes, _) if String::from_utf8_lossy(&bytes.0).contains("# Managed by Effigy gateway")
+        ) {
+            platform_command(
+                run,
+                cx,
+                command,
+                vec![
+                    "/bin/rm".into(),
+                    resolvers.path().join(name.as_str()).into(),
+                ],
+            )?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(any(target_os = "macos", test))]
+const LEGACY_LOOPBACK_PLIST: &str = "dev.effigy.gateway.loopback.plist";
+
+#[cfg(any(target_os = "macos", test))]
+fn retire_macos_loopback_job(
+    run: &mut Run<'_>,
+    cx: &EffectContext,
+    jobs: &DirFd,
+    dns_bind: SocketAddr,
+    command: &mut impl FnMut(&mut Run<'_>, &EffectContext, Vec<OsString>) -> io::Result<(i32, Vec<u8>)>,
+    report: &mut dyn FnMut(&str),
+) -> io::Result<Option<UdpSocket>> {
+    if !broker::owned_job(cx, jobs, LEGACY_LOOPBACK_PLIST)? {
+        return Ok(None);
+    }
+    // Every standard gateway binds DNS before starting its TCP aliases and
+    // keeps that socket until shutdown. Reserving it also excludes an older
+    // daemon starting before it has published a process record.
+    let reservation = UdpSocket::bind(dns_bind).map_err(|failure| {
+        let action = if failure.kind() == io::ErrorKind::AddrInUse {
+            ". Run `effigy gateway down` and retry setup when the gateway has stopped."
+        } else {
+            "."
+        };
+        io::Error::new(
+            failure.kind(),
+            format!("cannot retire legacy loopback aliases while gateway DNS {dns_bind} is unavailable ({failure}){action}"),
+        )
+    })?;
+    report("retiring the legacy gateway loopback launch job");
+    broker::stop_job(
+        run,
+        cx,
+        "dev.effigy.gateway.loopback",
+        (
+            &jobs.path().join(LEGACY_LOOPBACK_PLIST),
+            Path::new("/bin/sh"),
+        ),
+        command,
+    )?;
     let interfaces = platform_command(
         run,
         cx,
-        &mut *command,
+        command,
         vec!["/sbin/ifconfig".into(), "lo0".into()],
     )?;
     let interfaces = String::from_utf8(interfaces).map_err(error)?;
-    for address in crate::loopback::pool() {
-        let address = address.to_string();
-        if interfaces.lines().any(|line| {
-            line.split_whitespace().collect::<Vec<_>>().get(..2)
-                == Some(&["inet", address.as_str()])
-        }) {
-            continue;
-        }
-        report(&format!("adding loopback address {address}"));
+    for address in crate::loopback::observed_pool_aliases(&interfaces) {
         platform_command(
             run,
             cx,
-            &mut *command,
+            command,
             vec![
                 "/sbin/ifconfig".into(),
                 "lo0".into(),
-                "alias".into(),
-                address.into(),
-                "up".into(),
+                "-alias".into(),
+                address.to_string().into(),
             ],
         )?;
     }
-    Ok(())
+    // Keep the verified definition until cleanup succeeds so setup can retry.
+    remove_managed_with(cx, jobs, LEGACY_LOOPBACK_PLIST, |path| {
+        platform_command(run, cx, command, vec!["/bin/rm".into(), path.into()])?;
+        Ok(())
+    })?;
+    Ok(Some(reservation))
 }
 
 /// The Linux platform action's targets: the root-owned unit directory and the
@@ -802,6 +856,7 @@ pub fn apply_platform(
             suffixes,
             &MacosPlatform {
                 identity: (operator, user.gid.as_raw()),
+                dns_bind: config.dns.bind_addr,
                 helper: &std::env::current_exe()?,
                 etc: &etc,
                 jobs: &jobs,
@@ -919,12 +974,21 @@ pub fn remove_receipt(run: &mut Run<'_>, cx: &EffectContext, home: &Path) -> io:
 pub fn remove_platform(
     run: &mut Run<'_>,
     cx: &EffectContext,
+    config: &GatewayConfig,
     uid: u32,
     suffixes: &[String],
 ) -> io::Result<()> {
     #[cfg(target_os = "macos")]
     {
         let jobs = DirFd::open(Path::new("/Library/LaunchDaemons")).map_err(error)?;
+        let _gateway_reservation = retire_macos_loopback_job(
+            run,
+            cx,
+            &jobs,
+            config.dns.bind_addr,
+            &mut |run, cx, argv| command_outcome(run, cx, argv, false),
+            &mut |_| {},
+        )?;
         let helpers = DirFd::open(Path::new("/Library/PrivilegedHelperTools")).map_err(error)?;
         broker::remove(run, cx, &jobs, &helpers, uid, |run, cx, argv| {
             command_outcome(run, cx, argv, false)
@@ -932,20 +996,6 @@ pub fn remove_platform(
         let resolvers = DirFd::open(Path::new("/private/etc/resolver")).map_err(error)?;
         for suffix in suffixes {
             remove_managed(run, cx, &resolvers, suffix)?;
-        }
-        let alias_job = "dev.effigy.gateway.loopback.plist";
-        if broker::owned_job(cx, &jobs, alias_job)? {
-            broker::stop_job(
-                run,
-                cx,
-                "dev.effigy.gateway.loopback",
-                (&jobs.path().join(alias_job), Path::new("/bin/sh")),
-                &mut |run, cx, argv| command_outcome(run, cx, argv, false),
-            )?;
-            remove_managed(run, cx, &jobs, alias_job)?;
-            // Existing aliases may predate setup. Removing the owned boot job
-            // does not prove ownership of live interface addresses. Preserve
-            // them for other consumers and for the restored v0.14.1 gateway.
         }
     }
     #[cfg(target_os = "linux")]
@@ -982,7 +1032,7 @@ pub fn remove_platform(
         }
         crate::linux_operator::remove_current_capability(uid)?;
     }
-    let _ = (uid, suffixes);
+    let _ = (config, uid, suffixes);
     Ok(())
 }
 /// Repair only the three explicit legacy registries and leaf-certificate
@@ -1564,6 +1614,10 @@ pub(crate) mod tests {
             let count = run.effects().unwrap().len();
             managed_file(run, cx, &dir, "resolver", owned.as_bytes(), true).unwrap();
             assert_eq!(run.effects().unwrap().len(), count);
+            let updated = owned.replace("15353", "15354");
+            managed_file(run, cx, &dir, "resolver", updated.as_bytes(), true).unwrap();
+            assert_eq!(std::fs::read_to_string(path).unwrap(), updated);
+            assert!(!home.join("resolver.prev").exists());
         });
     }
     #[test]
@@ -1712,14 +1766,7 @@ pub(crate) mod tests {
         assert!(!config.pid_file_path.exists());
     }
     #[test]
-    fn native_boot_jobs_limit_privilege_and_preserve_global_dns() {
-        let mac = String::from_utf8(macos_boot_job()).unwrap();
-        assert_eq!(
-            mac.matches("/sbin/ifconfig lo0 alias").count(),
-            usize::from(crate::loopback::DEFAULT_LOOPBACK_COUNT)
-        );
-        assert!(!mac.contains("__gateway-run"));
-        assert!(!mac.contains("KeepAlive"));
+    fn linux_dns_unit_preserves_global_dns() {
         let linux = String::from_utf8(linux_boot_job(&[
             "test".into(),
             "dev.cumberland.co.uk".into(),
@@ -2051,6 +2098,7 @@ pub(crate) mod tests {
                 &["test".to_owned()],
                 &MacosPlatform {
                     identity: (uid, 20),
+                    dns_bind: config.dns.bind_addr,
                     helper: &helper,
                     etc: &etc,
                     jobs: &jobs,
@@ -2060,51 +2108,127 @@ pub(crate) mod tests {
                 &mut |phase| phases.push(phase.to_owned()),
             )
             .expect("the macOS platform action runs after an empty-home migration");
-            // Each operation is its own phase, named before it starts, and an
-            // alias already on the interface is not reported as added.
             assert_eq!(
-                phases.first().map(String::as_str),
-                Some("writing the resolver files for test")
-            );
-            assert!(phases.contains(&"installing the gateway loopback launch job".to_owned()));
-            assert!(phases.contains(&"installing the privileged bind broker".to_owned()));
-            assert!(phases.contains(&"observing the loopback interface".to_owned()));
-            assert!(phases.contains(&format!(
-                "adding loopback address {}",
-                crate::loopback::DEFAULT_LOOPBACK_START
-            )));
-            let last_phase = format!(
-                "adding loopback address {}",
-                crate::loopback::DEFAULT_LOOPBACK_END
-            );
-            assert_eq!(phases.last().map(String::as_str), Some(last_phase.as_str()));
-            assert_eq!(
-                phases
-                    .iter()
-                    .filter(|phase| phase.starts_with("adding loopback address "))
-                    .count(),
-                usize::from(crate::loopback::DEFAULT_LOOPBACK_COUNT),
-                "{phases:?}"
+                phases,
+                [
+                    "writing the resolver files for test",
+                    "installing the privileged bind broker",
+                ]
             );
         });
 
         let resolver = std::fs::read_to_string(platform.path("private/etc/resolver/test")).unwrap();
         assert!(resolver.contains("nameserver 127.0.0.1"), "{resolver}");
-        assert!(platform
-            .path("LaunchDaemons/dev.effigy.gateway.loopback.plist")
-            .exists());
+        assert!(!jobs.path().join(LEGACY_LOOPBACK_PLIST).exists());
         assert!(platform
             .path(&format!(
                 "LaunchDaemons/{}.plist",
                 crate::bind_broker::label(uid)
             ))
             .exists());
-        // One observation of lo0 and one alias per address in the pool.
-        assert_eq!(
-            platform.requested("/sbin/ifconfig").len(),
-            usize::from(crate::loopback::DEFAULT_LOOPBACK_COUNT) + 1
-        );
+        assert!(platform.requested("/sbin/ifconfig").is_empty());
         assert_eq!(platform.requested("/bin/launchctl").len(), 1);
+    }
+
+    #[test]
+    fn macos_upgrade_retires_the_owned_job_after_the_gateway_stops() {
+        with_run(|run, cx, home| {
+            let platform = FakePlatform::new(home);
+            let etc = platform.dir("private/etc");
+            let jobs = platform.dir("LaunchDaemons");
+            let library = platform.dir("Library");
+            let resolvers = platform.dir("private/etc/resolver");
+            let helper = home.join("helper");
+            std::fs::write(&helper, b"fixture helper image").unwrap();
+            let legacy = jobs.path().join(LEGACY_LOOPBACK_PLIST);
+            let owned_backup = resolvers.path().join("retired.test.prev");
+            let foreign_backup = resolvers.path().join("test.prev");
+            let symlink_backup = resolvers.path().join("linked.test.prev");
+            std::fs::write(&legacy, b"foreign launch job").unwrap();
+            std::fs::write(
+                &owned_backup,
+                b"# Managed by Effigy gateway\nnameserver 127.0.0.1\n",
+            )
+            .unwrap();
+            std::fs::write(&foreign_backup, b"# Foreign resolver\n").unwrap();
+            std::os::unix::fs::symlink(&owned_backup, &symlink_backup).unwrap();
+            let uid = nix::unistd::Uid::effective().as_raw();
+            let running_gateway = UdpSocket::bind("127.0.0.1:0").unwrap();
+            let mac = MacosPlatform {
+                identity: (uid, 20),
+                dns_bind: running_gateway.local_addr().unwrap(),
+                helper: &helper,
+                etc: &etc,
+                jobs: &jobs,
+                library: &library,
+            };
+            let mut adapter = |run: &mut Run<'_>, cx: &EffectContext, argv: Vec<OsString>| {
+                assert_eq!(
+                    UdpSocket::bind(mac.dns_bind).unwrap_err().kind(),
+                    io::ErrorKind::AddrInUse,
+                    "a gateway cannot start during platform changes"
+                );
+                let (_, fallback) = platform.run(run, cx, argv.clone())?;
+                if argv[0] == "/bin/rm" {
+                    let path = Path::new(&argv[1]);
+                    assert!(path == legacy || path == owned_backup);
+                    std::fs::remove_file(path)?;
+                } else if argv[0] == "/bin/launchctl" && argv[1] == "print" {
+                    return Ok((
+                        0,
+                        format!("path = {}\nprogram = /bin/sh\n", legacy.display()).into_bytes(),
+                    ));
+                } else if argv[0] == "/sbin/ifconfig" && argv.len() == 2 {
+                    return Ok((0, b"lo0: flags=8049<UP,LOOPBACK,RUNNING>\n\tinet 127.0.0.1 netmask 0xff000000\n\tinet 127.1.0.1 netmask 0xff000000\n\tinet 127.1.0.250 netmask 0xff000000\n\tinet 127.1.0.251 netmask 0xff000000\n".to_vec()));
+                }
+                Ok((0, fallback))
+            };
+            let suffixes = ["test".to_owned()];
+            assert!(apply_macos(run, cx, &suffixes, &mac, &mut adapter, &mut |_| {}).is_err());
+            assert!(platform.calls.borrow().is_empty());
+            assert_eq!(std::fs::read(&legacy).unwrap(), b"foreign launch job");
+
+            let definition = format!("<!-- {MARKER} -->\n");
+            std::fs::write(&legacy, &definition).unwrap();
+            let busy = apply_macos(run, cx, &suffixes, &mac, &mut adapter, &mut |_| {})
+                .expect_err("setup must preserve the running gateway");
+            assert_eq!(busy.kind(), io::ErrorKind::AddrInUse);
+            assert!(busy.to_string().contains("`effigy gateway down`"), "{busy}");
+            assert!(platform.calls.borrow().is_empty());
+            assert_eq!(std::fs::read_to_string(&legacy).unwrap(), definition);
+            assert!(owned_backup.exists());
+            assert!(!resolvers.path().join("test").exists());
+
+            drop(running_gateway);
+            apply_macos(run, cx, &suffixes, &mac, &mut adapter, &mut |_| {}).unwrap();
+            UdpSocket::bind(mac.dns_bind).expect("setup releases DNS for the next gateway");
+
+            assert!(!legacy.exists());
+            assert!(!owned_backup.exists());
+            assert!(symlink_backup.is_symlink());
+            assert_eq!(
+                std::fs::read(&foreign_backup).unwrap(),
+                b"# Foreign resolver\n"
+            );
+            assert_eq!(
+                platform.requested("/sbin/ifconfig"),
+                [
+                    vec!["/sbin/ifconfig", "lo0"],
+                    vec!["/sbin/ifconfig", "lo0", "-alias", "127.1.0.1"],
+                    vec!["/sbin/ifconfig", "lo0", "-alias", "127.1.0.250"],
+                ],
+            );
+            let calls = platform.calls.borrow();
+            assert_eq!(
+                calls[1],
+                [
+                    "/bin/launchctl",
+                    "bootout",
+                    "system/dev.effigy.gateway.loopback"
+                ]
+            );
+            assert_eq!(calls[2], ["/sbin/ifconfig", "lo0"]);
+        });
     }
 
     /// The same first-ever setup on Linux: no unit, no capability and no

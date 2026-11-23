@@ -570,6 +570,11 @@ checkout path that is missing. A deleted worktree therefore keeps neither a
 domain nor an address, and no cross-runtime inventory or reclamation plan
 exists to run.
 
+On macOS the standard gateway materializes a pool address on `lo0` through the
+bind broker before binding its first TCP service listener. Listeners on
+different ports share the address. The manager removes the /32 alias after the
+last listener closes and drains all managed aliases on shutdown.
+
 ## 5. Persistent Data, Cache, and Volume Lifecycle
 
 Generated Compose gives Effigy enough ownership to classify data safely.

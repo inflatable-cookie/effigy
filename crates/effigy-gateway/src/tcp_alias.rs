@@ -1,4 +1,6 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::future::Future;
+use std::io;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
@@ -6,7 +8,7 @@ use std::time::Duration;
 use tokio::io::copy_bidirectional;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::watch;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::error::GatewayError;
 use crate::routes::RouteTable;
@@ -21,18 +23,90 @@ struct DesiredTcpAlias {
     upstream: SocketAddr,
 }
 
-#[derive(Debug)]
 struct ActiveTcpAlias {
-    shutdown: watch::Sender<bool>,
     handle: tokio::task::JoinHandle<()>,
     desired: DesiredTcpAlias,
 }
 
+impl ActiveTcpAlias {
+    async fn stop(self) {
+        self.handle.abort();
+        let _ = self.handle.await;
+    }
+}
+
+#[derive(Clone, Copy)]
+enum LoopbackAction {
+    Add,
+    Remove,
+}
+
+type ChangeLoopback = Arc<dyn Fn(LoopbackAction, Ipv4Addr) -> io::Result<()> + Send + Sync>;
+
+#[derive(Default)]
+struct LoopbackAliases {
+    managed_loopback_ips: BTreeSet<Ipv4Addr>,
+    change: Option<ChangeLoopback>,
+}
+
+impl LoopbackAliases {
+    fn standard() -> Self {
+        Self {
+            #[cfg(target_os = "macos")]
+            change: Some(Arc::new(|action, ip| match action {
+                LoopbackAction::Add => crate::bind_broker::ensure_loopback_alias(ip),
+                LoopbackAction::Remove => crate::bind_broker::remove_loopback_alias(ip),
+            })),
+            ..Self::default()
+        }
+    }
+
+    async fn ensure(&mut self, ip: Ipv4Addr) -> io::Result<()> {
+        let Some(change) = &self.change else {
+            return Ok(());
+        };
+        if crate::loopback::in_pool(ip) && !self.managed_loopback_ips.contains(&ip) {
+            let change = Arc::clone(change);
+            tokio::task::spawn_blocking(move || change(LoopbackAction::Add, ip)).await??;
+            self.managed_loopback_ips.insert(ip);
+        }
+        Ok(())
+    }
+
+    async fn remove_unused(&mut self, active: &HashMap<String, ActiveTcpAlias>) {
+        let Some(change) = &self.change else {
+            return;
+        };
+        let active_ips: BTreeSet<_> = active.values().map(|alias| alias.desired.bind_ip).collect();
+        for ip in std::mem::take(&mut self.managed_loopback_ips) {
+            if active_ips.contains(&ip) {
+                self.managed_loopback_ips.insert(ip);
+                continue;
+            }
+            let change = Arc::clone(change);
+            let result = tokio::task::spawn_blocking(move || change(LoopbackAction::Remove, ip))
+                .await
+                .map_err(io::Error::other)
+                .and_then(|result| result);
+            if let Err(error) = result {
+                warn!(%ip, %error, "could not remove TCP alias loopback address");
+            }
+        }
+    }
+}
+
+/// Run TCP aliases for a private gateway without changing the host interface.
 pub async fn run_tcp_alias_manager(
     route_table: Arc<RwLock<RouteTable>>,
     shutdown: watch::Receiver<bool>,
 ) -> Result<(), GatewayError> {
-    run_manager(route_table, shutdown, HashMap::new()).await
+    run_manager(
+        route_table,
+        shutdown,
+        HashMap::new(),
+        LoopbackAliases::default(),
+    )
+    .await
 }
 
 pub(crate) async fn run_tcp_alias_manager_ready(
@@ -40,53 +114,61 @@ pub(crate) async fn run_tcp_alias_manager_ready(
     shutdown: watch::Receiver<bool>,
     ready: tokio::sync::oneshot::Sender<Result<(), String>>,
 ) -> Result<(), GatewayError> {
-    let mut active = HashMap::new();
-    let prepared =
-        (|| {
-            let desired = desired_tcp_aliases(&crate::locks::read_tolerant(&route_table));
-            let mut listeners = Vec::new();
-            for (key, alias) in desired {
-                let listener = std::net::TcpListener::bind((alias.bind_ip, alias.bind_port))
-                    .map_err(|error| GatewayError::TcpAliasBindError {
-                        addr: key.clone(),
-                        reason: error.to_string(),
-                    })?;
-                listener.set_nonblocking(true)?;
-                listeners.push((key, alias, TcpListener::from_std(listener)?));
+    let mut loopback = LoopbackAliases::standard();
+    let desired = desired_tcp_aliases(&crate::locks::read_tolerant(&route_table));
+    let prepared = async {
+        let mut listeners = Vec::new();
+        for (key, alias) in desired {
+            if *shutdown.borrow() {
+                return Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "TCP alias startup stopped",
+                )
+                .into());
             }
-            for (key, alias, listener) in listeners {
-                let (stop, stop_rx) = watch::channel(false);
-                let desired = alias.clone();
-                let handle = tokio::spawn(async move {
-                    let _ = run_single_tcp_alias_on(listener, alias, stop_rx).await;
-                });
-                active.insert(
-                    key,
-                    ActiveTcpAlias {
-                        shutdown: stop,
-                        handle,
-                        desired,
-                    },
-                );
-            }
-            Ok::<_, GatewayError>(())
-        })();
-    let _ = ready.send(prepared.as_ref().map(|_| ()).map_err(ToString::to_string));
-    prepared?;
-    run_manager(route_table, shutdown, active).await
+            let listener = prepare_tcp_alias(&alias, &mut loopback, TcpListener::bind).await?;
+            listeners.push((key, alias, listener));
+        }
+        Ok::<_, GatewayError>(listeners)
+    }
+    .await;
+    let listeners = match prepared {
+        Ok(listeners) => listeners,
+        Err(error) => {
+            // The prepared listeners have already been dropped.
+            let _ = ready.send(Err(error.to_string()));
+            loopback.remove_unused(&HashMap::new()).await;
+            return Err(error);
+        }
+    };
+    let active = listeners
+        .into_iter()
+        .map(|(key, alias, listener)| (key, start_tcp_alias(listener, alias)))
+        .collect();
+    let _ = ready.send(Ok(()));
+    run_manager(route_table, shutdown, active, loopback).await
 }
 
 async fn run_manager(
     route_table: Arc<RwLock<RouteTable>>,
     mut shutdown: watch::Receiver<bool>,
     mut active: HashMap<String, ActiveTcpAlias>,
+    mut loopback: LoopbackAliases,
 ) -> Result<(), GatewayError> {
-    loop {
-        reconcile_tcp_aliases(&route_table, &mut active);
+    while !*shutdown.borrow() {
+        let desired = desired_tcp_aliases(&crate::locks::read_tolerant(&route_table));
+        reconcile_tcp_aliases(
+            desired,
+            &mut active,
+            &mut loopback,
+            &shutdown,
+            TcpListener::bind,
+        )
+        .await;
 
         tokio::select! {
-            _ = shutdown.changed() => {
-                if *shutdown.borrow() {
+            result = shutdown.changed() => {
+                if result.is_err() {
                     break;
                 }
             }
@@ -94,66 +176,77 @@ async fn run_manager(
         }
     }
 
-    for alias in active.into_values() {
-        let _ = alias.shutdown.send(true);
-        alias.handle.abort();
+    for (_, alias) in active.drain() {
+        alias.stop().await;
     }
+    loopback.remove_unused(&active).await;
 
     info!("TCP alias manager stopped");
     Ok(())
 }
 
-fn reconcile_tcp_aliases(
-    route_table: &Arc<RwLock<RouteTable>>,
+async fn reconcile_tcp_aliases<F: Future<Output = io::Result<TcpListener>>>(
+    desired: BTreeMap<String, DesiredTcpAlias>,
     active: &mut HashMap<String, ActiveTcpAlias>,
+    loopback: &mut LoopbackAliases,
+    shutdown: &watch::Receiver<bool>,
+    bind: impl Fn(SocketAddr) -> F,
 ) {
-    let desired = desired_tcp_aliases(&crate::locks::read_tolerant(route_table));
-
     let stale_keys = active
         .iter()
         .filter_map(|(key, alias)| {
-            desired
-                .get(key)
-                .filter(|candidate| **candidate == alias.desired)
-                .is_none()
+            (alias.handle.is_finished() || desired.get(key) != Some(&alias.desired))
                 .then_some(key.clone())
         })
         .collect::<Vec<_>>();
     for key in stale_keys {
         if let Some(alias) = active.remove(&key) {
-            let _ = alias.shutdown.send(true);
-            alias.handle.abort();
+            alias.stop().await;
         }
     }
 
-    for (key, desired_alias) in desired {
-        let restart = active
-            .get(&key)
-            .is_some_and(|alias| alias.handle.is_finished());
-        if active.contains_key(&key) && !restart {
-            continue;
+    for (key, alias) in desired {
+        if *shutdown.borrow() {
+            break;
         }
-        if let Some(alias) = active.remove(&key) {
-            let _ = alias.shutdown.send(true);
-            alias.handle.abort();
-        }
-        let (alias_shutdown_tx, alias_shutdown_rx) = watch::channel(false);
-        let desired_clone = desired_alias.clone();
-        let listener_key = key.clone();
-        let handle = tokio::spawn(async move {
-            if let Err(error) = run_single_tcp_alias(desired_clone, alias_shutdown_rx).await {
-                error!(error = %error, bind = %listener_key, "TCP alias listener failed");
+        if let std::collections::hash_map::Entry::Vacant(entry) = active.entry(key) {
+            match prepare_tcp_alias(&alias, loopback, &bind).await {
+                Ok(listener) => {
+                    entry.insert(start_tcp_alias(listener, alias));
+                }
+                Err(error) => {
+                    error!(%error, "TCP alias listener failed");
+                }
             }
-        });
-        active.insert(
-            key,
-            ActiveTcpAlias {
-                shutdown: alias_shutdown_tx,
-                handle,
-                desired: desired_alias,
-            },
-        );
+        }
     }
+    loopback.remove_unused(active).await;
+}
+
+async fn prepare_tcp_alias<F: Future<Output = io::Result<TcpListener>>>(
+    alias: &DesiredTcpAlias,
+    loopback: &mut LoopbackAliases,
+    bind: impl FnOnce(SocketAddr) -> F,
+) -> Result<TcpListener, GatewayError> {
+    let addr = SocketAddr::V4(SocketAddrV4::new(alias.bind_ip, alias.bind_port));
+    let result = match loopback.ensure(alias.bind_ip).await {
+        Ok(()) => bind(addr).await,
+        Err(error) => Err(error),
+    };
+    result.map_err(|error| GatewayError::TcpAliasBindError {
+        addr: addr.to_string(),
+        reason: error.to_string(),
+    })
+}
+
+fn start_tcp_alias(listener: TcpListener, desired: DesiredTcpAlias) -> ActiveTcpAlias {
+    let alias = desired.clone();
+    let handle = tokio::spawn(async move {
+        if let Err(error) = run_single_tcp_alias_on(listener, alias).await {
+            error!(%error, "TCP alias listener failed");
+        }
+    });
+    ActiveTcpAlias { handle, desired }
 }
 
 fn desired_tcp_aliases(route_table: &RouteTable) -> BTreeMap<String, DesiredTcpAlias> {
@@ -208,25 +301,9 @@ fn parse_tcp_target(raw: &str) -> Result<SocketAddr, GatewayError> {
         })
 }
 
-async fn run_single_tcp_alias(
-    desired: DesiredTcpAlias,
-    shutdown: watch::Receiver<bool>,
-) -> Result<(), GatewayError> {
-    let bind_addr = SocketAddr::V4(SocketAddrV4::new(desired.bind_ip, desired.bind_port));
-    let listener =
-        TcpListener::bind(bind_addr)
-            .await
-            .map_err(|error| GatewayError::TcpAliasBindError {
-                addr: bind_addr.to_string(),
-                reason: error.to_string(),
-            })?;
-    run_single_tcp_alias_on(listener, desired, shutdown).await
-}
-
 async fn run_single_tcp_alias_on(
     listener: TcpListener,
     desired: DesiredTcpAlias,
-    mut shutdown: watch::Receiver<bool>,
 ) -> Result<(), GatewayError> {
     let bind_addr = listener.local_addr()?;
     info!(
@@ -237,40 +314,27 @@ async fn run_single_tcp_alias_on(
     );
 
     loop {
-        tokio::select! {
-            result = listener.accept() => {
-                match result {
-                    Ok((stream, _peer)) => {
-                        let upstream = desired.upstream;
-                        let domains = desired.domains.clone();
-                        tokio::spawn(async move {
-                            if let Err(error) = proxy_tcp_alias_connection(stream, upstream).await {
-                                debug!(
-                                    error = %error,
-                                    domains = ?domains,
-                                    upstream = %upstream,
-                                    "TCP alias connection failed"
-                                );
-                            }
-                        });
-                    }
-                    Err(error) => {
-                        return Err(GatewayError::TcpAliasBindError {
-                            addr: bind_addr.to_string(),
-                            reason: error.to_string(),
-                        });
-                    }
-                }
+        let (stream, _peer) =
+            listener
+                .accept()
+                .await
+                .map_err(|error| GatewayError::TcpAliasBindError {
+                    addr: bind_addr.to_string(),
+                    reason: error.to_string(),
+                })?;
+        let upstream = desired.upstream;
+        let domains = desired.domains.clone();
+        tokio::spawn(async move {
+            if let Err(error) = proxy_tcp_alias_connection(stream, upstream).await {
+                debug!(
+                    error = %error,
+                    domains = ?domains,
+                    upstream = %upstream,
+                    "TCP alias connection failed"
+                );
             }
-            _ = shutdown.changed() => {
-                if *shutdown.borrow() {
-                    break;
-                }
-            }
-        }
+        });
     }
-
-    Ok(())
 }
 
 async fn proxy_tcp_alias_connection(
@@ -299,6 +363,177 @@ mod tests {
     use super::*;
     use crate::routes::{Route, RouteSource, RouteTable};
     use chrono::Utc;
+
+    #[tokio::test]
+    async fn loopback_aliases_follow_bound_ports_and_close_before_removal() {
+        use std::sync::Mutex;
+
+        #[derive(Debug, PartialEq, Eq)]
+        enum Event {
+            Added(Ipv4Addr),
+            Bound(SocketAddr),
+            Removed(Ipv4Addr),
+        }
+
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let reservations = Arc::new(Mutex::new(Vec::<(Ipv4Addr, SocketAddr)>::new()));
+        let mut loopback = LoopbackAliases {
+            change: Some(Arc::new({
+                let events = Arc::clone(&events);
+                let reservations = Arc::clone(&reservations);
+                move |action, ip| {
+                    let event = match action {
+                        LoopbackAction::Add => Event::Added(ip),
+                        LoopbackAction::Remove => {
+                            for (_, addr) in reservations
+                                .lock()
+                                .unwrap()
+                                .iter()
+                                .filter(|(owner, _)| *owner == ip)
+                            {
+                                std::net::TcpListener::bind(addr)
+                                    .expect("listener must close before alias removal");
+                            }
+                            Event::Removed(ip)
+                        }
+                    };
+                    events.lock().unwrap().push(event);
+                    Ok(())
+                }
+            })),
+            ..LoopbackAliases::default()
+        };
+        let bind = |addr: SocketAddr| {
+            let reservations = &reservations;
+            let events = &events;
+            async move {
+                let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
+                let SocketAddr::V4(requested) = addr else {
+                    panic!("fixture expected an IPv4 endpoint");
+                };
+                reservations
+                    .lock()
+                    .unwrap()
+                    .push((*requested.ip(), listener.local_addr()?));
+                events.lock().unwrap().push(Event::Bound(addr));
+                Ok(listener)
+            }
+        };
+        let first_ip = crate::loopback::DEFAULT_LOOPBACK_START;
+        let second_ip = crate::loopback::DEFAULT_LOOPBACK_END;
+        let first = SocketAddrV4::new(first_ip, 5432);
+        let second = SocketAddrV4::new(first_ip, 5433);
+        let third = SocketAddrV4::new(second_ip, 5432);
+        let desired = |addresses: &[SocketAddrV4]| {
+            addresses
+                .iter()
+                .map(|addr| (addr.to_string(), desired_alias(*addr)))
+                .collect()
+        };
+        let mut active = HashMap::new();
+        let (stop, shutdown) = watch::channel(false);
+        reconcile_tcp_aliases(
+            desired(&[first, second, third]),
+            &mut active,
+            &mut loopback,
+            &shutdown,
+            bind,
+        )
+        .await;
+        assert_eq!(
+            *events.lock().unwrap(),
+            [
+                Event::Added(first_ip),
+                Event::Bound(first.into()),
+                Event::Bound(second.into()),
+                Event::Added(second_ip),
+                Event::Bound(third.into()),
+            ]
+        );
+        events.lock().unwrap().clear();
+
+        reconcile_tcp_aliases(
+            desired(&[second, third]),
+            &mut active,
+            &mut loopback,
+            &shutdown,
+            bind,
+        )
+        .await;
+        assert!(events.lock().unwrap().is_empty());
+        reconcile_tcp_aliases(
+            desired(&[third]),
+            &mut active,
+            &mut loopback,
+            &shutdown,
+            bind,
+        )
+        .await;
+        assert_eq!(*events.lock().unwrap(), [Event::Removed(first_ip)]);
+
+        stop.send(true).unwrap();
+        run_manager(
+            Arc::new(RwLock::new(RouteTable::new())),
+            shutdown,
+            active,
+            loopback,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            *events.lock().unwrap(),
+            [Event::Removed(first_ip), Event::Removed(second_ip)]
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_loopback_ensure_leaves_address_available_for_retry() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut loopback = LoopbackAliases {
+            change: Some(Arc::new({
+                let calls = Arc::clone(&calls);
+                move |_, _| {
+                    if calls.fetch_add(1, Ordering::Relaxed) == 0 {
+                        return Err(io::Error::other("broker unavailable; run gateway setup"));
+                    }
+                    Ok(())
+                }
+            })),
+            ..LoopbackAliases::default()
+        };
+        let ip = crate::loopback::DEFAULT_LOOPBACK_START;
+        let alias = desired_alias(SocketAddrV4::new(ip, 5432));
+        let error = prepare_tcp_alias(&alias, &mut loopback, |_| async {
+            panic!("bind must wait for a successful broker response");
+        })
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(error, GatewayError::TcpAliasBindError { reason, .. }
+            if reason.contains("broker unavailable; run gateway setup"))
+        );
+        assert!(loopback.managed_loopback_ips.is_empty());
+
+        prepare_tcp_alias(&alias, &mut loopback, |_| {
+            TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        })
+        .await
+        .unwrap();
+        assert_eq!(loopback.managed_loopback_ips, [ip].into());
+        assert_eq!(calls.load(Ordering::Relaxed), 2);
+        loopback.remove_unused(&HashMap::new()).await;
+    }
+
+    fn desired_alias(addr: SocketAddrV4) -> DesiredTcpAlias {
+        DesiredTcpAlias {
+            domains: vec!["db.app.test".to_owned()],
+            bind_ip: *addr.ip(),
+            bind_port: addr.port(),
+            upstream: "127.0.0.1:19432".parse().unwrap(),
+        }
+    }
 
     #[test]
     fn extracts_desired_tcp_aliases_from_route_table() {

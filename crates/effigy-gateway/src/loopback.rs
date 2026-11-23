@@ -13,8 +13,7 @@ use crate::routes::RouteTable;
 
 /// Number of assignable loopback addresses in the bounded pool.
 ///
-/// This is the one sizing point: `gateway setup` installs exactly one `lo0`
-/// alias per pool address, and the bind broker authorises exactly this range.
+/// This is the one sizing point for allocation and bind broker authorization.
 /// Queue worktree churn exhausted the earlier 50-address pool, so the pool
 /// carries the headroom a machine running many checkouts needs while staying a
 /// single bounded `/24` (effigy#949, lead 7850b4ee).
@@ -30,6 +29,21 @@ pub const DEFAULT_LOOPBACK_END: Ipv4Addr = Ipv4Addr::new(127, 1, 0, DEFAULT_LOOP
 pub fn pool() -> impl Iterator<Item = Ipv4Addr> {
     let [a, b, c, first] = DEFAULT_LOOPBACK_START.octets();
     (first..=DEFAULT_LOOPBACK_END.octets()[3]).map(move |octet| Ipv4Addr::new(a, b, c, octet))
+}
+
+pub(crate) fn in_pool(ip: Ipv4Addr) -> bool {
+    pool().any(|candidate| candidate == ip)
+}
+
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn observed_pool_aliases(interface: &str) -> impl Iterator<Item = Ipv4Addr> + '_ {
+    interface.lines().filter_map(|line| {
+        let mut fields = line.split_whitespace();
+        if fields.next()? != "inet" {
+            return None;
+        }
+        fields.next()?.parse().ok().filter(|ip| in_pool(*ip))
+    })
 }
 
 /// Every address some route already references, as a DNS answer or a target.
@@ -58,7 +72,7 @@ pub fn checkout_address(table: &RouteTable, checkout: &str) -> Option<Ipv4Addr> 
         .into_iter()
         .filter(|route| route.project == checkout)
         .filter_map(|route| route.dns_ip)
-        .filter(|ip| pool().any(|candidate| candidate == *ip))
+        .filter(|ip| in_pool(*ip))
         .min()
 }
 

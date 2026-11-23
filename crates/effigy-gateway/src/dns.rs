@@ -142,11 +142,11 @@ pub async fn run_dns_server(
                 reason: e.to_string(),
             })?;
 
-    run_dns_server_on(socket, config, route_table, stats, dns_cache, shutdown).await
+    run_dns_server_on(&socket, config, route_table, stats, dns_cache, shutdown).await
 }
 
 pub(crate) async fn run_dns_server_on(
-    socket: UdpSocket,
+    socket: &UdpSocket,
     config: DnsConfig,
     route_table: Arc<RwLock<RouteTable>>,
     stats: Arc<GatewayStats>,
