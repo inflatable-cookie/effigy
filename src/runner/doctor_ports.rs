@@ -992,6 +992,17 @@ case "$1" in
         printf '501\n20\n'
         exit 0
         ;;
+      *effigy-named-volume-mounts*)
+        record=0
+        for arg do
+          if [ "$arg" = 'effigy-named-volume-mounts' ]; then
+            record=1
+            continue
+          fi
+          if [ "$record" -eq 1 ]; then printf '1 0 0:1 / %s rw - ext4 /dev/vdb rw\n' "$arg"; fi
+        done
+        exit 0
+        ;;
       *effigy-workspace-doctor-inspect-batch*)
         if [ '{mode}' = 'hang' ]; then
           printf '%s\n' "$$" > '{process_group_file}'
@@ -1661,9 +1672,11 @@ esac
         assert_no_mutating_operations(&executed).expect("read-only diagnosis");
         assert_batched_metadata(&executed).expect("metadata must stay batched");
 
+        // Ten batched operations plus one constant mount-table read that verifies
+        // the declared named volumes before any metadata or access batch.
         assert_eq!(
             executed.len(),
-            10,
+            11,
             "the applicable trace is the pre-batching workload shape: {:?}",
             executed
                 .iter()
