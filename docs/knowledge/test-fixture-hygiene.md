@@ -454,12 +454,12 @@ starts belong to kernel custody: the fixture waits for the recorded helpers
 before removing its tree and refuses to delete a tree a helper still writes, so
 no test-side group kill reaches outside a recorded identity.
 
-Host scratch moved from `/Volumes/Builds/scratch/effigy/` to
-`/Volumes/Stash/scratch/effigy/` in 2026-11; git history does not record the
-exact date. This machine sets `[scratch].root = "/Volumes/Stash/scratch/effigy"`
-in `~/.effigy/config.toml`, and `/Volumes/Builds` is no longer mounted. A
-current-state instruction that still names the old path is stale; a dated log,
-receipt or decision record that does is history and stays as written.
+Committed test and agent scratch rules stay portable: tests and ad-hoc scratch
+write under the run's `TMPDIR` (or `[scratch].root` in `~/.effigy/config.toml`
+when configured on a host). Machine-specific volume paths live in user config,
+Nucleus Storage settings and uncommitted local instructions (`AGENTS.local.md`),
+never in committed repository guidance; dated historical logs, receipts or
+decision records stay as written.
 
 Shell harnesses follow the same rule through `${TMPDIR:-/tmp}` `mktemp`
 templates; `effigy qa:docs:mktemp` fails a bare `mktemp` or a `/tmp`-shaped
@@ -473,7 +473,7 @@ diagnostics on an owned synthetic tree, including crate `tests/scripts` and
 the guest `mktemp-exempt` annotation; it does not replace the live check.
 
 Live Colima container fixtures stage under `~/.cache` until the `effigy`
-profile mounts `/Volumes/Stash/scratch`. The profile's `colima.yaml` has
+profile mounts the host's configured scratch root. The profile's `colima.yaml` has
 `mounts: []`, and Effigy writes no mounts, so the change is a host edit that
 needs a profile restart. Its gate is Q-016 in `questions.md`; no repository
 change can close it.

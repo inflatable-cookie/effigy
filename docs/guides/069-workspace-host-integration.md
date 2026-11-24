@@ -261,7 +261,7 @@ per run, and Effigy removes it again.
 ```toml
 # ~/.effigy/config.toml
 [scratch]
-root = "/Volumes/Stash/scratch"
+root = "/path/to/external/scratch"
 ```
 
 `root` is any directory: a subdirectory with room for builds, or a volume's
@@ -312,7 +312,8 @@ observation.
   with it. Without a configured root the run's own scratch directory, or an
   explicit caller `TMPDIR`, receives the file and that owner controls retention.
   A configured root that is itself named `effigy` therefore shows that segment
-  twice, as `/Volumes/Stash/scratch/effigy/effigy/failed-steps/<run id>/`: the
+  twice, as `<scratch-root>/effigy/failed-steps/<run id>/` (for example
+  `/path/to/external/scratch/effigy/effigy/failed-steps/<run id>/`): the
   `effigy/` child is the namespace a later sweep descends into, not a copy of
   the root, so it is never dropped to shorten the path.
   A step whose output Effigy captures keeps that capture. A step whose output is
