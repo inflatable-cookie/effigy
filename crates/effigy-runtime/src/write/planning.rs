@@ -1,10 +1,10 @@
 use std::ffi::OsString;
 use std::path::Path;
 
-use effigy_containers::ContainerAction;
 use effigy_containers::{
     colima::shutdown_compose_commands, EffectiveComposeSource, EffectiveContainerPolicy,
 };
+use effigy_containers::{BackendId, ContainerAction};
 use serde_yaml::{Mapping, Value};
 
 use crate::container_manager::{compose_invocation_plan_from_args, runtime_invocation_plan};
@@ -160,7 +160,7 @@ fn remove_runtime_image_allow_missing(
         OsString::from("-f"),
         OsString::from(image_ref),
     ];
-    let plan = runtime_invocation_plan(
+    let mut plan = runtime_invocation_plan(
         repo_root,
         policy,
         "docker",
@@ -169,6 +169,11 @@ fn remove_runtime_image_allow_missing(
         &format!("remove generated image `{image_ref}`"),
     )?;
 
+    // Image deletion runs after reset's cache drop. It has no local inputs,
+    // so don't let Colima reopen the worktree as the guest working directory.
+    if plan.backend_id == BackendId::colima_nerdctl() {
+        plan.repo_root = Path::new("/").to_owned();
+    }
     let output = run_runtime_plan_capture(&plan)?;
     if output.status.success() || image_remove_failure_is_missing(&output) {
         return Ok(());

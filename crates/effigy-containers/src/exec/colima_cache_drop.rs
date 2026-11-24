@@ -10,13 +10,12 @@ use super::implementation::ContainerExecError;
 use super::process::run_command_capture_allow_failure_with_deadline;
 
 const CACHE_DROP_TIMEOUT: Duration = Duration::from_secs(5);
-const DROP_CACHES_SCRIPT: &str = "sync; echo 2 > /proc/sys/vm/drop_caches";
+const DROP_CACHES_SCRIPT: &str = "cd / && sync && echo 2 > /proc/sys/vm/drop_caches";
 
 /// Ask a Colima guest to drop its dentry and inode caches within `deadline`.
 /// A non-zero Colima exit remains an observed output for the caller to handle.
 pub fn drop_colima_virtiofs_dentry_caches(
     profile: &str,
-    repo_root: &Path,
     deadline: Instant,
 ) -> Result<std::process::Output, ContainerExecError> {
     let args = [
@@ -25,12 +24,15 @@ pub fn drop_colima_virtiofs_dentry_caches(
         profile,
         "--",
         "sudo",
+        "-n",
         "sh",
         "-c",
         DROP_CACHES_SCRIPT,
     ];
+    // Colima passes its host cwd to Lima's guest shell. The helper itself
+    // must leave the shared worktree before asking Linux to reclaim it.
     run_command_capture_allow_failure_with_deadline(
-        repo_root,
+        Path::new("/"),
         "colima",
         &args,
         "drop Colima guest VirtioFS caches",
@@ -38,9 +40,9 @@ pub fn drop_colima_virtiofs_dentry_caches(
     )
 }
 
-/// Release Colima guest VirtioFS references after teardown without affecting
-/// the teardown result when Colima is unavailable or the guest refuses the request.
-pub fn release_colima_virtiofs_dentry_caches_best_effort(
+/// Try to release Colima guest VirtioFS references and report observed macOS
+/// VM handles on stderr. This maintenance does not change the teardown outcome.
+pub fn release_colima_virtiofs_references_after_teardown(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) {
@@ -48,7 +50,9 @@ pub fn release_colima_virtiofs_dentry_caches_best_effort(
         return;
     }
     let deadline = Instant::now() + CACHE_DROP_TIMEOUT;
-    let _ = drop_colima_virtiofs_dentry_caches(&policy.profile, repo_root, deadline);
+    let _ = drop_colima_virtiofs_dentry_caches(&policy.profile, deadline);
+    #[cfg(target_os = "macos")]
+    super::colima_virtiofs_handles::warn_about_surviving_handles(repo_root, &policy.profile);
 }
 
 #[cfg(all(test, unix))]
@@ -106,6 +110,7 @@ mod tests {
         );
         let env = EnvRestore::set(&[
             ("PATH", path.into()),
+            ("LIMA_HOME", root.join("lima").into_os_string()),
             ("EFFIGY_COMPOSE_BACKEND", "colima".into()),
         ]);
         (dir, env, root)
@@ -114,46 +119,47 @@ mod tests {
     #[test]
     fn drop_helper_invokes_exact_colima_ssh_command() {
         let _lock = test_env_lock();
-        let (dir, _env, root) = fixture_env("#!/bin/sh\nprintf '%s\\n' \"$@\" > '{log}'\nexit 0\n");
+        let (_dir, _env, root) =
+            fixture_env("#!/bin/sh\nprintf '%s\\n' \"$PWD\" \"$@\" > '{log}'\nexit 0\n");
         let mut policy = test_policy(&root);
         policy.profile = "worktree-profile".to_owned();
 
-        release_colima_virtiofs_dentry_caches_best_effort(&root, &policy);
+        release_colima_virtiofs_references_after_teardown(&root, &policy);
 
         let args = fs::read_to_string(root.join("colima-args.log")).expect("fake arguments");
         assert_eq!(
             args.lines().collect::<Vec<_>>(),
             [
+                "/",
                 "ssh",
                 "--profile",
                 "worktree-profile",
                 "--",
                 "sudo",
+                "-n",
                 "sh",
                 "-c",
-                "sync; echo 2 > /proc/sys/vm/drop_caches",
+                "cd / && sync && echo 2 > /proc/sys/vm/drop_caches",
             ]
         );
-        drop(dir);
     }
 
     #[test]
     fn docker_backend_is_a_strict_noop() {
         let _lock = test_env_lock();
-        let (dir, _env, root) = fixture_env("#!/bin/sh\nexit 0\n");
+        let (_dir, _env, root) = fixture_env("#!/bin/sh\nprintf '%s\\n' \"$@\" > '{log}'\n");
         std::env::set_var("EFFIGY_COMPOSE_BACKEND", "docker");
         let policy = test_policy(&root);
 
-        release_colima_virtiofs_dentry_caches_best_effort(&root, &policy);
+        release_colima_virtiofs_references_after_teardown(&root, &policy);
 
         assert!(!root.join("colima-args.log").exists());
-        drop(dir);
     }
 
     #[test]
     fn failing_cache_drop_does_not_fail_container_shutdown() {
         let _lock = test_env_lock();
-        let (dir, _env, root) = fixture_env(
+        let (_dir, _env, root) = fixture_env(
             "#!/bin/sh\nprintf '%s\\n' \"$@\" >> '{log}'\nif [ \"$1\" = ssh ]; then exit 7; fi\nexit 0\n",
         );
         let policy = test_policy(&root);
@@ -162,8 +168,7 @@ mod tests {
 
         let args = fs::read_to_string(root.join("colima-args.log")).expect("fake arguments");
         assert!(args.contains(
-            "ssh\n--profile\neffigy\n--\nsudo\nsh\n-c\nsync; echo 2 > /proc/sys/vm/drop_caches\n"
+            "ssh\n--profile\neffigy\n--\nsudo\n-n\nsh\n-c\ncd / && sync && echo 2 > /proc/sys/vm/drop_caches\n"
         ));
-        drop(dir);
     }
 }
