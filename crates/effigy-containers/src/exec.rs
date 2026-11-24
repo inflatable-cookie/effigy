@@ -1,6 +1,8 @@
 mod colima_cache_drop;
 mod colima_cleanup;
 mod colima_runtime;
+#[cfg(any(target_os = "macos", test))]
+mod colima_virtiofs_handles;
 mod compose_progress;
 mod compose_steps;
 mod engine;
@@ -32,7 +34,7 @@ pub use retained::RetainedComposeOwner;
 mod ssh_agent_preflight;
 
 pub use colima_cache_drop::{
-    drop_colima_virtiofs_dentry_caches, release_colima_virtiofs_dentry_caches_best_effort,
+    drop_colima_virtiofs_dentry_caches, release_colima_virtiofs_references_after_teardown,
 };
 pub use colima_runtime::{
     colima_is_running, colima_is_running_with_deadline, colima_profile_warnings,

@@ -833,6 +833,15 @@ Reset then drops only the selected environment's object references through kerne
 `Objects::reset`; physical reclamation is kernel retention's responsibility.
 Sibling environment references survive.
 
+After a Colima stack teardown, Effigy asks the guest to sync and drop unused
+dentry and inode caches. The cache command starts from `/` on both the host and
+guest so Colima's working-directory forwarding does not reopen the checkout.
+On macOS, a bounded check looks for open checkout descriptors in the
+Virtualization service identified by the profile's Lima disk. Confirmed
+survivors warn on stderr with the PID, a count, sample paths and the recovery
+command `colima restart <profile>`. Effigy leaves the VM running and preserves
+the teardown result and JSON stdout when this check is unavailable.
+
 ### Exact backend and resource adoption
 
 Every Compose, volume and data action targets one exact backend, resolved in

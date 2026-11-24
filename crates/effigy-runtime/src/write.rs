@@ -83,9 +83,6 @@ where
                     progress.update(|_| ProgressFrame::new(sub_step));
                 }
             })?;
-            effigy_containers::exec::release_colima_virtiofs_dentry_caches_best_effort(
-                repo_root, &policy,
-            );
             // A teardown the runtime reports as done is only done when its
             // containers are gone. Survivors warn on the operation, never a
             // second step and never a failed stop: the backend exit is the
@@ -110,6 +107,9 @@ where
             {
                 eprintln!("{note}");
             }
+            effigy_containers::exec::release_colima_virtiofs_references_after_teardown(
+                repo_root, &policy,
+            );
         }
         Ok(())
     });
@@ -215,7 +215,7 @@ where
         transition(repo_root, &policy, &|_| {
             if prepared {
                 run_shutdown_compose(repo_root, &policy)?;
-                effigy_containers::exec::release_colima_virtiofs_dentry_caches_best_effort(
+                effigy_containers::exec::release_colima_virtiofs_references_after_teardown(
                     repo_root, &policy,
                 );
             }
@@ -331,15 +331,16 @@ where
                 },
             )?;
             run_compose_plan_capture(&plan)?;
-            effigy_containers::exec::release_colima_virtiofs_dentry_caches_best_effort(
+            let volume_cleanup = match volume_actions.as_ref() {
+                Some(classification) if preserve_persistent_data => {
+                    remove_reset_volumes(repo_root, &policy, classification)
+                }
+                _ => Ok(()),
+            };
+            effigy_containers::exec::release_colima_virtiofs_references_after_teardown(
                 repo_root, &policy,
             );
-            if preserve_persistent_data {
-                if let Some(classification) = volume_actions.as_ref() {
-                    remove_reset_volumes(repo_root, &policy, classification)?;
-                }
-            }
-            Ok(())
+            volume_cleanup
         })?;
     }
     let removed_gateway_domains = if can_reset {

@@ -246,7 +246,7 @@ pub fn shutdown_container(
             &[],
         )?;
     }
-    super::colima_cache_drop::release_colima_virtiofs_dentry_caches_best_effort(repo_root, policy);
+    super::colima_cache_drop::release_colima_virtiofs_references_after_teardown(repo_root, policy);
     Ok(())
 }
 

@@ -1,0 +1,1 @@
+Colima container teardown now drops guest caches from outside the checkout after the last workspace-dependent checks. On macOS, Effigy warns when the profile’s Virtualization process still holds checkout files or directories and names the PID, sample paths, and restart command.
