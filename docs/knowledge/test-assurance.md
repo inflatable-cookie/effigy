@@ -133,7 +133,8 @@ census is measurement, not semantic certification; the private audit ledger
 5. Duplicate expensive T4 startups that add no independent detection are prime
    consolidation targets; a unique T5 proof is valuable even when expensive.
 6. Changed-code validation runs through Effigy selectors; whole-suite QA stays
-   with the milestone (`project.qa.run`), not the task.
+   with the milestone (a report-only Nucleus task with `queue.reportOnly: true`
+   and `queue.reportLane`), not the task.
 7. Place a case with its owner: domain behavior tests with the domain crate,
    runner tests for adaptation (invocation, error and report mapping,
    side-effect orchestration, text/JSON boundary). Fixture builders stay

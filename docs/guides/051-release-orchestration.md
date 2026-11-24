@@ -634,7 +634,8 @@ prefixed builtin tasks and JSON help envelope. It never replaces the installed
 local Effigy.
 
 This admitted path is for the planner's authorized post-publication proof. It
-does not replace milestone `project.qa.run`, authorize release preparation,
+does not replace milestone QA (a report-only Nucleus task with
+`queue.reportOnly: true` and `queue.reportLane`), authorize release preparation,
 or grant tag, publish, workflow-edit or live-operation authority. See
 [the release contract](../knowledge/contracts/release.md).
 
