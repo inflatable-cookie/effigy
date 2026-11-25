@@ -374,17 +374,63 @@ mod tests {
             .expect("fixture mode");
     }
 
+    /// Bind a Unix domain socket inside `dir` regardless of `dir`'s full path
+    /// length, avoiding macOS's 104-byte `SUN_LEN` cap under deep scratch roots
+    /// without altering the process working directory.
+    #[cfg(unix)]
+    fn bind_control_socket(dir: &Path, name: &str) -> std::os::unix::net::UnixListener {
+        use std::os::fd::AsRawFd;
+        use std::os::unix::net::UnixListener;
+
+        let dir_fd = std::fs::File::open(dir).expect("open runtime dir");
+        #[cfg(target_os = "macos")]
+        {
+            unsafe extern "C" {
+                fn pthread_fchdir_np(fd: libc::c_int) -> libc::c_int;
+            }
+            let raw_fd = dir_fd.as_raw_fd();
+            std::thread::scope(|scope| {
+                std::thread::Builder::new()
+                    .name("gw-test-sock".into())
+                    .spawn_scoped(scope, || {
+                        // SAFETY: `dir_fd` stays open across the joined scoped thread,
+                        // and `pthread_fchdir_np` changes only this fresh thread's cwd.
+                        assert_eq!(
+                            unsafe { pthread_fchdir_np(raw_fd) },
+                            0,
+                            "pthread_fchdir_np: {}",
+                            std::io::Error::last_os_error()
+                        );
+                        UnixListener::bind(name).expect("control socket")
+                    })
+                    .expect("spawn socket binder")
+                    .join()
+                    .expect("socket binder thread")
+            })
+        }
+        #[cfg(target_os = "linux")]
+        {
+            let path = format!("/proc/self/fd/{}/{name}", dir_fd.as_raw_fd());
+            UnixListener::bind(path).expect("control socket")
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        {
+            let _ = dir_fd;
+            UnixListener::bind(dir.join(name)).expect("control socket")
+        }
+    }
+
     #[cfg(unix)]
     #[test]
     fn operator_root_admits_its_owner_only_runtime_and_control_sockets() {
-        let fixture = tempfile::tempdir().expect("fixture");
+        let fixture = effigy_test_support::short_tempdir("gw-priv-").expect("fixture");
         let root = operator_root(fixture.path());
         let runtime = root.join("runtime");
         validate_root(&root).expect("fresh runtime directory is admitted");
 
         // Sockets are admitted only when owner-only, as the kernel creates them.
         let socket = runtime.join("s.sock");
-        let listener = std::os::unix::net::UnixListener::bind(&socket).expect("control socket");
+        let listener = bind_control_socket(&runtime, "s.sock");
         set_mode(&socket, 0o600);
         validate_root(&root).expect("owner-only control socket is admitted");
         drop(listener);
@@ -393,13 +439,13 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn operator_runtime_refuses_unsafe_children_and_modes() {
-        let fixture = tempfile::tempdir().expect("fixture");
+        let fixture = effigy_test_support::short_tempdir("gw-priv-").expect("fixture");
         let root = operator_root(fixture.path());
         let runtime = root.join("runtime");
 
         // A group-readable control socket is refused.
         let socket = runtime.join("s.sock");
-        let listener = std::os::unix::net::UnixListener::bind(&socket).expect("control socket");
+        let listener = bind_control_socket(&runtime, "s.sock");
         set_mode(&socket, 0o640);
         assert!(validate_root(&root).is_err());
         set_mode(&socket, 0o600);
