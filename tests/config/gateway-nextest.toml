@@ -1,6 +1,9 @@
 [test-groups.cold-start]
 max-threads = 1
 
+[test-groups.native-database-aliases]
+max-threads = 1
+
 [profile.default]
 # One budget for one ordinary selector. A journal-heavy selector names its own
 # budget file (journal-heavy-nextest.toml) instead of raising this per test.
@@ -17,3 +20,9 @@ path = "qa-junit.xml"
 # test slots. Keep the enclosing activation budgets and assertions unchanged.
 filter = 'test(container_up_exposure_tests::)'
 test-group = "cold-start"
+
+[[profile.default.overrides]]
+# Match the workspace config for the proofs that bind native aliases on 5432.
+filter = 'package(effigy) & test(/scoped_host_database_alias_tests::each_scoped_(host_task|managed_session)_connects_to_only_its_own_test_database$/)'
+test-group = "native-database-aliases"
+success-output = "immediate"

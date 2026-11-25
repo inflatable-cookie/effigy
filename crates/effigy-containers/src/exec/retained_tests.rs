@@ -4,7 +4,7 @@
 //! real obligations around them: an Env-owned kernel Run that admitted without
 //! custody, a checkout the VM would read the interpolation file from, and the
 //! trusted record each launch keeps.
-#![cfg(unix)]
+#![cfg(all(test, unix))]
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;

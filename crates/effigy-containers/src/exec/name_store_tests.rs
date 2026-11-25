@@ -4,6 +4,7 @@
 //! this project owns and the recreate loses on that name, Effigy removes it and
 //! retries the create once. Another project's container is reported, never
 //! removed. The runtime is a strict fake that records every call.
+#![cfg(test)]
 
 use std::ffi::OsString;
 use std::os::unix::fs::PermissionsExt;

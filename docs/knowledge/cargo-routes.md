@@ -87,7 +87,7 @@ diagnostics on an owned synthetic tree; it does not replace the live check.
 | --- | --- | --- | --- |
 | `scripts/oxide-selector.sh` | transitioned | — | The one place that spells a plain Cargo command: it owns the `EFFIGY_OXIDE_ESCAPE=cargo` and `GITHUB_ACTIONS=true` escapes and the private-HOME `OXIDE_POOL` pass-through for every routed selector. |
 | `release.gates.format` | genuine exception | 8 | `config/release.toml` stays on Cargo until formal v0.15: release workflow callers, and hosted runners have no Oxide. |
-| `release.gates.test` | genuine exception | 8 | Same: `config/release.toml` gate caller. |
+| `release.gates.test` | genuine exception | 8 | Release gate uses the hosted CI nextest configuration for process isolation, followed by Cargo doc tests. Hosted runners have no Oxide. |
 | `release.gates.qa` | genuine exception | 8 | Same: `config/release.toml` gate caller. |
 | `release.gates.build` | genuine exception | 8 | Same: `config/release.toml` gate caller. |
 | `release.gates.smoke` | genuine exception | 8 | Same: `config/release.toml` gate caller. |

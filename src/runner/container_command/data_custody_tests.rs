@@ -12,6 +12,7 @@
 //! - the MariaDB and Postgres clients,
 //! - the host Compose client and the Colima VM transport,
 //! - success and refusal.
+#![cfg(test)]
 
 use effigy_cli::ContainerDbDumpInput;
 use effigy_containers::EffectiveContainerPolicy;

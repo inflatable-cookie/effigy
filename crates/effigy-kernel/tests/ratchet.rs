@@ -187,6 +187,37 @@ fn ratchet_compares_baselines_and_semantics() {
     assert!(!found.production.contains_key("src/ordinary/store.rs"));
     assert!(counts("/// pkill and .effigy are documentation, not code.\nfn f(){std::fs::write(\"user.txt\",\"data\");}").is_empty());
 }
+
+#[test]
+fn ratchet_uses_the_file_cfg_for_test_only_modules() {
+    let root = tempfile::tempdir().expect("fresh checkout");
+    std::fs::create_dir(root.path().join("src")).expect("source directory");
+    std::fs::create_dir(root.path().join("crates")).expect("crates directory");
+    let command = r#"fn run() { std::process::Command::new("true"); }"#;
+    for (name, cfg) in [
+        ("test_only.rs", "#![cfg(all(test, unix))]"),
+        ("mixed_tests.rs", "#![cfg(any(test, unix))]"),
+    ] {
+        std::fs::write(
+            root.path().join("src").join(name),
+            format!("{cfg}\n{command}"),
+        )
+        .expect("fixture module");
+    }
+
+    let found = inventory(root.path()).expect("inventory");
+    assert_eq!(found.production.len(), 1);
+    assert_eq!(
+        found.production["src/mixed_tests.rs"]["std.process.Command.new"],
+        1
+    );
+    assert_eq!(found.tests.len(), 1);
+    assert_eq!(
+        found.tests["src/test_only.rs"]["std.process.Command.new"],
+        1
+    );
+}
+
 /// Merged proof: ratchet_vault_parameter_paths_cannot_hide_raw_writes, ratchet_accounts_for_external_boundaries_by_name_and_ceiling, ratchet_inventory_refuses_an_external_boundary_above_its_ceiling.
 #[test]
 fn ratchet_reports_each_command_shape() {
