@@ -1,1 +1,0 @@
-Gateway PID and version observations now use the trusted identity record owner, TLS trust checks match the current mkcert CA against platform trust stores, and proxy keep-alive reuse has a deterministic suite contract.

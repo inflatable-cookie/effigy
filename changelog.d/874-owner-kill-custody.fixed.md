@@ -1,1 +1,0 @@
-Fix custody residue after owner SIGKILL when the anchor exits during recovery verification. A positively observed anchor exit now reaches the existing bounded full-group closure observation, which still requires positive closure evidence and grants no new signal authority.

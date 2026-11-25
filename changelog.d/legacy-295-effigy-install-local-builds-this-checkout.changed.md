@@ -1,1 +1,0 @@
-**`effigy install:local` builds this checkout through Oxide**, and every route that runs Cargo goes through Oxide or is recorded in `docs/knowledge/cargo-routes.md`; the 489 `:cargo` escape tasks are gone.

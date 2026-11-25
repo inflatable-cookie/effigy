@@ -1,1 +1,0 @@
-Container rendering relocates Compose file references without changing matching text in commands, environment values or generated configs. Reports derive Compose input names from the render and include its overrides.

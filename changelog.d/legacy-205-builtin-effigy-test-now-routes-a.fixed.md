@@ -1,1 +1,0 @@
-Builtin `effigy test` now routes a named-container suite's setup and teardown with the suite command, so those hooks run inside the selected container. Nested effigy re-entries still keep their own routing.

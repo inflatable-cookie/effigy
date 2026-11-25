@@ -1,1 +1,0 @@
-Remove the retired Linux quota preparation plan and executor while preserving offline historical evidence readers and the refusing compatibility entry. Replace duplicate macOS preparation simulations with refusal tables and real-handler controls; supported preparation modes and root administration roles are unchanged.

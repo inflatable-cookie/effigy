@@ -1,1 +1,0 @@
-A direct foreground task stays in memory custody and records no `latest` or `history` entry, even when the user config declares a `[programs]` block. Only a block that puts a shim on the run's `PATH` (program absent, or `force = true`) moves the run to durable custody, since foreground runs carry no shims. `effigy tasks status` for such a task now reports `not-recorded` again.

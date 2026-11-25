@@ -1,1 +1,0 @@
-Hosted test harnesses use their absolute built Effigy binary for builtin and Rhai child steps, without an executable override or nested Cargo build. Fix strict Clippy checks, read lifecycle fixtures from their run journals, and isolate executable-copy fixtures from concurrent test forks.

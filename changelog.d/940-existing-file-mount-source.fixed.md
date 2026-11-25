@@ -1,1 +1,0 @@
-**Existing file mount sources are preserved.** Bind mount preparation now creates only missing host paths, leaves existing files and other filesystem entries alone, and still reports failures when a missing directory cannot be created.

@@ -1,1 +1,0 @@
-**A catalog service with a `build:` section builds from its Dockerfile.** The Dockerfile is rendered as `dockerfile_inline` from the generation's own content, with every `$` doubled so Compose interpolation leaves the Dockerfile's `${…}` and `$VAR` intact for the shell inside the image.

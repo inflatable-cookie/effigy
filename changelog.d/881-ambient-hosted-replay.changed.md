@@ -1,1 +1,0 @@
-Narrow hosted shared-process test replay from seven cohorts to two per operating system, retaining ambient library and gateway coverage alongside the complete sharded nextest suite, example compilation and doc tests.

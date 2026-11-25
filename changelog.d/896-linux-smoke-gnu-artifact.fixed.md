@@ -1,1 +1,0 @@
-Linux native smoke cleanup now exports the GNU guest artifact, producer receipt, active-version marker and install identity under the host evidence root before removing guest outputs, and binds every exported file's SHA-256 in the completion record.

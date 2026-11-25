@@ -1,1 +1,0 @@
-**A refusal says which of three kinds it is.** Every kernel and runner error reads `Refused` (ask again after a change), `Unavailable` (retry when it answers) or `Broken` (the record contradicts itself and names its repair), in text and in JSON.

@@ -1,1 +1,0 @@
-Removed the Northstar retired-concepts check: `docs/knowledge/retired.toml`, its `qa:docs:knowledge` path check and `qa:secrets:policy:docs` step, and the file from the Northstar starter. Docs and help examples now use `northstar/check-links`.

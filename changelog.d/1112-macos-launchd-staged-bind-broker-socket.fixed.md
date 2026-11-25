@@ -1,1 +1,0 @@
-The macOS gateway bind broker now accepts the private socket path launchd stages after a reboot, so `effigy gateway up` and `effigy container up` keep working instead of crash-looping. A bind broker that does not answer within three seconds now reports the broker's socket and log, and points to `effigy gateway setup`, instead of a raw `Resource temporarily unavailable` error.

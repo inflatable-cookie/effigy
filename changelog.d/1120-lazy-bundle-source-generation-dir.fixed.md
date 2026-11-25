@@ -1,1 +1,0 @@
-No-op bundle refresh checks no longer create empty source generations that are immediately pruned and reported; failed refresh generations are cleaned up quietly while older unpinned generations remain visible in pruning notes.

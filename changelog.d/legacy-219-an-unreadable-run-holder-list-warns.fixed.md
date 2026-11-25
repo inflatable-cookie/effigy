@@ -1,1 +1,0 @@
-An unreadable run-holder list warns. `container up` still applies the edit, since an unreadable list is not held, and prints a `[warn]` line on stderr that the holders were not checked. A readable list keeps its held-environment warning.

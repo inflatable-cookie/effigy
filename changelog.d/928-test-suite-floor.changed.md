@@ -1,1 +1,0 @@
-The Round 4c test quality pass brings every scored test to a rating of 7 or higher, consolidates duplicate refusal accounting coverage, and moves the anchor timing utility behind an on-demand ignore gate.

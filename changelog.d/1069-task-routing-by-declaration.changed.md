@@ -1,1 +1,0 @@
-A declared task whose name matches an Effigy command (for example `doctor`, `tasks` or `release`) now routes by its own `run_in` and binding like any other task. Previously a default container forced such a task onto the host by name. Declare `run_in = "host"` to keep it on the host.

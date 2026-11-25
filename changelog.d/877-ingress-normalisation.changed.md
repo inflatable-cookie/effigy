@@ -1,1 +1,0 @@
-Manifest fragments, bundle defaults and direct deserialisation share compatibility normalisation and notice collection, preserving include conflicts, local overlay precedence and bootstrap setup replacement.

@@ -1,1 +1,0 @@
-Fast host commands no longer drop captured or relayed output when they write and exit between a poll turn's drain and its exit check: the exit observation now drains whatever the child left in the pipe before reporting it, so short-lived commands still report their output.

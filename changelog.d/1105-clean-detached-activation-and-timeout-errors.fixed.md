@@ -1,1 +1,0 @@
-A detached container bring-up that does not finish now reports one clean error that names the container, says what Compose left running, and gives the next command to finish or stop it. A runtime command that hits its deadline reads as a timeout instead of a signal stop with a stray stderr line.

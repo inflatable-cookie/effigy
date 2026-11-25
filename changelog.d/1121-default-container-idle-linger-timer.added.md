@@ -1,1 +1,0 @@
-Task-started containers stay warm for five minutes after the last run finishes, and another run resets the countdown when it finishes. Set `EFFIGY_CONTAINER_IDLE_TIMEOUT_SECS` to change the wait or use `0` for immediate stop. Use `effigy container up --detach` to keep the stack running or `effigy container down` to stop it now.

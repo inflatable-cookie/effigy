@@ -1,1 +1,0 @@
-Import cached legacy bundle bytes during planning without starting an unused sentinel. Fetches still require full custody, and planning keeps its original deadline and checkout publication gates (effigy#635).

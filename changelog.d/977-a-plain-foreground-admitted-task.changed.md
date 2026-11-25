@@ -1,1 +1,0 @@
-A plain foreground admitted task has a bounded persistence footprint: each `.gate` body is at most 4096 bytes, a `.scope` marker stays empty, and a foreground admission refuses more than four aliased gates. A closing writable store truncates its write-ahead log inside a short window (effigy#977).

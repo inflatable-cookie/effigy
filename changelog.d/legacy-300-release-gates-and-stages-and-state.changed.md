@@ -1,1 +1,0 @@
-Release gates and stages show live progress that names the current gate, its known count, and the exact command or source they wait on, in place of one fixed label. JSON, piped and quiet output are unchanged.
