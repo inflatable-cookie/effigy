@@ -284,6 +284,8 @@ jobs:
 
       - name: Extract release notes from CHANGELOG.md
         id: notes
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           VERSION="${RELEASE_TAG#v}"
           if ./target/release/effigy changelog extract CHANGELOG.md --version "$VERSION" > release-notes.md; then
@@ -292,6 +294,40 @@ jobs:
               rm -f release-notes.md
               echo "fallback=true" >> "$GITHUB_OUTPUT"
             else
+              python3 - "$RELEASE_TAG" "$GITHUB_REPOSITORY" <<'PY'
+          import pathlib
+          import sys
+
+          tag, repo = sys.argv[1], sys.argv[2]
+          path = pathlib.Path("release-notes.md")
+          text = path.read_text(encoding="utf-8")
+          limit = 120_000
+          if len(text) > limit or len(text.encode("utf-8")) > limit:
+              footer = (
+                  "\n\n---\n\n"
+                  f"*Release notes truncated to fit GitHub's 125,000-character release body limit. "
+                  f"See the complete `{tag}` changelog in "
+                  f"[`CHANGELOG.md`](https://github.com/{repo}/blob/{tag}/CHANGELOG.md).*\n"
+              )
+              budget = limit - len(footer.encode("utf-8"))
+              kept = []
+              used = 0
+              for line in text.splitlines(keepends=True):
+                  line_bytes = len(line.encode("utf-8"))
+                  if used + line_bytes > budget:
+                      break
+                  kept.append(line)
+                  used += line_bytes
+              if not kept:
+                  kept = [text.encode("utf-8")[:budget].decode("utf-8", errors="ignore")]
+              truncated = "".join(kept).rstrip() + footer
+              path.write_text(truncated, encoding="utf-8")
+              print(
+                  f"::warning::Release notes exceeded {limit} bytes/chars "
+                  f"({len(text)} chars, {len(text.encode('utf-8'))} bytes); "
+                  f"truncated to {len(truncated)} chars ({len(truncated.encode('utf-8'))} bytes)"
+              )
+          PY
               echo "fallback=false" >> "$GITHUB_OUTPUT"
             fi
           else
