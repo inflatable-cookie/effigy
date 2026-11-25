@@ -127,15 +127,16 @@ jobs:
         run: cargo test --workspace --doc
 
   shared-process:
-    name: Shared-process tests (${{ matrix.os }})
+    name: Shared-process tests (${{ matrix.os }}, ${{ matrix.suite }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: 30
     env:
       RUSTFLAGS: --cfg effigy_shared_process
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
+        suite: [library-ambient, gateway]
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -153,10 +154,12 @@ jobs:
         with:
           node-version: lts/*
 
-      # Keep libtest's parallel threads: this is the release test gate's
-      # shared-process model, which nextest's per-test processes cannot prove.
+      # Match ci.yml's curated shared-process suites (`library-ambient` and
+      # `gateway`): full workspace isolation is covered by the nextest `test`
+      # job, while `scripts/ci-shared-process.py` proves the ambient and gateway
+      # process-global invariants under libtest's shared threads.
       - name: Run workspace tests in shared processes
-        run: cargo test --workspace --no-fail-fast
+        run: python3 scripts/ci-shared-process.py ${{ matrix.suite }}
 
   managed-lifecycle:
     name: Managed lifecycle matrix
