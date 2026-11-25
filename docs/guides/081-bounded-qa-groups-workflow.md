@@ -82,8 +82,10 @@ you to run the full board.
 ### Declare ordinary path and package gaps
 
 Use `coverage_gaps` for unresolved ordinary inputs as well as opaque inputs.
-For example, a member may claim a path pattern and its exact Cargo package
-while both remain unresolved:
+When a member's target scope is also its declared coverage, set
+`covers = "targets"`; use an explicit list when the two differ. For example,
+a member may claim a path pattern and its exact Cargo package while both
+remain unresolved:
 
 ```toml
 covers = ["path:crates/example/**", "cargo-package:example", "path:crates/mapped/**"]

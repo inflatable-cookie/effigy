@@ -196,7 +196,10 @@ Each member requires:
   the TOML key; the runtime resolves it as a selector);
 - non-empty `targets`, using explicit `path:`, `cargo-package:`,
   `bun-package:`, `workspace:`, or `external:` labels;
-- `covers`: zero or more scope patterns this member is declared to prove;
+- `covers`: zero or more scope patterns this member is declared to prove. It
+  may be a list, or the exact string `"targets"` to copy this member's parsed
+  `targets` into `covers`. Omitting it remains an empty coverage declaration;
+  no other string shorthand is accepted;
 - non-empty `limits`, naming what this member does not prove.
 
 `companions` contains member IDs, not shell commands or auto-expanded task
@@ -207,7 +210,7 @@ tasks. The exact selector and args determine execution. `--plan` shows both
 the declarations and the resolved task route so reviewers can reject a broad
 or mislabelled selector.
 
-Coverage declarations are separate from `targets`: targets describe the
+Coverage declarations are separate from `targets` by default: targets describe the
 selector's declared execution scope; `covers` maps caller scope inputs to the
 member IDs expected to exercise them. A caller supplies repeatable typed
 tokens in these forms: `path:<repo-relative-path>`,

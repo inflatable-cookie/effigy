@@ -367,10 +367,23 @@ pub struct ManifestQaMemberTable {
     pub args: Vec<String>,
     pub targets: Vec<String>,
     #[serde(default)]
-    pub covers: Vec<String>,
+    pub covers: ManifestQaCovers,
     #[serde(default)]
     pub companions: Vec<String>,
     pub limits: Vec<String>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(untagged)]
+pub enum ManifestQaCovers {
+    List(Vec<String>),
+    Shorthand(String),
+}
+
+impl Default for ManifestQaCovers {
+    fn default() -> Self {
+        Self::List(Vec::new())
+    }
 }
 
 /// Where a raw group table is being converted.
@@ -644,7 +657,16 @@ impl ManifestQaMemberTable {
             ));
         }
         let targets = parse_token_list(&self.targets, &label, "targets")?;
-        let covers = parse_token_list(&self.covers, &label, "covers")?;
+        let raw_covers = match self.covers {
+            ManifestQaCovers::List(covers) => covers,
+            ManifestQaCovers::Shorthand(value) if value == "targets" => self.targets.clone(),
+            ManifestQaCovers::Shorthand(value) => {
+                return Err(format!(
+                    "{label} `covers` must be a list of scope patterns or the string `targets`; got `{value}`"
+                ));
+            }
+        };
+        let covers = parse_token_list(&raw_covers, &label, "covers")?;
         let limits = non_empty_list(self.limits, format!("{label} `limits`"))?;
         Ok(ManifestQaGroupMember {
             id: self.id,
@@ -786,7 +808,7 @@ surface = "published"
 task = "test:cli"
 args = ["-p", "cli"]
 targets = ["cargo-package:cli"]
-covers = ["cargo-package:cli"]
+covers = "targets"
 limits = ["Only the package tests"]
 
 [[groups.agent-cli.members]]
@@ -802,9 +824,67 @@ limits = ["Does not compile consumers"]
 
         let group = parsed.groups.get("agent-cli").expect("group exists");
         assert_eq!(group.members.len(), 2);
+        assert_eq!(group.members[0].covers, group.members[0].targets);
+        assert!(group.members[1].covers.is_empty());
         assert_eq!(group.members[1].companions, vec!["cli-tests"]);
         assert_eq!(group.expected_wall_ms, Some(180_000));
         assert!(group.created.is_none());
+    }
+
+    #[test]
+    fn explicit_covers_list_is_preserved() {
+        let parsed: Groups = toml::from_str(
+            r#"
+[groups.example]
+lifecycle = "maintained"
+purpose = "Check"
+scope_policy = "required"
+proof_limits = ["No broader claim"]
+
+[[groups.example.members]]
+id = "check"
+kind = "test"
+task = "test"
+targets = ["workspace:root"]
+covers = ["path:README.md"]
+limits = ["Only this check"]
+"#,
+        )
+        .expect("parse explicit coverage");
+
+        let member = &parsed.groups["example"].members[0];
+        assert_eq!(
+            member.covers,
+            vec![QaScopeToken::parse("path:README.md", true).unwrap()]
+        );
+    }
+
+    #[test]
+    fn covers_rejects_unknown_string_shorthand() {
+        let error = toml::from_str::<Groups>(
+            r#"
+[groups.example]
+lifecycle = "maintained"
+purpose = "Check"
+scope_policy = "required"
+proof_limits = ["No broader claim"]
+
+[[groups.example.members]]
+id = "check"
+kind = "test"
+task = "test"
+targets = ["workspace:root"]
+covers = "all"
+limits = ["Only this check"]
+"#,
+        )
+        .expect_err("unknown shorthand must fail");
+
+        assert!(
+            error.to_string().contains("covers` must be a list"),
+            "{error}"
+        );
+        assert!(error.to_string().contains("string `targets`"), "{error}");
     }
 
     #[test]
