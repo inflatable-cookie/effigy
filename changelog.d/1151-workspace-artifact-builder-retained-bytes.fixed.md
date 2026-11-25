@@ -1,0 +1,1 @@
+Compute `build_tree_retained_bytes` in the Linux workspace artifact builder boundary probes with POSIX shell integer arithmetic instead of `awk '{print $1 * 1024}'`, avoiding `mawk` scientific-notation formatting once the retained Cargo build tree exceeds 2 GiB.

@@ -395,7 +395,7 @@ const BEFORE_SCRIPT: &str = r#"covered=$(awk -v r="$tree" '$5 != "/" && ($5 == r
 [ "$covered" = 0 ] || { echo "build-tree-mount $covered"; exit 47; }
 mkdir -p "$tree/target"
 chmod 700 "$tree" "$tree/target"
-retained=$(du -sk "$tree" | awk '{print $1 * 1024}')
+retained=$(( $(du -sk "$tree" | awk '{print $1}') * 1024 ))
 reset=0
 if [ "$retained" -gt "$cap" ]; then
   rm -rf -- "$tree"
@@ -456,7 +456,7 @@ done
 binary=$(wc -c < "$release_dir/effigy" | tr -d ' ')
 receipt=$(wc -c < "$release_dir/effigy.receipt" | tr -d ' ')
 sidecar=$(wc -c < "$release_dir/effigy.active-version" | tr -d ' ')
-retained=$(du -sk "$tree" | awk '{print $1 * 1024}')
+retained=$(( $(du -sk "$tree" | awk '{print $1}') * 1024 ))
 [ "$retained" -le "$cap" ] || { echo "build-tree-over-cap $retained"; exit 54; }
 writers=0
 for proc in /proc/[0-9]*; do
@@ -466,7 +466,7 @@ for proc in /proc/[0-9]*; do
   case "$cwd" in "$tree"|"$tree"/*) writers=1 ;; esac
 done
 sleep 1
-stable=$(du -sk "$tree" | awk '{print $1 * 1024}')
+stable=$(( $(du -sk "$tree" | awk '{print $1}') * 1024 ))
 quiescent=0
 if [ "$retained" = "$stable" ]; then quiescent=1; fi
 free=$(( $(df -P -k "$tree" | awk 'NR==2 {print $4}') * 1024 ))
@@ -1519,5 +1519,19 @@ mod tests {
         assert!(marker["build_tree"]["storage"]
             .as_str()
             .is_some_and(|text| text.contains("VM disk")),);
+    }
+
+    #[test]
+    fn boundary_probes_compute_retained_bytes_with_shell_integer_arithmetic() {
+        for script in [super::BEFORE_SCRIPT, super::AFTER_SCRIPT] {
+            assert!(
+                !script.contains("awk '{print $1 * 1024}'"),
+                "mawk formats values above 2 GiB in scientific notation; use shell arithmetic"
+            );
+            assert!(
+                script.contains("$(du -sk \"$tree\" | awk '{print $1}') * 1024"),
+                "probe must scale du kilobytes with POSIX integer arithmetic"
+            );
+        }
     }
 }
