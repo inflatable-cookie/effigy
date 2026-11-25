@@ -4,6 +4,9 @@ max-threads = 4
 [test-groups.journal-matrix]
 max-threads = 1
 
+[test-groups.native-database-aliases]
+max-threads = 1
+
 [profile.default]
 # Bound workspace runs locally and on hosted CI, including lifecycle cases.
 # Focused profiles retain their stricter per-test limits.
@@ -22,6 +25,11 @@ path = "main.xml"
 # stderr and the hosted step summary. Keep those notices visible on success.
 filter = 'package(effigy) & (test(scoped_host_database_alias_tests::) | test(/::the_production_predecessor_adapter_accepts_a_matching_live_predecessor_and_publishes$/))'
 success-output = "immediate"
+
+[[profile.default.overrides]]
+# Both forwarding proofs need the same native alias pool on port 5432.
+filter = 'package(effigy) & test(/scoped_host_database_alias_tests::each_scoped_(host_task|managed_session)_connects_to_only_its_own_test_database$/)'
+test-group = "native-database-aliases"
 
 # Private cold-start fixtures have separate roots and listeners, so four may
 # progress together while ordinary tests use the remaining runner capacity.

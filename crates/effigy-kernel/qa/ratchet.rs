@@ -230,7 +230,7 @@ fn scan_in_state(
 ) -> Result<(FileCounts, FileCounts), String> {
     let file = syn::parse_file(source).map_err(|e| e.to_string())?;
     let mut scanner = Scanner {
-        test: test_file,
+        test: test_file || test_cfg(&file.attrs),
         state,
         ..Scanner::default()
     };

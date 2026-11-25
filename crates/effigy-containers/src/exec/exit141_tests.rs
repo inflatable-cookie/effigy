@@ -19,6 +19,7 @@
 //!
 //! Every fixture is a fresh private temporary directory. Recorded child PIDs
 //! are stopped before a control returns.
+#![cfg(test)]
 
 use std::ffi::OsStr;
 use std::ffi::OsString;

@@ -35,7 +35,7 @@ description = "Effigy release metadata and docs hold on the source tree"
 secret-audit = "sh scripts/release/secret-audit.sh --base v0.14.1 --base-sha 20465f1ff690340ee9ef461915ca769da1c76fca"
 ci = { task = "release:ci-evidence", description = "Exactly one successful `workflow_dispatch` ci.yml run for the candidate commit" }
 format = "cargo fmt --all -- --check"
-test = "cargo test --workspace"
+test = "cargo nextest run --workspace --config-file .config/nextest.toml --user-config-file none --no-fail-fast --retries 0 && cargo test --workspace --doc"
 qa = "cargo build --bin effigy && ./target/debug/effigy qa:ci"
 build = "cargo build --release --bin effigy"
 smoke = "cargo build --bin effigy && ./target/debug/effigy smoke:release"
