@@ -300,6 +300,7 @@ fn native_alias_addresses(test_name: &str) -> Option<Vec<Ipv4Addr>> {
 
     let mut addresses = Vec::with_capacity(REQUIRED_ALIASES);
     let mut occupied = 0;
+    let mut unavailable = 0;
     for address in effigy_gateway::loopback::pool() {
         match TcpListener::bind((address, 5432)) {
             Ok(_) => {
@@ -308,16 +309,17 @@ fn native_alias_addresses(test_name: &str) -> Option<Vec<Ipv4Addr>> {
                     return Some(addresses);
                 }
             }
-            Err(error) if error.kind() == ErrorKind::AddrNotAvailable => {}
+            Err(error) if error.kind() == ErrorKind::AddrNotAvailable => unavailable += 1,
             Err(error) if error.kind() == ErrorKind::AddrInUse => occupied += 1,
             Err(error) => panic!("cannot probe {address}:5432: {error}"),
         }
     }
 
-    let configured = addresses.len() + occupied;
-    let detection =
-        format!("requires {REQUIRED_ALIASES} aliases on port 5432, found {configured} configured");
-    if cfg!(target_os = "macos") && configured < REQUIRED_ALIASES {
+    let detection = format!(
+        "requires {REQUIRED_ALIASES} free aliases on port 5432, found {} free ({occupied} in use, {unavailable} unconfigured)",
+        addresses.len()
+    );
+    if cfg!(target_os = "macos") && unavailable > 0 {
         if !crate::contract_test_support::hosted_prerequisite_skip(
             test_name,
             PREREQUISITE,
@@ -327,7 +329,7 @@ fn native_alias_addresses(test_name: &str) -> Option<Vec<Ipv4Addr>> {
         }
         return None;
     }
-    panic!("{test_name}: {detection}, {occupied} ports already in use");
+    panic!("{test_name}: {detection}");
 }
 
 #[test]
