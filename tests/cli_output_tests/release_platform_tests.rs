@@ -1244,3 +1244,183 @@ fn effigy_release_run_certifies_and_then_publishes_through_the_fake_dispatch() {
         .expect("binaries verification");
     assert_eq!(verification["passed"], true);
 }
+
+/// Captured-stub harness for `scripts/release/checks.sh` (`verify-install`
+/// and `verify-binaries`). No live network: `gh`, `brew` and `cargo` are
+/// shell stubs on PATH that record their arguments and answer from fixtures.
+fn write_executable(path: &Path, contents: &str) {
+    fs::write(path, contents).expect("write stub");
+    let mut permissions = fs::metadata(path)
+        .expect("stub metadata")
+        .permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+    fs::set_permissions(path, permissions).expect("stub executable");
+}
+
+fn checks_script() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/release/checks.sh")
+}
+
+/// A stub `cargo` that records its arguments, captures the `--git` URL, and
+/// installs a fake `effigy` binary reporting `version` that satisfies the
+/// release checks' greps (`v{version}`, `noop`, and the help envelope).
+fn write_stub_cargo(bin: &Path, version: &str) {
+    let script = format!(
+        r#"#!/bin/sh
+set -eu
+log_dir="${{STUB_LOG_DIR:?STUB_LOG_DIR is not set}}"
+printf '%s\n' "$@" >> "$log_dir/cargo-args"
+install_root=""
+git_url=""
+prev=""
+for arg in "$@"; do
+  if [ "$prev" = "--root" ]; then install_root="$arg"; prev=""; continue; fi
+  if [ "$prev" = "--git" ]; then git_url="$arg"; prev=""; continue; fi
+  case "$arg" in
+    --root) prev="--root" ;;
+    --git) prev="--git" ;;
+  esac
+done
+printf '%s\n' "$git_url" >> "$log_dir/git-urls"
+mkdir -p "$install_root/bin"
+cat > "$install_root/bin/effigy" <<'EFFIGY'
+#!/bin/sh
+if [ "${{1:-}}" = "version" ]; then echo "effigy v{version}"; exit 0; fi
+if [ "${{1:-}}" = "tasks" ]; then echo "noop"; exit 0; fi
+if [ "${{1:-}}" = "catalog_a/tasks" ]; then echo "noop"; exit 0; fi
+if [ "${{1:-}}" = "--json" ] && [ "${{2:-}}" = "help" ]; then echo '{{"schema":"effigy.command.v1","ok":true,"result":{{"schema":"effigy.help.v1"}}}}'; exit 0; fi
+echo "noop"
+EFFIGY
+chmod +x "$install_root/bin/effigy"
+"#
+    );
+    write_executable(&bin.join("cargo"), &script);
+}
+
+fn stub_path_with(bin: &Path) -> String {
+    let current = std::env::var("PATH").unwrap_or_default();
+    format!("{}:{}", bin.display(), current)
+}
+
+/// `verify-binaries` must query `brew info --json=v2
+/// inflatable-cookie/tap/effigy` (the `inflatable-cookie/homebrew-tap`
+/// formula), not `inflatable-cookie/effigy/effigy`.
+#[test]
+fn release_checks_verify_binaries_queries_the_tap_formula() {
+    let root = temp_workspace("release-checks-verify-binaries");
+    super::support::write_effigy_release_root_marker(&root);
+    init_git_repo(&root);
+    git_commit_all(&root, "fixture");
+    let input = root.join("release-input.json");
+    fs::write(
+        &input,
+        r#"{"identities":[{"tag":"v0.9.1","identity":"0.9.1"}]}"#,
+    )
+    .expect("write release input");
+    // The script under test re-enters itself as `$root/scripts/release/checks.sh`
+    // for the trailing `verify-install` probe, so stage the fixed file there.
+    fs::create_dir_all(root.join("scripts/release")).expect("scripts dir");
+    fs::copy(checks_script(), root.join("scripts/release/checks.sh"))
+        .expect("stage checks.sh");
+    let log_dir = root.join("logs");
+    fs::create_dir_all(&log_dir).expect("log dir");
+    let bin = root.join("stub-bin");
+    fs::create_dir_all(&bin).expect("stub bin");
+    write_executable(
+        &bin.join("gh"),
+        r#"#!/bin/sh
+printf '%s\n' effigy-aarch64-apple-darwin effigy-aarch64-unknown-linux-gnu effigy-x86_64-apple-darwin effigy-x86_64-unknown-linux-gnu effigy-aarch64-apple-darwin.sha256 effigy-aarch64-unknown-linux-gnu.sha256 effigy-x86_64-apple-darwin.sha256 effigy-x86_64-unknown-linux-gnu.sha256
+"#,
+    );
+    write_executable(
+        &bin.join("brew"),
+        r#"#!/bin/sh
+log_dir="${STUB_LOG_DIR:?STUB_LOG_DIR is not set}"
+printf '%s\n' "$@" >> "$log_dir/brew-args"
+printf '{"formulae":[{"versions":{"stable":"0.9.1"}}]}'
+"#,
+    );
+    write_stub_cargo(&bin, "0.9.1");
+
+    let output = Command::new("sh")
+        .arg(checks_script())
+        .args([
+            "verify-binaries",
+            "--repo-url",
+            "https://example.com/inflatable-cookie/effigy.git",
+        ])
+        .current_dir(&root)
+        .env("PATH", stub_path_with(&bin))
+        .env("STUB_LOG_DIR", &log_dir)
+        .env("EFFIGY_RELEASE_INPUT", &input)
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("run verify-binaries");
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let brew_args =
+        fs::read_to_string(log_dir.join("brew-args")).expect("brew was invoked");
+    assert!(
+        brew_args.contains("inflatable-cookie/tap/effigy"),
+        "brew must be queried for the tap formula, got: {brew_args}"
+    );
+    assert!(
+        !brew_args.contains("inflatable-cookie/effigy/effigy"),
+        "brew must not use the retired formula path, got: {brew_args}"
+    );
+}
+
+/// `verify-install` must normalize SCP-style remotes (`git@host:path`) to
+/// `ssh://git@host/path` before `cargo install --git`, while leaving
+/// `https://` URLs unchanged.
+#[test]
+fn release_checks_verify_install_normalizes_scp_git_urls() {
+    for (label, repo_url, expected) in [
+        (
+            "scp",
+            "git@github.com:inflatable-cookie/effigy.git",
+            "ssh://git@github.com/inflatable-cookie/effigy.git",
+        ),
+        (
+            "https",
+            "https://github.com/inflatable-cookie/effigy.git",
+            "https://github.com/inflatable-cookie/effigy.git",
+        ),
+    ] {
+        let root = temp_workspace(&format!("release-checks-verify-install-{label}"));
+        super::support::write_effigy_release_root_marker(&root);
+        init_git_repo(&root);
+        git_commit_all(&root, "fixture");
+        let log_dir = root.join("logs");
+        fs::create_dir_all(&log_dir).expect("log dir");
+        let bin = root.join("stub-bin");
+        fs::create_dir_all(&bin).expect("stub bin");
+        write_stub_cargo(&bin, "0.1.0");
+
+        let output = Command::new("sh")
+            .arg(checks_script())
+            .args(["verify-install", "--tag", "v0.1.0", "--repo-url", repo_url])
+            .current_dir(&root)
+            .env("PATH", stub_path_with(&bin))
+            .env("STUB_LOG_DIR", &log_dir)
+            .env("NO_COLOR", "1")
+            .output()
+            .expect("run verify-install");
+        assert!(
+            output.status.success(),
+            "{label} stdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let git_urls =
+            fs::read_to_string(log_dir.join("git-urls")).expect("cargo was invoked");
+        assert!(
+            git_urls.trim() == expected,
+            "{label}: cargo --git must receive `{expected}`, got: {git_urls}"
+        );
+    }
+}
