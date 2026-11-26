@@ -590,6 +590,20 @@ Target compatibility cases:
 - one real-Colima fixture whose Compose stack mounts a generated closure file
   through a relative input
 
+### Init process for health-check children
+
+A catalog service whose periodic health check leaves children behind declares
+`init: true` in its fragment (effigy#1130; MariaDB is the first). Both backends
+accept the key. Docker Compose 5.5.1 keeps it in `docker compose config` and
+runs `docker-init` as PID 1. `nerdctl compose` maps it to `--init`, which runs
+`tini`: the containerd `effigy` profile's VM ships `tini`, and `nerdctl run
+--init` is present in its nerdctl 2.4.2. On a disposable profile with that
+nerdctl 2.4.2 and the same containerd and runc, `nerdctl compose` translated
+`init: true` to `--init`, with `tini` as PID 1, healthy checks and a clean
+SIGTERM stop. That run did not reproduce the zombie condition, so the init
+change is not evidence of zombie reaping (see the MariaDB section in
+`005-container-runtime-contract.md`).
+
 ## Validation direction
 
 Compatibility coverage should prefer small targeted tests over one broad smoke

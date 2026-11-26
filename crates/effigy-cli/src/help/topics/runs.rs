@@ -16,6 +16,7 @@ const RUNS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         "`run logs --follow` ends when the run settles. Resume a lost follow with the byte offsets you already received; expired bytes are reported, never skipped.",
         "`run stop` asks the run's owner to stop through the kernel journal; the owner stops the task's whole process group and settles the run.",
         "`run release` re-inventories a parked sentinel's process group with the same membership the sentinel uses. An empty group asks that sentinel to drop its gates and record `released`; a live member is named and nothing is signalled.",
+        "`run acknowledge` verifies that a `closed` run with `incomplete` cleanup has no remaining live processes or groups, removes any orphaned interpolation file it owned, and records `residue_ack` so subsequent runs on that owner can proceed.",
     ],
     usage: text_lines![
         "effigy runs [--limit <N>] [--all] [--json]",
@@ -23,6 +24,7 @@ const RUNS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         "effigy run logs <run> [--follow] [--stdout-offset <N>] [--stderr-offset <N>] [--json]",
         "effigy run stop <run> [--wait-ms <MS>] [--json]",
         "effigy run release <run> [--wait-ms <MS>] [--json]",
+        "effigy run acknowledge <run> [--json]",
         "effigy --run-id <key> <task> [task args]",
     ],
     leading_common_options: &[],
@@ -38,6 +40,7 @@ const RUNS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         "effigy run logs ci-1234 --follow --stdout-offset 5120 --stderr-offset 96",
         "effigy run stop ci-1234",
         "effigy run release ci-1234",
+        "effigy run acknowledge ci-1234",
     ],
 };
 

@@ -96,7 +96,7 @@ pub(super) fn home() -> effigy_test_support::Fixture {
 #[derive(Debug)]
 pub(super) struct Fake {
     home: PathBuf,
-    unknown: bool,
+    pub(super) unknown: bool,
     fail_release: bool,
 }
 impl Fake {
@@ -189,7 +189,7 @@ fn spec(run: &Run<'_>, key: &str, settlement: Settlement) -> EffectSpec {
         required: true,
     }
 }
-fn apply(run: &mut Run<'_>, fake: &Fake, key: &str) -> EffectTicket {
+pub(super) fn apply(run: &mut Run<'_>, fake: &Fake, key: &str) -> EffectTicket {
     let ticket = run
         .intend(spec(run, key, Settlement::Release(Value::Null)))
         .unwrap();

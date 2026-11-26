@@ -11,6 +11,9 @@ mod container_migrate_tests;
 mod core_output_tests;
 #[path = "shared/deploy_fixture_support.rs"]
 mod deploy_fixture_support;
+#[cfg(unix)]
+#[path = "cli_output_tests/down_project_tests.rs"]
+mod down_project_tests;
 #[path = "cli_output_tests/flat_command_execution_tests.rs"]
 mod flat_command_execution_tests;
 #[cfg(unix)]

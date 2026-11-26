@@ -12,16 +12,16 @@ use serde_json::Value;
 
 const MANIFEST: &str = "[tasks]\nbuild = \"true\"\n";
 
-struct Fixture {
+pub(super) struct Fixture {
     owned: effigy_test_support::Fixture,
-    root: PathBuf,
-    home: PathBuf,
-    state: PathBuf,
-    path: String,
+    pub(super) root: PathBuf,
+    pub(super) home: PathBuf,
+    pub(super) state: PathBuf,
+    pub(super) path: String,
 }
 
 impl Fixture {
-    fn new(name: &str) -> Self {
+    pub(super) fn new(name: &str) -> Self {
         let owned = effigy_test_support::Fixture::new(name).expect("private fixture");
         let root = owned.path().to_path_buf();
         let home = root.join("home");
@@ -43,11 +43,11 @@ impl Fixture {
         }
     }
 
-    fn root(&self) -> &Path {
+    pub(super) fn root(&self) -> &Path {
         self.owned.path()
     }
 
-    fn checkout(&self) -> String {
+    pub(super) fn checkout(&self) -> String {
         self.root
             .canonicalize()
             .expect("canonical checkout")
@@ -55,21 +55,21 @@ impl Fixture {
             .to_string()
     }
 
-    fn container(&self, name: &str, project: &str, scope: &str) {
+    pub(super) fn container(&self, name: &str, project: &str, scope: &str) {
         append(
             &self.state.join("containers"),
             &format!("{name}|{project}|{}||{scope}", self.checkout()),
         );
     }
 
-    fn unowned_container(&self, name: &str, project: &str) {
+    pub(super) fn unowned_container(&self, name: &str, project: &str) {
         append(
             &self.state.join("containers"),
             &format!("{name}|{project}|||"),
         );
     }
 
-    fn volume(&self, name: &str, project: &str, scope: &str, persist: bool) {
+    pub(super) fn volume(&self, name: &str, project: &str, scope: &str, persist: bool) {
         append(
             &self.state.join("volumes"),
             &format!("{name}|{project}|{}||{scope}|{persist}", self.checkout()),
@@ -78,28 +78,52 @@ impl Fixture {
 
     /// A volume exactly as `nerdctl compose` leaves one: its Compose project
     /// label and the name Compose gave it, with no Effigy label at all.
-    fn project_volume(&self, name: &str, project: &str) {
+    pub(super) fn project_volume(&self, name: &str, project: &str) {
         append(
             &self.state.join("volumes"),
             &format!("{name}|{project}|||false"),
         );
     }
 
-    fn network(&self, name: &str, project: &str) {
+    pub(super) fn network(&self, name: &str, project: &str) {
         append(&self.state.join("networks"), &format!("{name}|{project}"));
     }
 
-    fn lock(&self, name: &str) {
+    /// A container carrying only Barge's lease label, with no checkout label.
+    pub(super) fn leased_container(&self, name: &str, project: &str, lease: &str) {
+        append(
+            &self.state.join("containers"),
+            &format!("{name}|{project}||||||{lease}"),
+        );
+    }
+
+    /// A volume with no label at all, as a foreign tool left it.
+    pub(super) fn unlabelled_volume(&self, name: &str) {
+        append(&self.state.join("volumes"), &format!("{name}|||||false"));
+    }
+
+    /// One `colima list --json` row: a profile and its VM status, with the
+    /// resource fields the listing parser reads.
+    pub(super) fn colima_profile(&self, name: &str, status: &str) {
+        append(
+            &self.state.join("colima"),
+            &format!(
+                "{{\"name\":\"{name}\",\"status\":\"{status}\",\"cpus\":2,\"memory\":2147483648,\"disk\":60129542144}}"
+            ),
+        );
+    }
+
+    pub(super) fn lock(&self, name: &str) {
         append(&self.state.join("locked"), name);
     }
 
     /// Mark a container running with `restart: unless-stopped`.
-    fn running_unless_stopped(&self, name: &str) {
+    pub(super) fn running_unless_stopped(&self, name: &str) {
         append(&self.state.join("running"), name);
         append(&self.state.join("unless-stopped"), name);
     }
 
-    fn state_lines(&self, file: &str) -> Vec<String> {
+    pub(super) fn state_lines(&self, file: &str) -> Vec<String> {
         fs::read_to_string(self.state.join(file))
             .unwrap_or_default()
             .lines()
@@ -107,7 +131,7 @@ impl Fixture {
             .collect()
     }
 
-    fn run(&self, args: &[&str]) -> Output {
+    pub(super) fn run(&self, args: &[&str]) -> Output {
         Command::new(env!("CARGO_BIN_EXE_effigy"))
             .arg("--json")
             .arg("--repo")
@@ -123,33 +147,38 @@ impl Fixture {
             .expect("run effigy")
     }
 
-    fn retire(&self, args: &[&str]) -> (bool, Value) {
-        let output = self.run(args);
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let envelope: Value = serde_json::from_str(&stdout)
-            .unwrap_or_else(|error| panic!("retire JSON ({error}): {stdout}\n{output:?}"));
-        // The CLI wraps a command's own payload: a success keeps it under
-        // `result`, a failure keeps it in the error's own JSON details.
-        let report = envelope
-            .get("result")
-            .filter(|value| !value.is_null())
-            .cloned()
-            .or_else(|| {
-                envelope
-                    .pointer("/error/details")
-                    .filter(|value| !value.is_null())
-                    .cloned()
-            })
-            .or_else(|| {
-                let text = envelope.pointer("/error/details")?.as_str()?;
-                serde_json::from_str(text).ok()
-            })
-            .unwrap_or_else(|| envelope.clone());
-        (output.status.success(), report)
+    pub(super) fn retire(&self, args: &[&str]) -> (bool, Value) {
+        report(&self.run(args))
     }
 }
 
-fn append(path: &Path, line: &str) {
+/// The payload of one CLI run: a command's own report, from its success
+/// `result` or from a failure's JSON details.
+pub(super) fn report(output: &Output) -> (bool, Value) {
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let envelope: Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|error| panic!("retire JSON ({error}): {stdout}\n{output:?}"));
+    // The CLI wraps a command's own payload: a success keeps it under
+    // `result`, a failure keeps it in the error's own JSON details.
+    let report = envelope
+        .get("result")
+        .filter(|value| !value.is_null())
+        .cloned()
+        .or_else(|| {
+            envelope
+                .pointer("/error/details")
+                .filter(|value| !value.is_null())
+                .cloned()
+        })
+        .or_else(|| {
+            let text = envelope.pointer("/error/details")?.as_str()?;
+            serde_json::from_str(text).ok()
+        })
+        .unwrap_or_else(|| envelope.clone());
+    (output.status.success(), report)
+}
+
+pub(super) fn append(path: &Path, line: &str) {
     use std::io::Write;
     let mut file = fs::OpenOptions::new()
         .create(true)
@@ -177,7 +206,7 @@ printf '%s %s\n' "{program}" "$*" >> "$state/calls.log"
 case "{program}" in
   colima)
     case "${{1:-}}" in
-      list) printf '[]\n' ;;
+      list) if [ -f "$state/colima" ]; then cat "$state/colima"; else printf '[]\n'; fi ;;
       status) printf 'Running\n' ;;
       ssh) printf 'worker:containerd\n' ;;
     esac
@@ -187,7 +216,7 @@ esac
 contains() {{ printf '%s' "$1" | grep -q -- "$2"; }}
 case "$*" in
   "ps -a "*)
-    sed -n 's/^\([^|]*\)|\([^|]*\)|\([^|]*\)|\([^|]*\)|\([^|]*\)$/\1\t\2\t\3\t\4\t\5/p' "$state/containers" 2>/dev/null
+    awk -F'|' 'NF {{ print $1 "\t" $2 "\t" $3 "\t" $4 "\t" $5 "\t" $6 "\t" $7 "\t" $8 }}' "$state/containers" 2>/dev/null
     ;;
   "ps --all"*|"ps -a"|"version"*|"info"*)
     exit 0
@@ -272,7 +301,7 @@ exit 0
     )
 }
 
-fn names(values: &Value) -> Vec<String> {
+pub(super) fn names(values: &Value) -> Vec<String> {
     values
         .as_array()
         .map(|rows| {

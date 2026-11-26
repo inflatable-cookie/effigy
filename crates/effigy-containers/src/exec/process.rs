@@ -1385,6 +1385,9 @@ fn spawn_capture_child_with_env(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .stdin(if input { Stdio::piped() } else { Stdio::null() });
+    if program == "colima" && args.first().is_some_and(|arg| arg == "start") {
+        crate::colima::configure_colima_start(&mut command);
+    }
     #[cfg(unix)]
     // SAFETY: `pre_exec` runs this closure in the forked child before `exec`,
     // where only async-signal-safe work is allowed. `setpgid` is

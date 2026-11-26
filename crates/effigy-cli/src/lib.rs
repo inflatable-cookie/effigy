@@ -526,6 +526,13 @@ pub enum ContainerSubcommand {
         name: Option<String>,
         system: Option<String>,
         global: bool,
+        /// `--project` with `--profile`: tear one project's stack down on one
+        /// profile, from any directory, without a checkout or manifest.
+        project: Option<String>,
+        profile: Option<String>,
+        /// `--volumes`, valid only with `--project` and `--profile`: also remove
+        /// the project's volumes, including persistent ones.
+        volumes: bool,
     },
     Status {
         name: Option<String>,
@@ -876,6 +883,9 @@ pub enum RunsAction {
     /// `effigy run release <run> [--wait-ms N]`: drop a parked sentinel after
     /// proving its process group is empty. Never signals task processes.
     Release { run: String, wait_ms: Option<u64> },
+    /// `effigy run acknowledge <run>`: acknowledge verified-dead `closed` +
+    /// `incomplete` residue so subsequent runs on that owner can proceed.
+    Acknowledge { run: String },
 }
 
 /// Bounded QA-group surfaces under `effigy tasks` (contract 051).

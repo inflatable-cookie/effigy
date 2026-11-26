@@ -336,7 +336,7 @@ actionable error.
 - **Keep and fix:**
   - `scan`: assess every scanner and remove or improve each. Tom, agreeing with the planner's per-scanner calls from the 2026-10 scanner assessment: keep and fix `god-files` and `duplicate-blocks`; cut `attention-markers`, `generated-in-src`, `comment-ratio`, `generated-assets` and `stale-suppressions`. The graph-backed scanners (`boundary-violations`, `dead-code`, `validation-gaps`) go with `graph`, with no graphless replacement; `effigy test --plan` answers which tests run;
   - `bootstrap`: simplify it, prove it on a selection of real projects, and align each project's `[bootstrap]`. Tom: "a single-command way to download and start another person's project".
-    - **Shape:** `[bootstrap] setup = [<selectors>]` and `start = "<selector>"`, run as ordinary tasks.
+    - **Shape:** `[bootstrap] setup = [<entries>]` and `start = "<entry>"`, each run as `effigy <entry>` would (tasks or built-in commands).
     - **Cut:** `children` and its subcommands, `deps-sync`, `--db-seed` and dump prompts, `--fresh`/`teardown`, `--backend`, `--start`, and the `run` alias.
     - **Keep `submodules`.** Tom: "They would be valid in polyrepo setups".
     - **Add pinned extra sources.** Tom: "Pinned extra sources - yes please". A source is pinned to a commit and never silently advanced, and an existing working copy is never reset. This replaces `children`.

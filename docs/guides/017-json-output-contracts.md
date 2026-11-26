@@ -225,7 +225,7 @@ Operator workflow and recovery: [`077-local-dependency-linking.md`](077-local-de
 - `effigy.container.bounded-exec.v1` (`container <NAME> shell --bounded --json`)
 - `effigy.container-partial-activation.v2` (detached `container up` failure details)
 - `effigy.runs.v1` (`runs --json`)
-- `effigy.run.v1` (`run status|stop|release --json`)
+- `effigy.run.v1` (`run status|stop|release|acknowledge --json`)
 - `effigy.run.logs.v1` (`run logs --json`)
 - `effigy.admission.v1` (error details when a heavy run is not admitted)
 - `effigy.admission-request.v1` (the `EFFIGY_ADMISSION_REQUEST` hook input)

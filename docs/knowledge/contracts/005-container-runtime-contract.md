@@ -2689,3 +2689,43 @@ pass `--force-recreate`), so the corrected check replaces the broken one.
 A catalog check that needs an argument with a space or a metacharacter — a
 `node -e` or `php -r` probe — writes shell form with its own quoting, so it is
 exact on any backend instead of depending on the render's conversion.
+
+## MariaDB catalog init process — 2026-11-26
+
+The MariaDB catalog fragment declares `init: true` on every backend (effigy#1130).
+Its health check runs `healthcheck.sh` every five seconds. Children that such a
+script can leave behind are reparented to the container's PID 1, which is
+`mariadbd` when no init runs, and `mariadbd` does not reap them. Long-lived
+local containers were reported to accumulate zombies this way. The qualification
+below did not reproduce that, so the init change is justified as reaping
+orphans in principle, not as a proven fix for the reported zombies.
+
+With `init: true`, PID 1 is an init process that reaps orphans and forwards
+signals. Docker runs `docker-init`. `nerdctl` maps the key to `--init`, which
+runs `tini`. The `effigy` Colima profile's VM ships `/usr/local/bin/tini` (nerdctl
+2.4.2), and the `default` profile runs the Docker runtime, so it is not a
+nerdctl target. The entrypoint execs `mariadbd`, and `tini` forwards SIGTERM to
+its child, so a stop still reaches `mariadbd` directly and shuts it down
+gracefully.
+
+The key changes the render digest of every MariaDB stack, shared MariaDB
+included. The next `container up` recreates the MariaDB container once and
+reuses its named data volume. The exec-form health check is rendered as before.
+
+Qualification on 2026-11-26 used a disposable containerd profile with the same
+components as the `effigy` profile: nerdctl 2.4.2, containerd 2.3.1 and runc
+1.4.2. The stack was Effigy's own render from this checkout's build
+(`effigy container render`), with its named data volume renamed in one copy.
+A control copy had `init: true` removed. `nerdctl compose` translated
+`init: true` to `--init`. The `init` container ran `tini` as PID 1, and the
+control ran `mariadbd`. Both reported `healthy` across ten minutes of 5s
+intervals, 40 samples each, with zero zombie processes in either. The zombie
+condition did not reproduce on this path, so this run shows no reaping benefit.
+A SIGTERM stop took 3 seconds and exited 0 in both, with `mariadbd: Shutdown
+complete` logged. The shared MariaDB was not touched.
+
+An earlier run on nerdctl 2.3.1 with a hand-written Compose file of the same
+shape gave the same health and zero-zombie results over three minutes.
+
+Not proven: reaping of the reported zombies under the original incident's
+conditions, which may need a longer window or a different probe path.

@@ -1295,6 +1295,13 @@ fn begin_error(
                 started,
             )
         }
+        RunError::PredecessorUnsettled { run, effects } => {
+            return RunnerError::PredecessorUnsettled {
+                run: run.to_string(),
+                effects: effects.len(),
+                context: None,
+            };
+        }
         other => format!("`{}` could not be admitted: {other}", target.label),
     };
     RunnerError::RunAdmission { category, message }

@@ -15,7 +15,7 @@ checkout in place.
 1. clones the repo (or uses the existing checkout when no URL is given);
 2. materialises its pinned bundle, catalog and extra sources;
 3. initialises submodules when `[bootstrap] submodules = true`;
-4. runs the project's `setup` selectors as ordinary tasks, in order;
+4. runs the project's `setup` entries in order, each as `effigy <entry>` would;
 5. starts its `start` selector unless `--no-start` is passed.
 
 Everything else the old bootstrap did is gone. There is no child-repo clone, no
@@ -33,7 +33,7 @@ refuses with its replacement.
 
 ```toml
 [bootstrap]
-setup = ["workspace:js:prepare", "db:seed:schema"]  # ordered task selectors
+setup = ["workspace:js:prepare", "db:seed:schema"]  # ordered entries, as typed after `effigy`
 start = "dev"                                       # one selector; --no-start skips it
 submodules = true                                   # recursive init at recorded commits
 
@@ -43,9 +43,11 @@ rev = "<commit>"                   # or rev_file = "book.rev"; exactly one
 path = "../book"
 ```
 
-- `setup` is an ordered list of ordinary task selectors. Each one dispatches
-  through the same pipeline as `effigy <selector>`, so environment, gateway,
-  readiness, secrets and cleanup behave identically.
+- `setup` is an ordered list of entries, each exactly what you would type after
+  `effigy`: a task selector, a task with arguments, or a built-in command such as
+  `secrets init`. Each one runs at the checkout through the same pipeline as
+  `effigy <entry>`, so environment, gateway, readiness, secrets and cleanup
+  behave identically. A task entry runs on the bootstrap surface.
 - `start` is one ordinary selector. A repo with no long-running process simply
   omits it; bootstrap then stops after `setup`.
 - `submodules = true` runs one recursive init at the commits `.gitmodules`

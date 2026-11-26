@@ -23,8 +23,8 @@ use effigy_kernel::observe::Observed;
 use super::command_context::resolve_active_command_context;
 use super::error::RunnerError;
 use super::task_engine::{
-    checkout_effects_root, list_runs, lookup_checkout, request_stop, resolve_in, signal_owner,
-    Lookup, RunRecord, StopStarted, RUN_POLL,
+    acknowledge_run, checkout_effects_root, list_runs, lookup_checkout, request_stop, resolve_in,
+    signal_owner, Lookup, RunRecord, StopStarted, RUN_POLL,
 };
 
 const RUN_SCHEMA: &str = "effigy.run.v1";
@@ -76,6 +76,7 @@ pub(in crate::runner) fn run_runs(args: RunsArgs) -> Result<String, RunnerError>
             wait_ms.map_or(STOP_WAIT_DEFAULT, Duration::from_millis),
             json,
         ),
+        RunsAction::Acknowledge { run } => acknowledge(&checkout(repo_override)?, &run, json),
     }
 }
 
@@ -204,6 +205,15 @@ fn status(checkout: &Path, selector: &str, json: bool) -> Result<String, RunnerE
                 record.task, record.view.run_id
             ));
         }
+    } else if record.summary().is_some_and(|summary| {
+        summary.phase == effigy_kernel::run::Phase::Closed
+            && summary.cleanup_complete == Some(false)
+            && !summary.acknowledged
+    }) {
+        lines.push(format!(
+            "next     effigy run acknowledge {}  (after verifying no processes from this run remain)",
+            record.view.run_id
+        ));
     }
     Ok(lines.join("\n"))
 }
@@ -899,6 +909,72 @@ fn release(
         }
         Err(error) => Err(RunnerError::task_invocation(error.to_string())),
     }
+}
+
+/// `effigy run acknowledge <run>`: verify a `closed` + `incomplete` run has no
+/// live recorded processes or process groups, remove any orphaned temporary
+/// interpolation file, and record `runs.residue_ack`.
+fn acknowledge(checkout: &Path, selector: &str, json: bool) -> Result<String, RunnerError> {
+    let record = find(checkout, selector)?;
+    let outcome = acknowledge_run(&record)?;
+    if json {
+        return Ok(serde_json::json!({
+            "schema": RUN_SCHEMA,
+            "schema_version": 1,
+            "run": outcome.run.to_string(),
+            "task": record.task,
+            "acknowledged": true,
+            "acknowledged_at_epoch_ms": outcome.acknowledged_at_ms,
+            "removed_interpolation_files": outcome
+                .removed_interpolation_files
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>(),
+            "skipped_interpolation_files": outcome
+                .skipped_interpolation_files
+                .iter()
+                .map(|entry| serde_json::json!({
+                    "path": entry.path.as_ref().map(|path| path.display().to_string()),
+                    "reason": entry.reason,
+                }))
+                .collect::<Vec<_>>(),
+        })
+        .to_string());
+    }
+    let task_note = if record.task.is_empty() {
+        String::new()
+    } else {
+        format!(" (task {})", record.task)
+    };
+    let mut lines = vec![if outcome.removed_interpolation_files.is_empty() {
+        format!("run {}{} residue acknowledged", outcome.run, task_note)
+    } else {
+        let paths = outcome
+            .removed_interpolation_files
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "run {}{} residue acknowledged; removed {} orphaned interpolation file(s): {}",
+            outcome.run,
+            task_note,
+            outcome.removed_interpolation_files.len(),
+            paths
+        )
+    }];
+    for skipped in &outcome.skipped_interpolation_files {
+        let location = skipped
+            .path
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "<compose-env>".to_owned());
+        lines.push(format!(
+            "warning: skipped interpolation cleanup for {location}: {}",
+            skipped.reason
+        ));
+    }
+    Ok(lines.join("\n"))
 }
 
 fn parked_holder(

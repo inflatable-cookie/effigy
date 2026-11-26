@@ -488,7 +488,10 @@ pub enum EnvError {
     /// A guest never holds host authority (R1).
     HostAuthorityRequired,
     /// A previous run of this environment left unresolved effects (K5).
-    Unsettled(String),
+    Unsettled {
+        run: RunId,
+        effects: usize,
+    },
     Backend(BackendError),
     Invalid(String),
     Kernel(RunError),
@@ -526,9 +529,9 @@ impl std::fmt::Display for EnvError {
             Self::HostAuthorityRequired => f.write_str(
                 "environment changes need host authority: run this on the host, not inside the workspace container",
             ),
-            Self::Unsettled(detail) => write!(
+            Self::Unsettled { run, effects } => write!(
                 f,
-                "the environment's previous transition left effects that could not be proven settled: {detail}. Inspect with `effigy container status`"
+                "the environment's previous transition (run {run}) left {effects} unresolved effect(s) from incomplete cleanup; inspect with `effigy run status {run}`, verify its processes are gone, then run `effigy run acknowledge {run}`"
             ),
             Self::Backend(error) => write!(f, "{error}"),
             Self::Invalid(message) => f.write_str(message),
@@ -569,10 +572,10 @@ impl EnvError {
                 env: env.to_owned(),
                 holders: holders.into_iter().map(|holder| holder.run).collect(),
             },
-            RunError::PredecessorUnsettled { run, effects } => Self::Unsettled(format!(
-                "run {run} left {} unresolved effect(s)",
-                effects.len()
-            )),
+            RunError::PredecessorUnsettled { run, effects } => Self::Unsettled {
+                run,
+                effects: effects.len(),
+            },
             other => Self::Kernel(other),
         }
     }
