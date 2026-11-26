@@ -23,7 +23,9 @@ pub fn parse_task_reference_invocation(raw: &str) -> Result<(TaskSelector, Vec<S
     Ok((selector, args))
 }
 
-fn split_task_reference_words(raw: &str) -> Result<Vec<String>, String> {
+/// Split one entry into argv words with shell-like quoting and escapes, so a
+/// caller can hand the words to the same parser `effigy <entry>` uses.
+pub fn split_task_reference_words(raw: &str) -> Result<Vec<String>, String> {
     let mut out = Vec::<String>::new();
     let mut current = String::new();
     let mut token_started = false;

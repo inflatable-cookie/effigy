@@ -1,6 +1,7 @@
 use super::{
-    bootstrap_runtime_session_context, checkout_awaiting, phase_progress, run_bootstrap_with_cwd,
-    running_setup_label, starting_label, task_awaiting, BootstrapProgressReporter,
+    bootstrap_runtime_session_context, checkout_awaiting, parse_bootstrap_entry, phase_progress,
+    run_bootstrap_with_cwd, running_setup_label, starting_label, task_awaiting, BootstrapEntry,
+    BootstrapProgressReporter,
 };
 use crate::runner::runtime_session_context::{LeaseRefreshPolicy, PublicWorkspaceCleanupOverride};
 use effigy_bootstrap::BootstrapProgressEvent;
@@ -312,4 +313,119 @@ fn a_finished_setup_step_ends_with_one_tick_and_json_draws_nothing() {
         drop(reporter);
     });
     assert!(json_lines.is_empty(), "{json_lines:?}");
+}
+
+/// A checkout with one manifest task that takes arguments, for entries that are
+/// parsed but never run.
+fn parse_project(root: &Path) -> PathBuf {
+    let project = root.join("app");
+    write_project(
+        &project,
+        "[tasks.\"record-args\"]\nrun = \"printf '%s\\n' {args} >> order.txt\"\n",
+    );
+    project
+}
+
+#[test]
+fn a_setup_entry_naming_a_manifest_task_parses_to_a_task_for_the_bootstrap_surface() {
+    let _environment = crate::contract_test_support::clean_fixture_environment();
+    let (_fixture, root) = owned_root("bootstrap-entry-task-");
+    let project = parse_project(&root);
+    match parse_bootstrap_entry(&project, "record-args").expect("parse entry") {
+        BootstrapEntry::Task(task) => {
+            assert_eq!(task.name, "record-args");
+            assert!(task.args.is_empty(), "{:?}", task.args);
+        }
+        other => panic!("expected a manifest task, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_setup_entry_keeps_quoted_arguments_together_when_it_is_split() {
+    let _environment = crate::contract_test_support::clean_fixture_environment();
+    let (_fixture, root) = owned_root("bootstrap-entry-args-");
+    let project = parse_project(&root);
+    match parse_bootstrap_entry(&project, "record-args 'two words' three").expect("parse entry") {
+        BootstrapEntry::Task(task) => {
+            assert_eq!(task.name, "record-args");
+            assert_eq!(task.args, vec!["two words".to_owned(), "three".to_owned()]);
+        }
+        other => panic!("expected a manifest task, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_multi_token_setup_entry_naming_a_builtin_parses_to_that_command() {
+    let _environment = crate::contract_test_support::clean_fixture_environment();
+    let (_fixture, root) = owned_root("bootstrap-entry-builtin-");
+    let project = parse_project(&root);
+    match parse_bootstrap_entry(&project, "secrets init").expect("parse entry") {
+        BootstrapEntry::Builtin { command, words } => {
+            assert!(matches!(command, effigy_cli::Command::Secrets(_)));
+            assert_eq!(words, vec!["secrets".to_owned(), "init".to_owned()]);
+        }
+        other => panic!("expected a built-in command, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_setup_entry_with_an_unterminated_quote_is_refused_before_dispatch() {
+    let _environment = crate::contract_test_support::clean_fixture_environment();
+    let (_fixture, root) = owned_root("bootstrap-entry-quote-");
+    let project = parse_project(&root);
+    let error =
+        parse_bootstrap_entry(&project, "record-args \"two words").expect_err("unterminated quote");
+    assert!(error.to_string().contains("unterminated quote"), "{error}");
+}
+
+#[test]
+fn a_setup_entry_naming_a_builtin_runs_it_against_the_repo_root() {
+    let _environment = crate::contract_test_support::clean_fixture_environment();
+    let (_fixture, root) = owned_root("bootstrap-builtin-setup-");
+    let project = root.join("app");
+    write_project(
+        &project,
+        r#"
+[bootstrap]
+setup = ["tasks", "record-one"]
+
+[tasks."record-one"]
+run = "printf 'one\n' >> order.txt"
+"#,
+    );
+
+    // The invocation cwd is the fixture root, which has no manifest: the
+    // built-in must resolve the checkout it was given, not where bootstrap ran.
+    let output = run_bootstrap_with_cwd(
+        bootstrap_args(None, Some(&project), None, false, false, false),
+        root.clone(),
+    )
+    .expect("bootstrap runs a built-in setup entry");
+    assert!(output.contains("[ok] bootstrap completed"), "{output}");
+    let order = std::fs::read_to_string(project.join("order.txt")).expect("order file");
+    assert_eq!(order, "one\n");
+}
+
+#[test]
+fn an_unknown_setup_entry_fails_with_its_phase_selector_and_next_step() {
+    let _environment = crate::contract_test_support::clean_fixture_environment();
+    let (_fixture, root) = owned_root("bootstrap-unknown-setup-");
+    let project = root.join("app");
+    write_project(&project, "[bootstrap]\nsetup = [\"no-such-task\"]\n");
+
+    let error = run_bootstrap_with_cwd(
+        bootstrap_args(None, Some(&project), None, false, false, false),
+        root.clone(),
+    )
+    .expect_err("unknown setup entry");
+    let message = error.to_string();
+    assert!(
+        message.contains("bootstrap setup task `no-such-task` failed"),
+        "{message}"
+    );
+    assert!(message.contains("is not defined"), "{message}");
+    assert!(
+        message.contains("run `effigy no-such-task` on its own to see it fail"),
+        "{message}"
+    );
 }

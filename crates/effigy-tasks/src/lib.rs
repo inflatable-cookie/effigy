@@ -35,7 +35,7 @@ pub use qa_groups::{
 };
 pub use reference::{
     command_passthrough_args, parse_task_reference_invocation, render_passthrough_args,
-    render_template_args,
+    render_template_args, split_task_reference_words,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]

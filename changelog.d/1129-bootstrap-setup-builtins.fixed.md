@@ -1,0 +1,1 @@
+`effigy bootstrap` now runs each `[bootstrap].setup` and `start` entry exactly as `effigy <entry>` would at the checkout. Built-in commands such as `secrets init`, multi-token entries and quoted arguments work, where they previously failed with "Task is not defined". Manifest tasks still run on the bootstrap surface.

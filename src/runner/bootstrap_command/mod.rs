@@ -9,7 +9,8 @@ use effigy_bootstrap::{
     render_bootstrap_result as crate_render_bootstrap_result,
     resolve_bootstrap_request as crate_resolve_bootstrap, BootstrapError, BootstrapProgressEvent,
 };
-use effigy_cli::{BootstrapArgs, TaskInvocation};
+use effigy_cli::{BootstrapArgs, Command, GlobalCliOptions, TaskInvocation};
+use effigy_context::EffigyRuntimeContext;
 use effigy_execution::ExecutionSurface;
 use effigy_ui::steps::{ProgressSource, Step};
 
@@ -107,8 +108,63 @@ fn with_source_update_notes(rendered: String, output_json: bool) -> String {
     value.to_string()
 }
 
-/// Dispatch one `setup` or `start` selector through the same pipeline as
-/// `effigy <selector>`: environment, gateway, readiness, secrets and cleanup
+/// What one `setup` or `start` entry dispatches to, after the parse that
+/// `effigy <entry>` gets at the checkout.
+#[derive(Debug)]
+enum BootstrapEntry {
+    /// A manifest task, run on the bootstrap surface.
+    Task(TaskInvocation),
+    /// A built-in command such as `secrets init`; `words` is the argv it parsed from.
+    Builtin {
+        command: Command,
+        words: Vec<String>,
+    },
+}
+
+/// Split and parse one entry with the same rules as the command line, so
+/// quoted arguments survive and a built-in name resolves the way it does when
+/// typed after `effigy`.
+fn parse_bootstrap_entry(repo_root: &Path, selector: &str) -> Result<BootstrapEntry, RunnerError> {
+    let words =
+        effigy_tasks::split_task_reference_words(selector).map_err(RunnerError::task_invocation)?;
+    if words.is_empty() {
+        return Err(RunnerError::task_invocation(
+            "the entry names no task or command".to_owned(),
+        ));
+    }
+    let command = crate::cli::entrypoint::parse_command_with_builtin_deferral(
+        words.clone(),
+        repo_root,
+        &GlobalCliOptions::default(),
+    )
+    .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    Ok(match command {
+        Command::Task(task) => BootstrapEntry::Task(task),
+        command => BootstrapEntry::Builtin { command, words },
+    })
+}
+
+/// Run one parsed entry against `repo_root`. A manifest task stays on the
+/// bootstrap surface; a built-in runs in a context rooted at the checkout, not
+/// at wherever bootstrap was invoked.
+fn dispatch_bootstrap_entry(repo_root: &Path, selector: &str) -> Result<(), RunnerError> {
+    match parse_bootstrap_entry(repo_root, selector)? {
+        BootstrapEntry::Task(task) => run_manifest_task_with_surface(
+            &task,
+            repo_root.to_path_buf(),
+            ExecutionSurface::Bootstrap,
+        )
+        .map(|_| ()),
+        BootstrapEntry::Builtin { command, words } => {
+            let context = EffigyRuntimeContext::capture_lossy(Some(repo_root.to_path_buf()), None)
+                .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+            crate::runner::run_command_with_context_and_args(command, &context, &words).map(|_| ())
+        }
+    }
+}
+
+/// Dispatch one `setup` or `start` entry through the same pipeline as
+/// `effigy <entry>`: environment, gateway, readiness, secrets and cleanup
 /// are the runner's, not bootstrap's.
 fn run_bootstrap_selector(
     repo_root: &Path,
@@ -116,17 +172,7 @@ fn run_bootstrap_selector(
     phase: &str,
 ) -> Result<(), RunnerError> {
     with_runtime_session_context(bootstrap_runtime_session_context(phase), || {
-        run_manifest_task_with_surface(
-            &TaskInvocation {
-                options: None,
-                name: selector.to_owned(),
-                args: Vec::new(),
-            },
-            repo_root.to_path_buf(),
-            ExecutionSurface::Bootstrap,
-        )
-        .map(|_| ())
-        .map_err(|err| {
+        dispatch_bootstrap_entry(repo_root, selector).map_err(|err| {
             // The wrapper names the phase and the selector, quotes the child's
             // own failure (its exit code and the tail of its output) and says
             // what to run next. A person should not have to guess which of

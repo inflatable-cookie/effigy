@@ -699,9 +699,10 @@ Use this when the repo should describe its own first-run bring-up path after
 `effigy bootstrap <git-url>`.
 
 Behavior:
-- `setup` is an ordered list of ordinary task selectors, run in the cloned or
-  updated repo after its pinned bundle, catalog and `[sources.<name>]` sources
-  are materialised
+- `setup` is an ordered list of entries, each as you would type it after
+  `effigy` (a task, a task with arguments, or a built-in such as `secrets init`).
+  They run in the cloned or updated repo after its pinned bundle, catalog and
+  `[sources.<name>]` sources are materialised
 - `start` is one ordinary selector, run last unless the operator passes
   `--no-start`
 - `submodules = true` initialises submodules recursively at the commits

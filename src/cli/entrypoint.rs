@@ -401,7 +401,10 @@ fn command_requests_local_qa_json(command: &Command) -> bool {
     }
 }
 
-fn parse_command_with_builtin_deferral(
+/// Parse argv the way `effigy <args>` does at `cwd`, including the rule that a
+/// manifest task named like a built-in takes the name. Bootstrap uses it so
+/// `[bootstrap]` entries resolve exactly as they would typed on the command line.
+pub(crate) fn parse_command_with_builtin_deferral(
     args: Vec<String>,
     cwd: &Path,
     global_options: &GlobalCliOptions,
