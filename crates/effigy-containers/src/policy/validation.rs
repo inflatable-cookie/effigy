@@ -61,7 +61,8 @@ pub(crate) fn validate_fs_events(
             }
             if entry.contains(['\n', '\r', '\0']) {
                 return Err(invalid(format!(
-                    "`{field}` entry {entry:?} must not contain a newline or NUL"
+                    "`{field}` entry `{}` must not contain a newline or NUL",
+                    entry.escape_default()
                 )));
             }
         }
@@ -1439,7 +1440,8 @@ mod fs_events_validation_tests {
     fn rejection(config: &EffectiveFsEventsConfig, inline: &[&str]) -> String {
         match validate_fs_events("web", config, inline) {
             Err(ContainerPolicyError::TaskInvocation(message)) => message,
-            other => panic!("expected a refusal, got {other:?}"),
+            Err(other) => panic!("expected a TaskInvocation refusal, got: {other}"),
+            Ok(()) => panic!("expected a refusal, got success"),
         }
     }
 
