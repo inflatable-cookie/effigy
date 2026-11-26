@@ -721,9 +721,15 @@ pub(in crate::runner) fn signal_owner(record: &RunRecord) -> bool {
 pub(in crate::runner) fn acknowledge_run(
     record: &RunRecord,
 ) -> Result<effigy_kernel::run::AcknowledgeOutcome, RunnerError> {
-    if record.foreground() || record.is_terminal_record() {
+    if record.foreground() {
         return Err(RunnerError::task_invocation(format!(
             "run {} is a foreground run with no durable residue record to acknowledge",
+            record.id
+        )));
+    }
+    if record.is_terminal_record() {
+        return Err(RunnerError::task_invocation(format!(
+            "run {} has only a terminal marker with no durable residue record to acknowledge",
             record.id
         )));
     }

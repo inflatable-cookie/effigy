@@ -117,6 +117,10 @@ that every recorded owner, supervisor, sentinel, and residue effect process or
 process group is dead (refusing by PID and signalling nothing if any process is
 alive), removes any verified-unheld orphaned `compose-env` interpolation file,
 and records `residue_ack` through the kernel store so later runs admit again.
+When an interpolation binding is still `pending` or its directory or file stamp
+does not match on disk, `run acknowledge` preserves the unverified path and
+reports it with its reason in both human warnings and `--json` output
+(`skipped_interpolation_files`).
 
 A repeat of `--run-id ci-1234` never starts a second run: it attaches to the
 first and exits with that run's result, even when the run already finished.

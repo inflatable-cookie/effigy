@@ -4,7 +4,7 @@
 //! writer of its journal; dropping it releases liveness, never claims cleanup.
 mod aliases;
 mod acknowledge;
-pub use acknowledge::{acknowledge_residue, AcknowledgeOutcome};
+pub use acknowledge::{acknowledge_residue, AcknowledgeOutcome, SkippedInterpolationCleanup};
 mod attachments;
 mod children;
 mod facts;

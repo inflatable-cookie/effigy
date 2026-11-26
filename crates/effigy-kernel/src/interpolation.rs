@@ -550,6 +550,56 @@ fn rename(directory: &OwnedFd, from: &str, to: &str) -> io::Result<()> {
     }
 }
 
+/// An orphaned interpolation cleanup entry that was skipped without removing a
+/// possibly-present secret file on disk.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct SkippedInterpolationCleanup {
+    pub path: Option<PathBuf>,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum DeadInterpolationCleanup {
+    Removed(PathBuf),
+    AlreadyAbsent,
+    Skipped(SkippedInterpolationCleanup),
+}
+
+pub(crate) fn check_pending_compose_env(
+    home: &Path,
+    reason: &str,
+) -> io::Result<Option<SkippedInterpolationCleanup>> {
+    let compose_dir_path = home.join("compose-env");
+    let Some(dir_fd) = open_compose_env_dir(home)? else {
+        return Ok(None);
+    };
+    let dir_stat = fstat(&dir_fd).map_err(io::Error::from)?;
+    if dir_stat.st_mode & nix::libc::S_IFMT != nix::libc::S_IFDIR
+        || dir_stat.st_uid != crate::fs::operator_uid()
+        || dir_stat.st_mode & 0o777 != 0o700
+        || dir_stat.st_nlink == 0
+    {
+        return Ok(Some(SkippedInterpolationCleanup {
+            path: Some(compose_dir_path),
+            reason: format!(
+                "{reason}; compose-env directory ownership or permissions could not be verified"
+            ),
+        }));
+    }
+    let has_entries = match std::fs::read_dir(&compose_dir_path) {
+        Ok(mut entries) => entries.next().is_some(),
+        Err(_) => true,
+    };
+    if has_entries {
+        Ok(Some(SkippedInterpolationCleanup {
+            path: Some(compose_dir_path),
+            reason: reason.to_owned(),
+        }))
+    } else {
+        Ok(None)
+    }
+}
+
 /// Remove an orphaned Compose interpolation file (and its `.custody-*` binding
 /// journal) after verifying the run is closed with dead processes and no live
 /// owner holds `LOCK_SH` on the file's exact inode.
@@ -558,9 +608,15 @@ pub(crate) fn cleanup_dead_residue_interpolation(
     run: RunId,
     fence: &Fence,
     binding_value: &Value,
-) -> Result<Option<PathBuf>, RunError> {
+) -> Result<DeadInterpolationCleanup, RunError> {
     if binding_value.get("pending") == Some(&Value::Bool(true)) {
-        return Ok(None);
+        return Ok(match check_pending_compose_env(
+            home,
+            "interpolation binding is marked pending (run crashed before file stamp was bound); inspect compose-env and remove any leftover file from this run",
+        )? {
+            Some(skipped) => DeadInterpolationCleanup::Skipped(skipped),
+            None => DeadInterpolationCleanup::AlreadyAbsent,
+        });
     }
     let binding: Binding = serde_json::from_value(binding_value.clone())?;
     if binding.version != 1
@@ -576,7 +632,7 @@ pub(crate) fn cleanup_dead_residue_interpolation(
 
     let compose_dir_path = home.join("compose-env");
     let Some(dir_fd) = open_compose_env_dir(home)? else {
-        return Ok(None);
+        return Ok(DeadInterpolationCleanup::AlreadyAbsent);
     };
     let dir_stat = fstat(&dir_fd).map_err(io::Error::from)?;
     if dir_stat.st_mode & nix::libc::S_IFMT != nix::libc::S_IFDIR
@@ -585,7 +641,13 @@ pub(crate) fn cleanup_dead_residue_interpolation(
         || dir_stat.st_nlink == 0
         || Stamp::of(&dir_stat) != binding.directory
     {
-        return Ok(None);
+        return Ok(DeadInterpolationCleanup::Skipped(
+            SkippedInterpolationCleanup {
+                path: Some(compose_dir_path.join(&binding.original)),
+                reason: "compose-env directory ownership, permissions, or inode stamp do not match the recorded binding"
+                    .to_owned(),
+            },
+        ));
     }
 
     let lock_fd = openat(
@@ -655,6 +717,7 @@ pub(crate) fn cleanup_dead_residue_interpolation(
     }
 
     let mut removed = None;
+    let mut skipped_candidate: Option<SkippedInterpolationCleanup> = None;
     for candidate in candidates {
         let stat = match fstatat(&dir_fd, candidate.as_str(), AtFlags::AT_SYMLINK_NOFOLLOW) {
             Ok(stat) => stat,
@@ -662,6 +725,11 @@ pub(crate) fn cleanup_dead_residue_interpolation(
             Err(error) => return Err(io::Error::from(error).into()),
         };
         if Stamp::of(&stat) != binding.file || !private_file(&stat) {
+            skipped_candidate.get_or_insert_with(|| SkippedInterpolationCleanup {
+                path: Some(compose_dir_path.join(&candidate)),
+                reason: "file on disk does not match the recorded inode stamp, owner, or private permissions"
+                    .to_owned(),
+            });
             continue;
         }
         let file_fd = openat(
@@ -673,6 +741,10 @@ pub(crate) fn cleanup_dead_residue_interpolation(
         .map_err(io::Error::from)?;
         let file = File::from(file_fd);
         if Stamp::of(&fstat(&file).map_err(io::Error::from)?) != binding.file {
+            skipped_candidate.get_or_insert_with(|| SkippedInterpolationCleanup {
+                path: Some(compose_dir_path.join(&candidate)),
+                reason: "opened file inode no longer matches the recorded binding".to_owned(),
+            });
             continue;
         }
         // Every live owner (`InterpolationFile`, `RetainedInterpolation`,
@@ -715,7 +787,11 @@ pub(crate) fn cleanup_dead_residue_interpolation(
         }
     }
 
-    Ok(removed)
+    Ok(match (removed, skipped_candidate) {
+        (Some(path), _) => DeadInterpolationCleanup::Removed(path),
+        (None, Some(skipped)) => DeadInterpolationCleanup::Skipped(skipped),
+        (None, None) => DeadInterpolationCleanup::AlreadyAbsent,
+    })
 }
 
 fn open_compose_env_dir(home: &Path) -> io::Result<Option<OwnedFd>> {

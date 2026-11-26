@@ -414,3 +414,20 @@ pub fn verify(policy: &EffectiveContainerPolicy) -> Result<(), ContainerPolicyEr
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn container_render_predecessor_unsettled_names_acknowledge_hint() {
+        let run_id = "01JABCDEF1234567890ABCDEF";
+        let err = ContainerPolicyError::PredecessorUnsettled {
+            run: run_id.to_owned(),
+            effects: 1,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains(&format!("effigy run acknowledge {run_id}")), "{msg}");
+        assert!(!msg.contains("stop what holds it"), "{msg}");
+    }
+}

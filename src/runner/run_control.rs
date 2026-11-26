@@ -930,6 +930,14 @@ fn acknowledge(checkout: &Path, selector: &str, json: bool) -> Result<String, Ru
                 .iter()
                 .map(|path| path.display().to_string())
                 .collect::<Vec<_>>(),
+            "skipped_interpolation_files": outcome
+                .skipped_interpolation_files
+                .iter()
+                .map(|entry| serde_json::json!({
+                    "path": entry.path.as_ref().map(|path| path.display().to_string()),
+                    "reason": entry.reason,
+                }))
+                .collect::<Vec<_>>(),
         })
         .to_string());
     }
@@ -938,25 +946,35 @@ fn acknowledge(checkout: &Path, selector: &str, json: bool) -> Result<String, Ru
     } else {
         format!(" (task {})", record.task)
     };
-    if outcome.removed_interpolation_files.is_empty() {
-        return Ok(format!(
-            "run {}{} residue acknowledged",
-            outcome.run, task_note
+    let mut lines = vec![if outcome.removed_interpolation_files.is_empty() {
+        format!("run {}{} residue acknowledged", outcome.run, task_note)
+    } else {
+        let paths = outcome
+            .removed_interpolation_files
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "run {}{} residue acknowledged; removed {} orphaned interpolation file(s): {}",
+            outcome.run,
+            task_note,
+            outcome.removed_interpolation_files.len(),
+            paths
+        )
+    }];
+    for skipped in &outcome.skipped_interpolation_files {
+        let location = skipped
+            .path
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "<compose-env>".to_owned());
+        lines.push(format!(
+            "warning: skipped interpolation cleanup for {location}: {}",
+            skipped.reason
         ));
     }
-    let paths = outcome
-        .removed_interpolation_files
-        .iter()
-        .map(|path| path.display().to_string())
-        .collect::<Vec<_>>()
-        .join(", ");
-    Ok(format!(
-        "run {}{} residue acknowledged; removed {} orphaned interpolation file(s): {}",
-        outcome.run,
-        task_note,
-        outcome.removed_interpolation_files.len(),
-        paths
-    ))
+    Ok(lines.join("\n"))
 }
 
 fn parked_holder(

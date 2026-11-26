@@ -10,6 +10,8 @@
 use super::*;
 use crate::ctx::Capability;
 use crate::ident::{self, ProcessIdentity, ProcessState};
+pub use crate::interpolation::SkippedInterpolationCleanup;
+use crate::interpolation::{check_pending_compose_env, DeadInterpolationCleanup};
 use crate::observe::Observed;
 use crate::store::BusyWait;
 use crate::supervise::park;
@@ -23,6 +25,7 @@ pub struct AcknowledgeOutcome {
     pub run: RunId,
     pub acknowledged_at_ms: i64,
     pub removed_interpolation_files: Vec<PathBuf>,
+    pub skipped_interpolation_files: Vec<SkippedInterpolationCleanup>,
 }
 
 struct StoredRunRow {
@@ -82,6 +85,7 @@ pub fn acknowledge_residue(
     let mut unproven = Vec::new();
     let mut pgids = Vec::new();
     let mut interpolations = Vec::new();
+    let mut has_pending_prelaunch_interpolation = false;
     let current_boot = ident::boot_identity().verified().cloned();
 
     for identity in [
@@ -96,6 +100,9 @@ pub fn acknowledge_residue(
     }
 
     for effect in &residue_effects {
+        if effect.spec.payload.get("interpolation_prelaunch_v1") == Some(&Value::Bool(true)) {
+            has_pending_prelaunch_interpolation = true;
+        }
         if let Some(receipt) = crate::custody::residue_receipt(effect) {
             record_identity_liveness(&receipt.process.identity, &mut live_pids, &mut unproven);
             if let Some(anchor) = &receipt.anchor {
@@ -154,14 +161,33 @@ pub fn acknowledge_residue(
     }
 
     let mut removed_interpolation_files = Vec::new();
+    let mut skipped_interpolation_files = Vec::new();
     if let Some(home) = effigy_home {
         for (fence, binding) in &interpolations {
-            if let Some(path) =
-                crate::interpolation::cleanup_dead_residue_interpolation(home, id, fence, binding)?
-            {
-                removed_interpolation_files.push(path);
+            match crate::interpolation::cleanup_dead_residue_interpolation(
+                home, id, fence, binding,
+            )? {
+                DeadInterpolationCleanup::Removed(path) => removed_interpolation_files.push(path),
+                DeadInterpolationCleanup::AlreadyAbsent => {}
+                DeadInterpolationCleanup::Skipped(skipped) => {
+                    skipped_interpolation_files.push(skipped);
+                }
             }
         }
+        if has_pending_prelaunch_interpolation && interpolations.is_empty() {
+            if let Some(skipped) = check_pending_compose_env(
+                home,
+                "prelaunch interpolation crashed before binding its temporary file stamp; inspect compose-env and remove any leftover file from this run",
+            )? {
+                skipped_interpolation_files.push(skipped);
+            }
+        }
+    } else if !interpolations.is_empty() || has_pending_prelaunch_interpolation {
+        skipped_interpolation_files.push(SkippedInterpolationCleanup {
+            path: None,
+            reason: "Effigy state home could not be determined to inspect compose-env for orphaned interpolation files"
+                .to_owned(),
+        });
     }
 
     let acknowledged_at_ms = store.transaction_within(
@@ -198,6 +224,7 @@ pub fn acknowledge_residue(
         run: id,
         acknowledged_at_ms,
         removed_interpolation_files,
+        skipped_interpolation_files,
     })
 }
 
@@ -612,7 +639,7 @@ mod tests {
         })
         .unwrap();
         let fence = run.fence().clone();
-        let backup = run.checkout_fence_identity().unwrap();
+        let backup = run.checkout_backup_identity().unwrap();
         let sentinel = run.sentinel.as_ref().unwrap().identity.clone();
         let process = crate::custody::Custody::spawn_interpolated(
             &mut run,
@@ -668,11 +695,44 @@ mod tests {
         );
         assert!(env_dir.join("compose-fixture.env").exists());
         let _ = fence;
+
+        // While the original owner PID (this test process) is still live,
+        // acknowledgement must refuse by PID and keep the secret file intact.
+        let owner_pid = std::process::id();
+        let refused =
+            acknowledge_residue(&cx, &root, super::super::tests::id(1), Some(&effigy_home))
+                .expect_err("live owner_identity must refuse acknowledgement");
+        assert!(refused.to_string().contains(&owner_pid.to_string()), "{refused}");
+        assert!(env_dir.join("compose-fixture.env").exists());
+
+        // Simulate the crashed owner & detached supervisor process having exited cleanly.
+        let mut dead_owner = Command::new("/bin/sleep").arg("30").spawn().unwrap();
+        let dead_owner_id = ident::process_identity(dead_owner.id())
+            .verified()
+            .cloned()
+            .unwrap();
+        let _ = dead_owner.kill();
+        let _ = dead_owner.wait();
+        {
+            let store = Store::open(&cx, &root).unwrap();
+            store
+                .conn()
+                .execute(
+                    "UPDATE runs SET owner_identity=?2, supervisor_identity=?2 WHERE run_id=?1",
+                    params![
+                        super::super::tests::id(1).to_string(),
+                        serde_json::to_string(&dead_owner_id).unwrap()
+                    ],
+                )
+                .unwrap();
+        }
+
         let outcome =
             acknowledge_residue(&cx, &root, super::super::tests::id(1), Some(&effigy_home))
                 .expect("real crashed interpolated run should acknowledge cleanly");
         assert!(!env_dir.join("compose-fixture.env").exists());
         assert_eq!(outcome.run, super::super::tests::id(1));
+        assert!(outcome.skipped_interpolation_files.is_empty());
     }
 
     #[test]
@@ -712,6 +772,11 @@ mod tests {
         assert_eq!(
             outcome.removed_interpolation_files,
             vec![env_dir.join("compose-fixture.env")]
+        );
+        assert!(
+            outcome.skipped_interpolation_files.is_empty(),
+            "{:?}",
+            outcome.skipped_interpolation_files
         );
         assert!(!env_dir.join("compose-fixture.env").exists());
         assert!(
@@ -850,6 +915,169 @@ mod tests {
         assert!(
             again.to_string().contains("already acknowledged"),
             "{again}"
+        );
+    }
+
+    #[test]
+    fn acknowledge_reports_skipped_cleanup_when_binding_is_pending_and_compose_env_has_files() {
+        let home = effigy_test_support::short_tempdir("ack-pending-").unwrap();
+        let cx = super::super::tests::context();
+        let root = StateRoot::effects(&cx, home.path()).unwrap();
+        let owner = test_owner("ack-pending");
+        let effigy_home = home.path().join("effigy-home");
+        let env_dir = effigy_home.join("compose-env");
+        std::fs::create_dir_all(&env_dir).unwrap();
+        std::fs::set_permissions(&env_dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let unbound_file = env_dir.join("compose-pending.env");
+        {
+            let _f = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&unbound_file)
+                .unwrap();
+        }
+
+        let mut fake = super::super::tests::Fake::new(home.path());
+        let run = Run::begin(
+            &cx,
+            &root,
+            &super::super::tests::inv(owner.clone()),
+            super::super::tests::opts(1),
+            &super::super::tests::cleanup(&cx),
+            &mut fake,
+        )
+        .unwrap();
+        let fence = run.fence().clone();
+        run.settle(&super::super::tests::cleanup(&cx), &mut fake)
+            .unwrap();
+
+        let mut dead_child = Command::new("/bin/sleep").arg("30").spawn().unwrap();
+        let dead_id = ident::process_identity(dead_child.id())
+            .verified()
+            .cloned()
+            .unwrap();
+        let _ = dead_child.kill();
+        let _ = dead_child.wait();
+
+        let target_spec = EffectSpec {
+            target: fence,
+            kind: crate::custody::KIND.to_owned(),
+            payload: Value::Null,
+            settlement: Settlement::Release(Value::Null),
+            required: true,
+        };
+        let pending_receipt = serde_json::json!({
+            "interpolation_v1": {
+                "identity": dead_id,
+                "pgid": 0,
+                "nonce": "pending-nonce",
+                "grace_millis": 100,
+            },
+            "binding": { "pending": true },
+        });
+        {
+            let store = Store::open(&cx, &root).unwrap();
+            store
+                .conn()
+                .execute(
+                    "UPDATE runs SET phase='closed', cleanup_outcome='incomplete', residue_ack=NULL WHERE run_id=?1",
+                    [super::super::tests::id(1).to_string()],
+                )
+                .unwrap();
+            store
+                .conn()
+                .execute(
+                    "INSERT INTO events(run_id, seq, effect_id, kind, target, settlement, state, receipt, error, wall_time) \
+                     VALUES (?1, 1, '1', ?2, ?3, ?4, 'residue', ?5, 'retained interpolation requires its live descriptor owner', 1)",
+                    params![
+                        super::super::tests::id(1).to_string(),
+                        crate::custody::KIND,
+                        serde_json::to_string(&target_spec).unwrap(),
+                        serde_json::to_string(&Settlement::Release(Value::Null)).unwrap(),
+                        serde_json::to_string(&pending_receipt).unwrap(),
+                    ],
+                )
+                .unwrap();
+        }
+
+        let outcome =
+            acknowledge_residue(&cx, &root, super::super::tests::id(1), Some(&effigy_home))
+                .expect("pending binding should acknowledge while reporting skipped cleanup");
+        assert!(outcome.removed_interpolation_files.is_empty());
+        assert_eq!(outcome.skipped_interpolation_files.len(), 1);
+        assert_eq!(
+            outcome.skipped_interpolation_files[0].path.as_deref(),
+            Some(env_dir.as_path())
+        );
+        assert!(
+            outcome.skipped_interpolation_files[0]
+                .reason
+                .contains("pending"),
+            "{:?}",
+            outcome.skipped_interpolation_files[0]
+        );
+        assert!(
+            unbound_file.exists(),
+            "unverified unbound secret file must not be deleted silently"
+        );
+
+        let successor = Run::begin(
+            &cx,
+            &root,
+            &super::super::tests::inv(owner),
+            super::super::tests::opts(2),
+            &super::super::tests::cleanup(&cx),
+            &mut fake,
+        )
+        .expect("acknowledged pending residue unblocks successor");
+        successor
+            .settle(&super::super::tests::cleanup(&cx), &mut fake)
+            .unwrap();
+    }
+
+    #[test]
+    fn acknowledge_reports_skipped_cleanup_when_candidate_stamp_mismatches() {
+        let home = effigy_test_support::short_tempdir("ack-mismatch-").unwrap();
+        let cx = super::super::tests::context();
+        let root = StateRoot::effects(&cx, home.path()).unwrap();
+        let owner = test_owner("ack-mismatch");
+        let effigy_home = home.path().join("effigy-home");
+        std::fs::create_dir(&effigy_home).unwrap();
+
+        setup_closed_incomplete_interpolated_run(home.path(), &cx, &root, &owner, &effigy_home);
+
+        // Replace compose-fixture.env with a distinct inode so the recorded stamp mismatches.
+        let file_path = effigy_home.join("compose-env/compose-fixture.env");
+        std::fs::remove_file(&file_path).unwrap();
+        {
+            let _replacement = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&file_path)
+                .unwrap();
+        }
+
+        let outcome =
+            acknowledge_residue(&cx, &root, super::super::tests::id(1), Some(&effigy_home))
+                .expect("stamp mismatch acknowledges while reporting skipped cleanup");
+        assert!(outcome.removed_interpolation_files.is_empty());
+        assert_eq!(outcome.skipped_interpolation_files.len(), 1);
+        assert_eq!(
+            outcome.skipped_interpolation_files[0].path.as_deref(),
+            Some(file_path.as_path())
+        );
+        assert!(
+            outcome.skipped_interpolation_files[0]
+                .reason
+                .contains("inode stamp"),
+            "{:?}",
+            outcome.skipped_interpolation_files[0]
+        );
+        assert!(
+            file_path.exists(),
+            "foreign/replaced inode must never be deleted"
         );
     }
 }
