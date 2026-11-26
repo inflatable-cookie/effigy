@@ -921,8 +921,7 @@ fn profile_config_colima_home_resolution_prefers_explicit_then_home() {
 fn colima_start_configuration_uses_home_or_root_and_clears_temp_overrides() {
     let _lock = env_lock();
     let fixture = tempfile::tempdir().expect("fixture");
-    let old_home = std::env::var_os("HOME");
-    unsafe { std::env::set_var("HOME", fixture.path()) };
+    let _home = effigy_test_support::env::ScopedEnv::set("HOME", fixture.path());
     let mut command = Command::new("colima");
     command.current_dir(fixture.path().join("checkout"));
     command
@@ -948,8 +947,4 @@ fn colima_start_configuration_uses_home_or_root_and_clears_temp_overrides() {
         command.get_current_dir(),
         Some(std::env::temp_dir().as_path())
     );
-    match old_home {
-        Some(value) => unsafe { std::env::set_var("HOME", value) },
-        None => unsafe { std::env::remove_var("HOME") },
-    }
 }
