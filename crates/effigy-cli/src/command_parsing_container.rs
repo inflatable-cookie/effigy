@@ -19,9 +19,10 @@ pub(super) fn parse_container_command<I>(args: I) -> Result<Command, CliParseErr
 where
     I: IntoIterator<Item = String>,
 {
-    const ACTIONS: [&str; 19] = [
+    const ACTIONS: [&str; 20] = [
         "up", "down", "status", "stats", "logs", "restart", "shell", "reset", "cache", "volume",
-        "data", "profile", "eject", "hosts", "retire", "scope", "render", "migrate", FS_RELAY,
+        "data", "profile", "eject", "hosts", "retire", "prune", "scope", "render", "migrate",
+        FS_RELAY,
     ];
 
     let mut args = args.into_iter();
@@ -70,6 +71,7 @@ where
         "scope" => parse_container_scope(name, args),
         "hosts" => parse_container_hosts(name, args),
         "retire" => parse_container_retire(name, args),
+        "prune" => parse_container_prune(name, args),
         other => Err(unknown_argument(other)),
     }
 }
@@ -480,6 +482,50 @@ where
             yes,
         },
         repo_override: common.repo_override,
+        output_json: common.output_json,
+    }))
+}
+
+fn parse_container_prune<I>(name: Option<String>, args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    if name.is_some() {
+        return Err(CliParseError::InvalidArguments(
+            "`effigy container <NAME> prune` is not supported; use `effigy container prune` to sweep ended and orphaned container leases"
+                .to_owned(),
+        ));
+    }
+
+    let mut args = args.into_iter();
+    let mut common = CommonArgs::default();
+    let mut profile: Option<String> = None;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--profile" => {
+                profile = Some(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--profile".to_owned(),
+                    },
+                )?)
+            }
+            "--repo" => {
+                return Err(CliParseError::InvalidArguments(
+                    "`effigy container prune` works from any directory without a manifest, so it does not accept `--repo`"
+                        .to_owned(),
+                ));
+            }
+            other => shared_output_flag_arm!(other, common, HelpTopic::Container),
+        }
+    }
+
+    let profile = non_blank_down_flag("--profile", profile)?;
+
+    Ok(Command::Container(ContainerArgs {
+        subcommand: ContainerSubcommand::Prune { profile },
+        repo_override: None,
         output_json: common.output_json,
     }))
 }
@@ -1563,6 +1609,69 @@ mod down_project_tests {
         assert!(
             blank_profile.to_string().contains("--profile"),
             "{blank_profile}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod prune_tests {
+    use crate::{parse_command, Command, ContainerSubcommand};
+
+    fn prune(args: &[&str]) -> Result<Command, crate::CliParseError> {
+        let mut argv = vec!["container", "prune"];
+        argv.extend_from_slice(args);
+        parse_command(argv.into_iter().map(str::to_owned))
+    }
+
+    #[test]
+    fn container_prune_parses_without_profile_or_manifest() {
+        let Command::Container(container) = prune(&[]).expect("prune parses") else {
+            panic!("expected a container command");
+        };
+        assert!(!container.output_json);
+        assert_eq!(container.repo_override, None);
+        assert_eq!(
+            container.subcommand,
+            ContainerSubcommand::Prune { profile: None }
+        );
+    }
+
+    #[test]
+    fn container_prune_parses_profile_and_json() {
+        let Command::Container(container) =
+            prune(&["--profile", "effigy", "--json"]).expect("prune with profile parses")
+        else {
+            panic!("expected a container command");
+        };
+        assert!(container.output_json);
+        assert_eq!(container.repo_override, None);
+        assert_eq!(
+            container.subcommand,
+            ContainerSubcommand::Prune {
+                profile: Some("effigy".to_owned())
+            }
+        );
+    }
+
+    #[test]
+    fn container_prune_rejects_name_repo_and_blank_profile() {
+        let named = parse_command(["container", "web", "prune"].into_iter().map(str::to_owned))
+            .expect_err("named prune is refused");
+        assert!(named.to_string().contains("<NAME>"), "{named}");
+
+        let with_repo = prune(&["--repo", "."]).expect_err("--repo is refused");
+        assert!(with_repo.to_string().contains("--repo"), "{with_repo}");
+
+        let blank_profile = prune(&["--profile", "  "]).expect_err("blank profile is refused");
+        assert!(
+            blank_profile.to_string().contains("--profile"),
+            "{blank_profile}"
+        );
+
+        let missing_profile = prune(&["--profile"]).expect_err("missing profile value is refused");
+        assert!(
+            missing_profile.to_string().contains("--profile"),
+            "{missing_profile}"
         );
     }
 }

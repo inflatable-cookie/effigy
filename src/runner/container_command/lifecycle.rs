@@ -14,7 +14,9 @@ mod status;
 mod tests;
 mod up;
 pub(in crate::runner) use down::release_managed_environment;
-pub(super) use down::{run_container_down_command, run_container_down_project_command};
+pub(super) use down::{
+    run_container_down_command, run_container_down_project_command, teardown_project_on_profile,
+};
 pub(in crate::runner) use exec::run_container_exec_capture_with_credentials;
 pub(in crate::runner) use exec::run_container_exec_operation_capture;
 pub(in crate::runner) use exec::run_container_exec_stream;

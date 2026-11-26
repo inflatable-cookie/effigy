@@ -1,0 +1,1 @@
+Pin the Barge container-lease library, add Effigy's container-lease coordinator and ended/orphan sweep, and add `effigy container prune [--profile <PROFILE>] [--json]` to tear down ended leases and orphaned `barge.lease`-labelled stacks without requiring a manifest.

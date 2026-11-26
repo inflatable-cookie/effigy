@@ -40,6 +40,7 @@ pub(in crate::runner) use shared_data::{
     resolve_shared_data_binding, run_shared_data_command, verify_shared_data_target,
 };
 
+mod barge_leases;
 mod bounded_exec;
 mod cache;
 mod closeout;
@@ -379,6 +380,14 @@ fn run_container_with(
                 )
             }
         }
+        ContainerSubcommand::Prune { profile } => {
+            if args.repo_override.is_some() {
+                return Err(RunnerError::task_invocation(
+                    "`effigy container prune` does not accept `--repo`; it operates on Barge leases and running Colima profiles",
+                ));
+            }
+            barge_leases::run_container_prune_command(profile.as_deref(), args.output_json)
+        }
     }
 }
 
@@ -480,6 +489,7 @@ mod tests {
                     },
                 },
             ),
+            ("prune", ContainerSubcommand::Prune { profile: None }),
         ] {
             let error = run_container(ContainerArgs {
                 subcommand,
