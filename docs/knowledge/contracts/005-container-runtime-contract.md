@@ -2710,10 +2710,16 @@ The key changes the render digest of every MariaDB stack, shared MariaDB
 included. The next `container up` recreates the MariaDB container once and
 reuses its named data volume. The exec-form health check is rendered as before.
 
-Live proof is outstanding. Offline checks confirm the render and the Docker
-Compose parse (`docker compose config` keeps `init: true`). This checkout's
-`nerdctl compose config` cannot run here, because it needs a rootless
-containerd. Before this reaches any shared MariaDB, prove a disposable
-containerd profile: the container starts with a `tini` PID 1, zombie count stays
-flat across several health-check intervals, and a stop shuts `mariadbd` down
-cleanly. Do not run that proof against a live Acowtancy stack.
+Proof on a disposable containerd profile (2026-11-26, nerdctl 2.3.1, MariaDB
+10.11): a stack in the form Effigy emits (`init: true` and a quoted `CMD-SHELL`
+check), plus a control service without `init`. `nerdctl compose` translated
+`init: true` to `--init`. The `init` container ran `tini` as PID 1, and the
+control ran `mariadbd`. Both reported `healthy` across three minutes of 5s
+intervals. The zombie count stayed at zero in both, so the reaping benefit did
+not reproduce on this stack in that window. A SIGTERM stop took 3 seconds and
+exited 0 in both, with `mariadbd: Shutdown complete` logged.
+
+Not proven: the nerdctl 2.4.2 that the `effigy` profile runs (the proof VM ran
+2.3.1), the rendered output itself (the proof file was written by hand to match
+it), and zombie reaping under the original incident's long-run conditions. The
+shared MariaDB was not touched.
