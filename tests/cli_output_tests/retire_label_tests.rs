@@ -62,6 +62,15 @@ impl Fixture {
         );
     }
 
+    pub(super) fn profile_container(&self, name: &str, checkout: &str, profile: &str) {
+        append(
+            &self.state.join("containers"),
+            // The final fixture field records runtime state; the scripted
+            // `ps -a` response intentionally returns Created containers too.
+            &format!("{name}||{checkout}||||||{profile}|Created"),
+        );
+    }
+
     pub(super) fn unowned_container(&self, name: &str, project: &str) {
         append(
             &self.state.join("containers"),
@@ -147,6 +156,36 @@ impl Fixture {
             .expect("run effigy")
     }
 
+    pub(super) fn run_without_repo(&self, cwd: &Path, args: &[&str]) -> Output {
+        Command::new(env!("CARGO_BIN_EXE_effigy"))
+            .args(args)
+            .current_dir(cwd)
+            .env("NO_COLOR", "1")
+            .env("HOME", &self.home)
+            .env("EFFIGY_TEST_CONTAINERS_HOME", self.home.join(".effigy"))
+            .env("EFFIGY_COMPOSE_BACKEND", "docker")
+            .env("EFFIGY_TEST_RUNTIME_STATE", &self.state)
+            .env("PATH", &self.path)
+            .output_owned()
+            .expect("run effigy outside a repository")
+    }
+
+    pub(super) fn run_with_colima(&self, args: &[&str]) -> Output {
+        Command::new(env!("CARGO_BIN_EXE_effigy"))
+            .arg("--json")
+            .arg("--repo")
+            .arg(&self.root)
+            .args(args)
+            .env("NO_COLOR", "1")
+            .env("HOME", &self.home)
+            .env("EFFIGY_TEST_CONTAINERS_HOME", self.home.join(".effigy"))
+            .env_remove("EFFIGY_COMPOSE_BACKEND")
+            .env("EFFIGY_TEST_RUNTIME_STATE", &self.state)
+            .env("PATH", &self.path)
+            .output_owned()
+            .expect("run effigy with scripted Colima")
+    }
+
     pub(super) fn retire(&self, args: &[&str]) -> (bool, Value) {
         report(&self.run(args))
     }
@@ -209,6 +248,19 @@ case "{program}" in
       list) if [ -f "$state/colima" ]; then cat "$state/colima"; else printf '[]\n'; fi ;;
       status) printf 'Running\n' ;;
       ssh) printf 'worker:containerd\n' ;;
+      nerdctl)
+        shift
+        profile=effigy
+        while [ "$#" -gt 0 ]; do
+          case "$1" in
+            --profile) profile="$2"; shift 2 ;;
+            --) shift; break ;;
+            *) shift ;;
+          esac
+        done
+        EFFIGY_TEST_RUNTIME_PROFILE="$profile" docker "$@"
+        exit $?
+        ;;
     esac
     exit 0
     ;;
@@ -216,7 +268,7 @@ esac
 contains() {{ printf '%s' "$1" | grep -q -- "$2"; }}
 case "$*" in
   "ps -a "*)
-    awk -F'|' 'NF {{ print $1 "\t" $2 "\t" $3 "\t" $4 "\t" $5 "\t" $6 "\t" $7 "\t" $8 }}' "$state/containers" 2>/dev/null
+    awk -F'|' -v profile="${{EFFIGY_TEST_RUNTIME_PROFILE:-}}" 'NF && ($9 == profile) {{ print $1 "\t" $2 "\t" $3 "\t" $4 "\t" $5 "\t" $6 "\t" $7 "\t" $8 }}' "$state/containers" 2>/dev/null
     ;;
   "ps --all"*|"ps -a"|"version"*|"info"*)
     exit 0
@@ -458,8 +510,107 @@ fn dead_retire_removes_only_the_stacks_whose_checkout_is_gone() {
     fs::create_dir_all(&dead_checkout).expect("re-cloned checkout");
     let (ok, report) = fixture.retire(&["container", "retire", "--dead", "--yes"]);
     assert!(ok, "{report}");
-    assert!(report["scopes"].as_array().expect("scope rows").is_empty());
+    assert!(
+        report["scopes"].as_array().expect("scope rows").is_empty(),
+        "{report}"
+    );
     fs::remove_dir_all(&dead_checkout).ok();
+}
+
+#[test]
+fn dead_retire_works_outside_a_repository_without_a_manifest() {
+    let fixture = Fixture::new("effigy-retire-dead-outside-repo-");
+    let cwd = fixture.root().join("outside-repo");
+    fs::create_dir(&cwd).expect("outside-repo cwd");
+    assert!(!cwd.join("effigy.toml").exists());
+
+    let output = fixture.run_without_repo(
+        &cwd,
+        &["container", "retire", "--dead", "--yes", "--json"],
+    );
+    let (ok, report) = report(&output);
+    assert!(ok, "{report} ({output:?})");
+    assert_eq!(report["schema"], "effigy.container.retire-dead.v1");
+    assert!(
+        report["scopes"].as_array().expect("scope rows").is_empty(),
+        "{report}"
+    );
+}
+
+#[test]
+fn dead_retire_finds_created_builder_on_release_profile_and_keeps_live_and_unlabelled() {
+    let fixture = Fixture::new("effigy-retire-dead-release-builder-");
+    fixture.colima_profile("effigy", "Running");
+    fixture.colima_profile("effigy-release", "Running");
+    let dead_checkout_dir = fixture.root().join("dead-builder-checkout");
+    fs::create_dir_all(&dead_checkout_dir).expect("dead checkout before retirement");
+    let dead = dead_checkout_dir.display().to_string();
+    let live = fixture.checkout();
+    fs::write(
+        fixture.state.join("containers"),
+        format!(
+            "dead-compose-1|dead-compose|{dead}||dead-scope||||effigy\n\
+             live-compose-1|live-compose|{live}||live-scope||||effigy\n\
+             foreign-compose-1|dead-compose|||||||effigy\n"
+        ),
+    )
+    .expect("write Compose containers");
+    fixture.profile_container("effigy-artifact-builder-v1-dead", &dead, "effigy-release");
+    fixture.profile_container(
+        "effigy-artifact-builder-v1-live",
+        &live,
+        "effigy-release",
+    );
+    fs::remove_dir_all(&dead_checkout_dir).expect("remove dead checkout");
+
+    let output = fixture.run_with_colima(&["container", "retire", "--dead", "--yes"]);
+    let (ok, report) = report(&output);
+    assert!(ok, "{report}");
+    let scopes = report["scopes"].as_array().expect("scope rows");
+    assert_eq!(scopes.len(), 1, "{report}");
+    let removed = names(&scopes[0]["report"]["removed"]);
+    assert!(removed.contains(&"dead-compose-1".to_owned()), "{removed:?}");
+    assert!(
+        removed.contains(&"effigy-artifact-builder-v1-dead".to_owned()),
+        "{removed:?}"
+    );
+    assert_eq!(
+        fixture.state_lines("containers"),
+        vec![
+            format!("live-compose-1|live-compose|{live}||live-scope||||effigy"),
+            format!("foreign-compose-1|dead-compose|||||||effigy"),
+            format!("effigy-artifact-builder-v1-live||{live}||||||effigy-release|Created"),
+        ]
+    );
+}
+
+#[test]
+fn dead_retire_warns_about_stopped_profiles_without_starting_or_touching_them() {
+    let fixture = Fixture::new("effigy-retire-dead-stopped-profile-");
+    fixture.colima_profile("effigy-release", "Stopped");
+    let missing = fixture.root().join("dead-builder-checkout").display().to_string();
+    fixture.profile_container("effigy-artifact-builder-v1-stopped", &missing, "effigy-release");
+
+    let output = fixture.run_with_colima(&["container", "retire", "--dead", "--yes"]);
+    let (ok, report) = report(&output);
+    assert!(ok, "{report} ({output:?})");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("profile `effigy-release` is stopped"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        report["scopes"].as_array().expect("scope rows").is_empty(),
+        "{report}"
+    );
+    assert!(
+        !fixture
+            .state_lines("calls.log")
+            .iter()
+            .any(|call| call.contains("effigy-release") && !call.contains("colima list")),
+        "the stopped profile was not queried or started"
+    );
+    assert_eq!(fixture.state_lines("containers").len(), 1);
 }
 
 #[test]

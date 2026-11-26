@@ -343,9 +343,15 @@ pub(super) fn query_profiles() -> Vec<String> {
             "[warn] Colima profile `{profile}` is stopped; anything it holds cannot be seen or retired until it starts"
         );
     }
+    let running_profiles =
+        effigy_containers::exec::running_colima_profiles(Path::new(".")).unwrap_or_default();
     queried_profiles(
         &effigy_containers::backend::global_endpoint(None),
-        inventory.rows.iter().map(|row| row.profile.as_str()),
+        inventory
+            .rows
+            .iter()
+            .map(|row| row.profile.as_str())
+            .chain(running_profiles.iter().map(String::as_str)),
         &stopped,
     )
 }
