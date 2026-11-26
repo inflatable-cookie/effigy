@@ -9,18 +9,15 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use effigy_catalog::volumes::{
-    inspect_volumes_command, parse_inspect_volume_metadata_list_strict,
-    parse_listed_resource_names, remove_volume_command, DockerCommand,
-};
+use effigy_catalog::volumes::{parse_listed_resource_names, remove_volume_command, DockerCommand};
 use effigy_containers::{
     retire_report, FailedResource, GatewayRelease, KeptResource, OwnedResource, ResourceKind,
-    RetireOutcome, CHECKOUT_LABEL, COMPOSE_PROJECT_LABEL, PROJECT_LABEL, REPO_ROOT_LABEL,
-    SCOPE_LABEL,
+    RetireOutcome,
 };
 use effigy_gateway::registration::withdraw_owned_routes;
 
 use super::data::maybe_confirm_destructive_container_action;
+use super::profile_inventory::{list_containers, list_networks, list_volumes};
 use super::support::run_runtime_volume_capture;
 use super::{render_container_report, RunnerError};
 use crate::runner::command_context::resolve_active_command_context;
@@ -376,7 +373,7 @@ fn trim_path(path: &str) -> String {
 /// that only differs by a symlinked prefix (`/var` and `/private/var` on
 /// macOS) still names this checkout and is compared canonically. A path that
 /// no longer exists (a dead checkout) only ever compares textually.
-fn same_path(label: &str, checkout: &str) -> bool {
+pub(super) fn same_path(label: &str, checkout: &str) -> bool {
     if trim_path(label) == trim_path(checkout) {
         return true;
     }
@@ -385,170 +382,6 @@ fn same_path(label: &str, checkout: &str) -> bool {
         (canonical(label), canonical(checkout)),
         (Some(left), Some(right)) if left == right
     )
-}
-
-struct ContainerRow {
-    name: String,
-    project: Option<String>,
-    checkout: Option<String>,
-    repo_root: Option<String>,
-    scope: Option<String>,
-}
-
-impl ContainerRow {
-    fn owner_path(&self) -> Option<String> {
-        self.checkout.clone().or_else(|| self.repo_root.clone())
-    }
-
-    fn resource(&self, kind: ResourceKind, profile: &str) -> OwnedResource {
-        OwnedResource {
-            kind,
-            name: self.name.clone(),
-            profile: profile.to_owned(),
-            persist: false,
-        }
-    }
-}
-
-const CONTAINER_LISTING_FORMAT: &str = "{{.Names}}\t{{.Label \"com.docker.compose.project\"}}\t{{.Label \"com.effigy.checkout\"}}\t{{.Label \"com.effigy.repo-root\"}}\t{{.Label \"com.effigy.scope\"}}";
-
-/// Every container in every state, with the labels ownership is read from.
-fn list_containers(cwd: &Path, profile: &str) -> Result<Vec<ContainerRow>, RunnerError> {
-    let command = DockerCommand {
-        program: "docker".to_owned(),
-        args: vec![
-            "ps".to_owned(),
-            "-a".to_owned(),
-            "--format".to_owned(),
-            CONTAINER_LISTING_FORMAT.to_owned(),
-        ],
-        description: "list containers by ownership label".to_owned(),
-    };
-    let output = run_runtime_volume_capture(cwd, profile, &command)?;
-    Ok(String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| {
-            let mut fields = line.split('\t');
-            let name = fields.next().unwrap_or_default().trim().to_owned();
-            let mut next = || {
-                fields
-                    .next()
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(str::to_owned)
-            };
-            ContainerRow {
-                name,
-                project: next(),
-                checkout: next(),
-                repo_root: next(),
-                scope: next(),
-            }
-        })
-        .collect())
-}
-
-struct VolumeRow {
-    name: String,
-    project: Option<String>,
-    checkout: Option<String>,
-    repo_root: Option<String>,
-    scope: Option<String>,
-    persist: bool,
-}
-
-impl VolumeRow {
-    fn owner_path(&self) -> Option<String> {
-        self.checkout.clone().or_else(|| self.repo_root.clone())
-    }
-
-    fn resource(&self, profile: &str) -> OwnedResource {
-        OwnedResource {
-            kind: ResourceKind::Volume,
-            name: self.name.clone(),
-            profile: profile.to_owned(),
-            persist: self.persist,
-        }
-    }
-}
-
-/// Every volume on the backend, with the labels and persist flag ownership is
-/// read from. `nerdctl volume ls` prints no labels, so the names are inspected
-/// once per chunk.
-fn list_volumes(cwd: &Path, profile: &str) -> Result<Vec<VolumeRow>, RunnerError> {
-    let list = DockerCommand {
-        program: "docker".to_owned(),
-        args: vec![
-            "volume".to_owned(),
-            "ls".to_owned(),
-            "--format".to_owned(),
-            "{{.Name}}".to_owned(),
-        ],
-        description: "list volumes by ownership label".to_owned(),
-    };
-    let output = run_runtime_volume_capture(cwd, profile, &list)?;
-    let names = parse_listed_resource_names(&String::from_utf8_lossy(&output.stdout))
-        .map_err(|error| RunnerError::task_invocation(format!("list volumes: {error}")))?;
-    let mut rows = Vec::with_capacity(names.len());
-    for chunk in names.chunks(64) {
-        let inspect = DockerCommand {
-            program: "docker".to_owned(),
-            args: inspect_volumes_command(chunk).args,
-            description: "inspect volumes for ownership labels".to_owned(),
-        };
-        let output = run_runtime_volume_capture(cwd, profile, &inspect)?;
-        let metadata = parse_inspect_volume_metadata_list_strict(
-            &String::from_utf8_lossy(&output.stdout),
-            chunk,
-        )
-        .map_err(RunnerError::task_invocation)?;
-        for entry in metadata {
-            let label = |name: &str| entry.labels.get(name).cloned();
-            rows.push(VolumeRow {
-                name: entry.name,
-                project: label(PROJECT_LABEL).or_else(|| label(COMPOSE_PROJECT_LABEL)),
-                checkout: label(CHECKOUT_LABEL),
-                repo_root: label(REPO_ROOT_LABEL),
-                scope: label(SCOPE_LABEL),
-                persist: OwnedResource::labels_mark_persistent(&entry.labels),
-            });
-        }
-    }
-    Ok(rows)
-}
-
-/// The backend's networks of the given projects. A Compose network carries no
-/// Effigy label of its own, so the project label is the ownership proof.
-fn list_networks(
-    cwd: &Path,
-    profile: &str,
-    projects: &[String],
-) -> Result<Vec<String>, RunnerError> {
-    let mut found = BTreeSet::new();
-    for project in projects {
-        let command = DockerCommand {
-            program: "docker".to_owned(),
-            args: vec![
-                "network".to_owned(),
-                "ls".to_owned(),
-                "--filter".to_owned(),
-                format!("label={COMPOSE_PROJECT_LABEL}={project}"),
-                "--format".to_owned(),
-                "{{.Name}}".to_owned(),
-            ],
-            description: format!("list networks of project {project}"),
-        };
-        let output = run_runtime_volume_capture(cwd, profile, &command)?;
-        for name in parse_listed_resource_names(&String::from_utf8_lossy(&output.stdout))
-            .map_err(|error| RunnerError::task_invocation(format!("list networks: {error}")))?
-        {
-            if !is_builtin_network(&name) {
-                found.insert(name);
-            }
-        }
-    }
-    Ok(found.into_iter().collect())
 }
 
 /// The project a Compose network belongs to, from its `<project>_<network>`
@@ -592,10 +425,6 @@ fn owns_longest_project<'a>(name: &str, projects: &'a [String]) -> Option<&'a st
         .filter(|project| effigy_containers::named_volume_belongs_to(name, project))
         .max_by_key(|project| project.len())
         .map(String::as_str)
-}
-
-fn is_builtin_network(name: &str) -> bool {
-    matches!(name, "bridge" | "host" | "none")
 }
 
 /// Delete every listed resource. `--keep-data` keeps the volumes and names

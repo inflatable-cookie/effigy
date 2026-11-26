@@ -185,6 +185,7 @@ Useful flags:
 - `--wipe-data` deletes persistent named volumes during `reset`
 - `--keep-data` remains accepted as a compatibility alias for reset's default
 - `--json` returns machine-readable payloads for non-interactive paths
+- `down --project <PROJECT> --profile <PROFILE> [--volumes]` tears one project's stack down on one Colima profile from any directory, with no checkout or `effigy.toml`. It removes the project's Effigy-labelled containers and its Compose networks, then (with `--volumes`) its volumes, including persistent ones. It reads only the named profile: a stopped or unreachable profile is an error, never started, and unlabelled or other projects' resources are never touched. Routes of a removed checkout are withdrawn once no container on the profile still belongs to it
 - `hosts` prints the effective HTTP and TCP host map for this checkout
 - `retire --yes` removes every container, volume and network the backend labels for this checkout; `--keep-data` keeps the volumes and lists them, and `--dead` retires a stack whose checkout path is gone
 

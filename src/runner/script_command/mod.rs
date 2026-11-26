@@ -190,6 +190,9 @@ fn host_callbacks() -> HostCallbacks {
                     name: if global { None } else { Some(name.to_owned()) },
                     system: None,
                     global,
+                    project: None,
+                    profile: None,
+                    volumes: false,
                 },
             )
             .map_err(|error| nested_error::nested_message(&error))
