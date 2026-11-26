@@ -529,7 +529,7 @@ run = "bun run dev"
             remediation,
         } = error
         else {
-            panic!("expected a typed dependency drift refusal: {error:?}");
+            panic!("expected a typed dependency drift refusal");
         };
         assert!(detail.contains("praxis"), "{detail}");
         assert!(
@@ -610,7 +610,7 @@ run = "bun run dev"
             remediation,
         } = error
         else {
-            panic!("expected a typed dependency drift refusal: {error:?}");
+            panic!("expected a typed dependency drift refusal");
         };
         assert!(detail.contains("package-lock.json"), "{detail}");
         assert!(remediation.contains("npm ci"), "{remediation}");

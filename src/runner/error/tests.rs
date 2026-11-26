@@ -1526,7 +1526,10 @@ fn detached_activation_host_dependency_drift_renders_its_remediation_directly() 
         },
     );
     let human = error.human_error();
-    assert_eq!(human.what_failed(), "Host JavaScript dependencies have drifted");
+    assert_eq!(
+        human.what_failed(),
+        "Host JavaScript dependencies have drifted"
+    );
     assert_eq!(
         human.next_action_text(),
         Some("Run `bun install --frozen-lockfile` or `effigy bootstrap`, then rerun the container start.")
