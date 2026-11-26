@@ -152,6 +152,17 @@ catalog = "memcached"
 The [container runtime contract](../contracts/005-container-runtime-contract.md)
 owns rendering, migration, export and reset semantics.
 
+### Scoped host-to-guest file-event relay
+
+Effigy watches only policy-approved writable bind mounts and relays changed
+paths over per-container runtime exec streams. A shared-VM backend deduplicates
+shared mount targets because one guest kernel sees the event; per-container
+VMs receive one stream per selected container. The relay avoids feedback by
+dropping metadata-only host events (including the `IN_ATTRIB` signal it creates
+in the guest) and ignoring `.effigy/runtime` state. See the
+[container runtime contract](../contracts/005-container-runtime-contract.md#host-file-event-relay-lifecycle)
+for configuration, ownership, status and lifecycle details.
+
 ### Catalog distribution
 
 The baseline catalog fragments are **embedded in the Effigy binary**. The

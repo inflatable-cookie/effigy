@@ -2243,6 +2243,64 @@ Worktree and ephemeral-clone scopes rewrite declared domains the same way.
 }
 ```
 
+### Container Status (`effigy.container.status.v1`)
+
+`fs_events` is an additive status object. It reports the configured mode and
+observed relay state. Each target maps a host path to the guest path for one
+service/container pair; `owner` and `pid` are null when no relay process owns
+the environment.
+
+```json
+{
+  "schema": "effigy.container.status.v1",
+  "schema_version": 1,
+  "ok": true,
+  "container": "web",
+  "project_name": "my-app-dev",
+  "driver": "colima",
+  "backend": "docker",
+  "backend_source": "manifest",
+  "manifest_driver": "colima",
+  "compose_file": ".effigy/runtime/compose/web.yaml",
+  "primary_service": "app",
+  "primary_service_exec_ready": true,
+  "runtime_running": true,
+  "health": null,
+  "ports": [],
+  "mounts": [],
+  "media_mounts": [],
+  "services": [
+    {
+      "name": "app",
+      "container_name": "my-app-dev-app-1",
+      "status": "running",
+      "ports": []
+    }
+  ],
+  "shared_services": [],
+  "warnings": [],
+  "environment": {"backend": {}, "record": null},
+  "profile": "effigy",
+  "compose_ps": null,
+  "detach_timeout_secs": 10,
+  "fs_events": {
+    "mode": "auto",
+    "state": "active",
+    "reason": "interactive_dev",
+    "owner": "session",
+    "pid": 4217,
+    "targets": [
+      {
+        "service": "app",
+        "container": "a1b2c3d4",
+        "host": "/work/my-app/src",
+        "guest": "/workspace/src"
+      }
+    ]
+  }
+}
+```
+
 ### Container Retire (`effigy.container.retire.v1`)
 
 ```json

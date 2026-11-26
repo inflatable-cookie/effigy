@@ -510,6 +510,11 @@ stop; that does not make the listener still starting or spend its readiness budg
 ## Host file-event relay lifecycle
 
 `[containers.<name>.host].fs_events` resolves to one relay per environment.
+Shorthand accepts `"auto"`, `"on"` or `"off"`; table form fields are `mode`,
+`paths`, `ignore`, `debounce_ms` (100 ms by default) and `services`. Empty
+`paths` selects all writable bind mounts, empty `services` selects all eligible
+services, and custom ignore patterns extend `.git`, `node_modules`, `vendor`,
+`target` and `.effigy/runtime`.
 The process that holds `.effigy/runtime/fs-events/<container>.lock` is the only
 watcher, and it writes `<container>.json` beside it.
 
@@ -526,12 +531,33 @@ watcher, and it writes `<container>.json` beside it.
   only under explicit `on`.
 - A relay that cannot start or stop is a warning. It never fails or blocks the
   container operation.
-- `container status --json` carries `fs_events`: `mode`, `state` (`active`,
+- `container status --json` always carries `fs_events`: `mode`, `state` (`active`,
   `reconnecting`, `inactive`, `noop`, `interrupted`, `unknown`), `reason`,
   `owner`, `pid` and `targets`. The field is additive to
   `effigy.container.status.v1`. `doctor` reports the same state, warns on a
   Colima profile that also sets `mountInotify: true`, and warns on an
   unsettled stack relay run. Effigy never edits that profile setting.
+
+### Relay architecture and loop prevention
+
+The host watches only runtime-observed, writable bind mounts that match the
+policy's declared mounts. `paths` narrows those roots; `services` selects
+receivers. The relay sends each changed guest path over a persistent runtime
+exec stream, grouped by target container, and uses a per-environment lock and
+record under `.effigy/runtime/fs-events/` so there is only one owner.
+
+On VM backends, services share a guest kernel and a shared host mount needs one
+target; duplicate paths are deduplicated, preferring the primary service. On
+per-container-VM backends, each container has its own kernel, so the same host
+path fans out to each selected container. Runtime-observed container IDs keep
+each stream bound to its verified running service.
+
+The guest loop signals a host change by applying the file's existing mode with
+`chmod`, producing a guest `IN_ATTRIB` event without changing permissions. Two
+filters prevent relay feedback: the host watcher forwards create, data, rename,
+and remove events but drops metadata-only events; it also excludes
+`.effigy/runtime`, where the relay writes its own records and stream state.
+Watchers that ignore `IN_ATTRIB` may therefore miss the guest-side signal.
 
 ## Per-route exposure
 

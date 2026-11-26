@@ -426,6 +426,33 @@ Behavior:
 - `{project}`/`{repo}` in env values always resolve from the task currently executing
 - `.env` parsing accepts `KEY=value` and `export KEY=value`; matching single/double quotes are stripped from values
 
+### Scoped Container File Events
+
+Use shorthand to enable the host-to-guest file-event relay with automatic
+activation:
+
+```toml
+[containers.web.host]
+fs_events = "auto" # or "on" / "off"
+```
+
+Use the table form to narrow watched paths, add ignores, change coalescing, or
+select receiving services:
+
+```toml
+[containers.web.host.fs_events]
+mode = "on"
+paths = ["src", "packages/ui"]
+ignore = ["dist", "coverage"]
+debounce_ms = 150
+services = ["app"]
+```
+
+Empty `paths` and `services` use every eligible writable bind mount and
+service. Custom ignores are added to Effigy's defaults. See the
+[container system guide](063-container-system-guide.md#host-file-events) for
+activation rules and backend behavior.
+
 ### Managed Dev Stack (`mode = "tui"`)
 
 ```toml
