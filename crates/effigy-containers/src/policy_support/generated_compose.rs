@@ -7,6 +7,7 @@ use effigy_manifest::{ManifestContainerConfig, ManifestContainerServiceConfig};
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value as YamlValue;
 
+use crate::policy::barge_lease::BARGE_LEASE_LABEL;
 use crate::runtime::scope::{CHECKOUT_LABEL, MANAGED_LABEL, PROJECT_LABEL, SCOPE_LABEL};
 use crate::{
     catalog_resolver, mount_spec::resolve_host_mounts, resolve_catalog_network_contract,
@@ -453,6 +454,7 @@ pub(crate) fn resolve_compose_source(
     _effective_manifest: &str,
     volume_borrow: Option<&crate::policy::model::ComposeVolumeBorrow>,
     resolve_staged_workspace_source: bool,
+    barge_lease: Option<&str>,
     draft: &mut crate::policy::render::Draft,
 ) -> Result<ResolvedComposeSource, ContainerPolicyError> {
     // A linked worktree and a clone marked `effigy.runtimeScope = ephemeral`
@@ -559,6 +561,9 @@ pub(crate) fn resolve_compose_source(
             CHECKOUT_LABEL,
             &checkout.display().to_string(),
         );
+        if let Some(lease) = barge_lease {
+            upsert_yaml_label(&mut service.extra, BARGE_LEASE_LABEL, lease);
+        }
     }
     let borrowed_volume_names = if let Some(borrow) = volume_borrow {
         apply_compose_volume_borrow(project_name, borrow, &mut compose_document, &mut assembly)?
@@ -2147,5 +2152,51 @@ services:
             .expect("repeated staged render")
             .expect("staged");
         assert_eq!(again, staged);
+    }
+
+    /// A recorded Barge lease labels every generated service beside its
+    /// ownership labels; without one the render carries no lease label.
+    #[test]
+    fn recorded_barge_lease_labels_every_generated_service() {
+        let _lock = crate::test_env_lock();
+        let repo = tempfile::tempdir().expect("private checkout");
+        let root = repo.path().canonicalize().expect("canonical checkout");
+        std::fs::write(
+            root.join("effigy.toml"),
+            "[containers.web]\nprimary_service = 'db'\nproject_name = 'lease-labels'\nworking_dir = '/workspace'\n\n[containers.web.services.db]\ncatalog = 'postgres'\nversion = '16'\n\n[containers.web.services.cache]\ncatalog = 'redis'\n",
+        )
+        .expect("manifest");
+        let labels = || {
+            let policy = crate::load_container_policy(&root, Some("web")).expect("policy");
+            let compose: YamlValue = serde_yaml::from_str(
+                &policy
+                    .read_compose(&policy.compose_files[0])
+                    .expect("generated compose"),
+            )
+            .expect("compose YAML");
+            let services = compose["services"].as_mapping().expect("services");
+            assert_eq!(services.len(), 2);
+            services
+                .values()
+                .map(|service| {
+                    assert_eq!(
+                        service["labels"][CHECKOUT_LABEL].as_str(),
+                        root.to_str(),
+                        "ownership labels stay"
+                    );
+                    service["labels"][BARGE_LEASE_LABEL]
+                        .as_str()
+                        .map(str::to_owned)
+                })
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(labels(), [None, None]);
+        crate::record_barge_lease(&root, "effigy", "lease-labels", Some("lease-0001"))
+            .expect("record lease");
+        let leased = Some("lease-0001".to_owned());
+        assert_eq!(labels(), [leased.clone(), leased]);
+        crate::record_barge_lease(&root, "effigy", "lease-labels", None).expect("forget lease");
+        assert_eq!(labels(), [None, None]);
     }
 }

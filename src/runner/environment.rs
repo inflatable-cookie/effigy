@@ -21,6 +21,7 @@ use effigy_kernel::id::RunId;
 use effigy_kernel::observe::{Observed, UnknownReason};
 use effigy_kernel::run::AttachMode;
 
+use crate::runner::container_command::barge_lifecycle;
 use crate::runner::error::RunnerError;
 
 /// A managed run's task-run id: the bring-up it started attaches it.
@@ -505,7 +506,11 @@ pub(in crate::runner) fn stop_exempting(
         &policy.project_name,
         op,
         exempt,
-        effect,
+        |progress| {
+            effect(progress)?;
+            barge_lifecycle::return_torn_down_stack(&policy.profile, &policy.project_name);
+            Ok(())
+        },
     )
 }
 
@@ -567,7 +572,10 @@ pub(in crate::runner) fn reset(
     let backend = backend(repo_root, policy);
     let mut failure = None;
     let result = engine::reset(&ctx, &env, &backend, &policy.project_name, |progress| {
-        effect(progress).map_err(|error| {
+        let torn_down = effect(progress).map(|()| {
+            barge_lifecycle::return_torn_down_stack(&policy.profile, &policy.project_name);
+        });
+        torn_down.map_err(|error| {
             let message = error.to_string();
             failure = Some(error);
             BackendError::Uncertain(message)
@@ -812,6 +820,12 @@ fn schedule_idle_reap(
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    let handoff = barge_lifecycle::handoff_file(policy, &token);
+    if let Some(handoff) = &handoff {
+        command.env(barge_lifecycle::HANDOFF_ENV, handoff);
+    } else {
+        command.env_remove(barge_lifecycle::HANDOFF_ENV);
+    }
     if let Some(deferred) = deferred {
         let pending = serde_json::to_string(&deferred)
             .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
@@ -840,6 +854,9 @@ fn schedule_idle_reap(
             command: "__container-lease-reaper".to_owned(),
             error,
         })?;
+    if let Some(handoff) = &handoff {
+        barge_lifecycle::await_handoff(handoff, &mut child);
+    }
     // A command can hold more than one session before exiting. Collect each
     // reaper that finishes while its original parent is still alive.
     let _ = std::thread::Builder::new().spawn(move || child.wait());
@@ -866,6 +883,13 @@ pub(in crate::runner) fn run_idle_reaper(
         Err(std::env::VarError::NotPresent) => None,
         Err(error) => return Err(RunnerError::task_invocation(error.to_string())),
     };
+    // The reaper holds the lease through the linger window, so the warm stack
+    // is not swept before its own teardown returns it.
+    barge_lifecycle::hold_for_session(&policy);
+    if let Some(handoff) = std::env::var_os(barge_lifecycle::HANDOFF_ENV) {
+        // The parent stops waiting after its budget if this write fails.
+        let _ = std::fs::write(handoff, b"held");
+    }
     drive_idle_reaper(
         &args.repo_root,
         &policy,
@@ -936,7 +960,9 @@ fn stop_idle(
     run.stop_with(&backend, &policy.project_name, None, |_| {
         crate::runner::fs_relay::stop_stack_relay(repo_root, policy);
         effigy_containers::exec::shutdown_container(repo_root, policy)
-            .map_err(|error| BackendError::Uncertain(error.to_string()))
+            .map_err(|error| BackendError::Uncertain(error.to_string()))?;
+        barge_lifecycle::return_torn_down_stack(&policy.profile, &policy.project_name);
+        Ok(())
     })
 }
 

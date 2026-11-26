@@ -14,6 +14,7 @@ use effigy_runtime_plan::{RuntimeActivationReport, RuntimeCleanupResult};
 
 use effigy_containers::environment::Retention;
 
+use crate::runner::container_command::barge_lifecycle::{self, LeaseIntent};
 use crate::runner::environment::Held;
 use crate::runner::error::RunnerError;
 use crate::runner::runtime_session_context::{LeaseRefreshPolicy, RuntimeSessionContext};
@@ -126,18 +127,51 @@ pub(in crate::runner) fn activate_container_runtime_for_task(
     policy: &EffectiveContainerPolicy,
     request: ActivationRequest<'_>,
 ) -> Result<ContainerTaskActivation, RunnerError> {
-    let prepared = effigy_containers::policy::render::prepare_resolved(policy)?;
-    let policy = &prepared;
-    let reconcile_shared_services = request.reconcile_shared_services;
-    let plan = runtime_activation_plan_from_request(repo_root, policy, request);
-    activate_container_runtime_plan_for_task_using(
-        &plan,
-        policy,
-        reconcile_shared_services,
-        ensure_container_runtime_prepared,
-        crate::runner::workspace_command::ensure_workspace_permissions_ready,
-        ensure_runtime_gateway_readiness_stage,
-    )
+    // A task's apply starts Compose, so its stack holds a Barge lease before
+    // the render that labels it. An exec only keeps an existing one held.
+    let reservation = if request.route == RuntimeActivationRoute::Exec {
+        barge_lifecycle::hold_for_session(policy);
+        None
+    } else {
+        barge_lifecycle::reserve(
+            policy,
+            LeaseIntent {
+                retention: activation_retention(runtime_lease_policy(request.session_context)),
+                session: false,
+                explicit_detached: false,
+            },
+        )?
+    };
+    let result = (|| {
+        let prepared = effigy_containers::policy::render::prepare_resolved(policy)?;
+        let policy = &prepared;
+        let reconcile_shared_services = request.reconcile_shared_services;
+        let plan = runtime_activation_plan_from_request(repo_root, policy, request);
+        activate_container_runtime_plan_for_task_using(
+            &plan,
+            policy,
+            reconcile_shared_services,
+            ensure_container_runtime_prepared,
+            crate::runner::workspace_command::ensure_workspace_permissions_ready,
+            ensure_runtime_gateway_readiness_stage,
+        )
+    })();
+    match &reservation {
+        Some(reservation) if result.is_err() => reservation.settle_failed(policy, true),
+        Some(reservation) => reservation.confirm(policy),
+        None => {}
+    }
+    result
+}
+
+/// The retention a stack this activation starts gets: an activation inside a
+/// managed workspace keeps it.
+fn activation_retention(lease: RuntimeLeasePolicy) -> Retention {
+    if lease == RuntimeLeasePolicy::RefreshOnActivation {
+        crate::runner::environment::task_retention()
+    } else {
+        Retention::Persistent
+    }
 }
 
 /// Activate the named container of the manifest at `repo_root` for a routed
@@ -287,12 +321,7 @@ pub(super) fn activate_container_runtime_plan_for_task_using(
         .and_then(Held::id)
         .into_iter()
         .collect::<Vec<_>>();
-    // An activation inside a managed workspace keeps the stack it starts.
-    let retention = if plan.lease.policy == RuntimeLeasePolicy::RefreshOnActivation {
-        crate::runner::environment::task_retention()
-    } else {
-        Retention::Persistent
-    };
+    let retention = activation_retention(plan.lease.policy);
     let system_was_running = ensure_runtime_prepared(
         repo_root,
         policy,

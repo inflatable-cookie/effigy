@@ -566,6 +566,7 @@ fn build_effective_policy(
         config,
     )?;
     let volume_borrow = data_links.borrow.clone();
+    let barge_lease = super::barge_lease::recorded_barge_lease(repo_root, &profile, &project_name);
     let (mut compose_files, managed_volumes, borrowed_volumes, effective_ports, shared_services) =
         resolve_compose_source(
             repo_root,
@@ -576,6 +577,7 @@ fn build_effective_policy(
             effective_manifest,
             volume_borrow.as_ref(),
             resolve_staged_workspace_source,
+            barge_lease.as_deref(),
             &mut draft,
         )?;
     let primary_service = config.primary_service.clone().ok_or_else(|| {

@@ -1,4 +1,5 @@
 use super::status::annotate_host_process_status;
+use crate::runner::container_command::barge_lifecycle;
 use crate::runner::container_command::gateway_registration::deregister_gateway_routes_for_container;
 use crate::runner::container_command::profile_inventory::{
     list_containers, list_networks, list_volumes,
@@ -30,6 +31,9 @@ pub(in crate::runner::container_command) fn run_container_down_project_command(
     output_json: bool,
 ) -> Result<String, RunnerError> {
     let outcome = teardown_project_on_profile(profile, project, remove_volumes)?;
+    if outcome.ok() {
+        barge_lifecycle::return_torn_down_stack(profile, project);
+    }
     finish(outcome, None, output_json)
 }
 

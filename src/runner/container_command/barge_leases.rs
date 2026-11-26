@@ -26,7 +26,7 @@ use super::RunnerError;
 
 const CONTAINER_PRUNE_SCHEMA: &str = "effigy.container.prune.v1";
 const DEFAULT_LEASE_WAIT_SECS: u64 = 300;
-const DEFAULT_LEASE_WAIT_SLICE: Duration = Duration::from_secs(2);
+pub(super) const DEFAULT_LEASE_WAIT_SLICE: Duration = Duration::from_secs(2);
 const LEASE_WAIT_ENV: &str = "EFFIGY_CONTAINER_LEASE_WAIT_SECS";
 
 /// Seam for Colima profile discovery, container inventory, and project teardown.
@@ -68,7 +68,6 @@ impl LeaseRuntime for RealLeaseRuntime {
 
 /// Result of attempting to acquire a Barge container lease.
 #[derive(Debug)]
-#[allow(dead_code)]
 pub(in crate::runner) enum LeaseAcquireOutcome {
     Leased(ContainerLease),
     NotManaged,
@@ -76,7 +75,6 @@ pub(in crate::runner) enum LeaseAcquireOutcome {
 
 /// Inputs used to classify a container session as interactive or worker.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub(in crate::runner) struct ContainerClassContext<'a> {
     pub profile: &'a str,
     pub is_worktree: bool,
@@ -87,7 +85,6 @@ pub(in crate::runner) struct ContainerClassContext<'a> {
 }
 
 /// Resolve whether a container session uses an interactive or worker Barge lease.
-#[allow(dead_code)]
 pub(in crate::runner) fn resolve_container_class(ctx: ContainerClassContext<'_>) -> ContainerClass {
     if ctx.is_worktree
         || ctx.is_ephemeral
@@ -103,12 +100,10 @@ pub(in crate::runner) fn resolve_container_class(ctx: ContainerClassContext<'_>)
 }
 
 /// Whether the current environment indicates a CI runner.
-#[allow(dead_code)]
 pub(in crate::runner) fn is_ci_environment() -> bool {
     is_ci_env_value(std::env::var("CI").ok().as_deref())
 }
 
-#[allow(dead_code)]
 fn is_ci_env_value(value: Option<&str>) -> bool {
     value.is_some_and(|raw| {
         let trimmed = raw.trim();
@@ -185,7 +180,7 @@ pub(in crate::runner) fn open_host_barge() -> Result<Option<Barge>, RunnerError>
     classify_open_barge_result(Barge::open())
 }
 
-fn classify_open_barge_result(
+pub(super) fn classify_open_barge_result(
     result: std::result::Result<Barge, barge::Error>,
 ) -> Result<Option<Barge>, RunnerError> {
     match result {
@@ -199,7 +194,6 @@ fn classify_open_barge_result(
 
 /// Resolve the Barge owner for `checkout`: `ContainerOwner::Worktree(id)` if it
 /// matches an active Barge worktree lease root, otherwise `ContainerOwner::Checkout`.
-#[allow(dead_code)]
 pub(in crate::runner) fn resolve_container_owner(
     barge: &Barge,
     checkout: &Path,
@@ -219,7 +213,6 @@ pub(in crate::runner) fn resolve_container_owner(
     Ok(ContainerOwner::Checkout(canonical))
 }
 
-#[allow(dead_code)]
 fn canonical_or_absolute(path: &Path) -> Result<PathBuf, RunnerError> {
     if let Ok(canonical) = std::fs::canonicalize(path) {
         return Ok(canonical);
@@ -236,7 +229,6 @@ fn canonical_or_absolute(path: &Path) -> Result<PathBuf, RunnerError> {
     Ok(cwd.join(path))
 }
 
-#[allow(dead_code)]
 fn root_matches_checkout(
     barge: &Barge,
     lease_id: &str,
@@ -255,13 +247,6 @@ fn root_matches_checkout(
 }
 
 /// Sweep ended leases and orphaned `barge.lease` containers on one profile.
-#[allow(dead_code)]
-pub(in crate::runner) fn sweep_profile_leases(profile: &str) -> Result<SweepReport, RunnerError> {
-    let barge = open_host_barge()?;
-    sweep_profile_leases_with(barge.as_ref(), &RealLeaseRuntime, profile)
-}
-
-/// Injectable variant of [`sweep_profile_leases`].
 pub(in crate::runner) fn sweep_profile_leases_with(
     barge: Option<&Barge>,
     runtime: &dyn LeaseRuntime,
@@ -298,13 +283,6 @@ pub(in crate::runner) fn sweep_profile_leases_with(
 
 /// Sweep ended leases and orphaned `barge.lease` containers across all running
 /// Colima profiles.
-#[allow(dead_code)]
-pub(in crate::runner) fn sweep_all_running_profiles() -> Result<SweepReport, RunnerError> {
-    let barge = open_host_barge()?;
-    sweep_all_running_profiles_with(barge.as_ref(), &RealLeaseRuntime)
-}
-
-/// Injectable variant of [`sweep_all_running_profiles`].
 pub(in crate::runner) fn sweep_all_running_profiles_with(
     barge: Option<&Barge>,
     runtime: &dyn LeaseRuntime,
@@ -610,7 +588,7 @@ fn summarize_retire_failures(outcome: &RetireOutcome) -> String {
         .join("; ")
 }
 
-/// Resolve the wait budget for `acquire_container_lease`: `EFFIGY_CONTAINER_LEASE_WAIT_SECS`
+/// Resolve the wait budget for [`acquire_container_lease_with`]: `EFFIGY_CONTAINER_LEASE_WAIT_SECS`
 /// when set, else `request_wait`, else 300 seconds.
 pub(in crate::runner) fn lease_wait_budget_for(
     request_wait: Option<Duration>,
@@ -631,22 +609,6 @@ pub(in crate::runner) fn lease_wait_budget_for(
 
 /// Acquire a Barge container lease, sweeping ended and orphaned leases before
 /// and between short wait slices when the profile is at capacity.
-#[allow(dead_code)]
-pub(in crate::runner) fn acquire_container_lease(
-    request: &ContainerLeaseRequest,
-) -> Result<LeaseAcquireOutcome, RunnerError> {
-    let barge = open_host_barge()?;
-    let wait_budget = lease_wait_budget_for(request.wait)?;
-    acquire_container_lease_with(
-        barge.as_ref(),
-        &RealLeaseRuntime,
-        request,
-        wait_budget,
-        DEFAULT_LEASE_WAIT_SLICE,
-    )
-}
-
-/// Injectable variant of [`acquire_container_lease`].
 pub(in crate::runner) fn acquire_container_lease_with(
     barge: Option<&Barge>,
     runtime: &dyn LeaseRuntime,
@@ -661,6 +623,11 @@ pub(in crate::runner) fn acquire_container_lease_with(
         return Ok(LeaseAcquireOutcome::NotManaged);
     }
 
+    if let Some(renewed) = renew_released_lease(barge, request)? {
+        return Ok(renewed);
+    }
+
+    let mut announced_wait = false;
     let mut last_sweep_notes = Vec::new();
     collect_sweep_notes(
         sweep_profile_leases_with(Some(barge), runtime, &request.profile),
@@ -694,6 +661,13 @@ pub(in crate::runner) fn acquire_container_lease_with(
                         &last_sweep_notes,
                     ));
                 }
+                if !announced_wait {
+                    announced_wait = true;
+                    eprintln!(
+                        "[info] waiting up to {}s for a container slot on profile `{profile}` ({active}/{max} in use)",
+                        wait_budget.as_secs()
+                    );
+                }
                 collect_sweep_notes(
                     sweep_profile_leases_with(Some(barge), runtime, &request.profile),
                     &mut last_sweep_notes,
@@ -701,6 +675,92 @@ pub(in crate::runner) fn acquire_container_lease_with(
             }
         }
     }
+}
+
+/// Return and retake `(profile, project)` when its own owner comes back after
+/// the hold ended, so the sweep does not tear the stack down first. Barge never
+/// revives an ended lease, so the new one has a new ID: the next Compose apply
+/// renders a changed label and recreates the services. An exec or a reused
+/// release builder applies nothing and keeps its containers. `None` when there
+/// is no such lease, or the slot was taken in between.
+fn renew_released_lease(
+    barge: &Barge,
+    request: &ContainerLeaseRequest,
+) -> Result<Option<LeaseAcquireOutcome>, RunnerError> {
+    let released = find_lease(barge, &request.profile, &request.project)?.filter(|lease| {
+        lease.owner == request.owner
+            && lease
+                .ended
+                .is_some_and(|ending| ending.reason == ContainerEndReason::HoldReleased)
+    });
+    let Some(released) = released else {
+        return Ok(None);
+    };
+    return_lease_by_id_with(Some(barge), &released.id)?;
+    let mut attempt = request.clone();
+    attempt.wait = None;
+    Ok(
+        match barge.container_lease(&attempt).map_err(barge_error)? {
+            ContainerLeaseOutcome::Leased(lease) => Some(LeaseAcquireOutcome::Leased(lease)),
+            ContainerLeaseOutcome::NotManaged => Some(LeaseAcquireOutcome::NotManaged),
+            ContainerLeaseOutcome::Full { .. } => None,
+        },
+    )
+}
+
+/// The lease recorded for `(profile, project)`, ended or not.
+pub(in crate::runner) fn find_lease(
+    barge: &Barge,
+    profile: &str,
+    project: &str,
+) -> Result<Option<ContainerLeaseStatus>, RunnerError> {
+    Ok(barge
+        .container_status()
+        .map_err(barge_error)?
+        .into_iter()
+        .find(|lease| lease.profile == profile && lease.project == project))
+}
+
+/// Hold the lease `owner`'s stack already has. It never reserves a slot for a
+/// stack that has none, and leaves another owner's lease alone.
+pub(in crate::runner) fn hold_existing_lease_with(
+    barge: &Barge,
+    profile: &str,
+    project: &str,
+    owner: &ContainerOwner,
+) -> Result<Option<ContainerLease>, RunnerError> {
+    let Some(found) = find_lease(barge, profile, project)? else {
+        return Ok(None);
+    };
+    if &found.owner != owner
+        || found
+            .ended
+            .is_some_and(|ending| ending.reason == ContainerEndReason::OwnerEnded)
+    {
+        return Ok(None);
+    }
+    let request = ContainerLeaseRequest {
+        profile: profile.to_owned(),
+        project: project.to_owned(),
+        owner: owner.clone(),
+        class: found.class,
+        hold: true,
+        wait: None,
+    };
+    let outcome = match renew_released_lease(barge, &request)? {
+        Some(renewed) => renewed,
+        None if found.ended.is_none() => {
+            match barge.container_lease(&request).map_err(barge_error)? {
+                ContainerLeaseOutcome::Leased(lease) => LeaseAcquireOutcome::Leased(lease),
+                _ => LeaseAcquireOutcome::NotManaged,
+            }
+        }
+        None => LeaseAcquireOutcome::NotManaged,
+    };
+    Ok(match outcome {
+        LeaseAcquireOutcome::Leased(lease) => Some(lease),
+        LeaseAcquireOutcome::NotManaged => None,
+    })
 }
 
 fn collect_sweep_notes(result: Result<SweepReport, RunnerError>, last_notes: &mut Vec<String>) {
@@ -745,13 +805,6 @@ fn lease_pool_full_error(
 
 /// Immediately return a known Barge container lease ID (idempotent no-op when
 /// already returned or when Barge is unmanaged).
-#[allow(dead_code)]
-pub(in crate::runner) fn return_lease_by_id(lease_id: &str) -> Result<(), RunnerError> {
-    let barge = open_host_barge()?;
-    return_lease_by_id_with(barge.as_ref(), lease_id)
-}
-
-/// Injectable variant of [`return_lease_by_id`].
 pub(in crate::runner) fn return_lease_by_id_with(
     barge: Option<&Barge>,
     lease_id: &str,
@@ -768,16 +821,6 @@ pub(in crate::runner) fn return_lease_by_id_with(
 
 /// Look up `(profile, project)` in Barge and return its lease if present
 /// (idempotent no-op when already returned or when Barge is unmanaged).
-#[allow(dead_code)]
-pub(in crate::runner) fn return_lease_for_project(
-    profile: &str,
-    project: &str,
-) -> Result<bool, RunnerError> {
-    let barge = open_host_barge()?;
-    return_lease_for_project_with(barge.as_ref(), profile, project)
-}
-
-/// Injectable variant of [`return_lease_for_project`].
 pub(in crate::runner) fn return_lease_for_project_with(
     barge: Option<&Barge>,
     profile: &str,

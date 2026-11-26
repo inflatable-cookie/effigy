@@ -16,6 +16,7 @@ use effigy_containers::{
 };
 use effigy_gateway::registration::withdraw_owned_routes;
 
+use super::barge_lifecycle;
 use super::data::maybe_confirm_destructive_container_action;
 use super::profile_inventory::{list_containers, list_networks, list_volumes};
 use super::support::run_runtime_volume_capture;
@@ -67,9 +68,18 @@ pub(super) fn run_container_retire(
     }
     crate::runner::fs_relay::stop_checkout_stack_relays(&checkout, &owned.projects, None);
     let mut outcome = retire_owned(&checkout, &owned.resources, keep_data)?;
+    return_retired_leases(&inventory, &outcome);
     outcome.kept.splice(0..0, kept.drain(..));
     outcome.gateway = release_gateway(&checkout_label)?;
     finish(outcome, Some(&checkout_label), output_json)
+}
+
+/// Return the Barge lease of every project this retirement removed from a
+/// profile, once no container of it remains there.
+fn return_retired_leases(inventory: &Inventory, outcome: &RetireOutcome) {
+    for (profile, project) in inventory.emptied_stacks(&outcome.removed) {
+        barge_lifecycle::return_torn_down_stack(&profile, &project);
+    }
 }
 
 /// Retire every labelled stack whose checkout path is gone.
@@ -280,6 +290,32 @@ impl Inventory {
                 reason: UNLABELLED_KEPT,
             })
             .collect()
+    }
+
+    /// The `(profile, project)` stacks that lost something to `removed` and
+    /// have no container left, labelled or not.
+    pub(super) fn emptied_stacks(&self, removed: &[OwnedResource]) -> BTreeSet<(String, String)> {
+        let labelled = self
+            .labelled
+            .iter()
+            .filter_map(|entry| Some((entry.project.as_ref()?, &entry.resource)));
+        let others = self
+            .unlabelled
+            .iter()
+            .chain(&self.by_project)
+            .map(|entry| (&entry.0, &entry.1));
+        let mut touched = BTreeSet::new();
+        let mut standing = BTreeSet::new();
+        for (project, resource) in labelled.chain(others) {
+            let stack = (resource.profile.clone(), project.clone());
+            if removed.contains(resource) {
+                touched.insert(stack);
+            } else if resource.kind == ResourceKind::Container {
+                standing.insert(stack);
+            }
+        }
+        touched.retain(|stack| !standing.contains(stack));
+        touched
     }
 
     /// Every checkout path the labels name, with one resource group each.
@@ -628,6 +664,35 @@ fn observation_cwd(checkout: &Path) -> PathBuf {
 mod tests {
     use super::*;
     use effigy_gateway::endpoint_store::EndpointStore;
+
+    /// A lease is returned only for a stack that lost its last container.
+    #[test]
+    fn a_stack_is_emptied_only_when_no_container_of_it_remains() {
+        let gone = labelled("/work/a", "one", "emptied", "emptied-app-1");
+        let removed_sibling = labelled("/work/a", "one", "shared", "shared-app-1");
+        let standing = labelled("/work/a", "two", "shared", "shared-app-2");
+        // A project with an unlabelled container still has one standing.
+        let legacy = labelled("/work/a", "one", "legacy", "legacy-db-1");
+        let kept_unlabelled = OwnedResource {
+            name: "legacy-app-1".to_owned(),
+            ..legacy.resource.clone()
+        };
+        let removed = [
+            gone.resource.clone(),
+            removed_sibling.resource.clone(),
+            legacy.resource.clone(),
+        ];
+        let inventory = Inventory {
+            labelled: vec![gone, removed_sibling, standing, legacy],
+            unlabelled: vec![("legacy".to_owned(), kept_unlabelled)],
+            by_project: Vec::new(),
+        };
+
+        assert_eq!(
+            inventory.emptied_stacks(&removed),
+            BTreeSet::from([("effigy".to_owned(), "emptied".to_owned())])
+        );
+    }
 
     fn labelled(checkout: &str, scope: &str, project: &str, name: &str) -> Labelled {
         Labelled {

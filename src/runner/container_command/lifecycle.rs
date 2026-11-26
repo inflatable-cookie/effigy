@@ -1,3 +1,5 @@
+#[cfg(test)]
+mod barge_tests;
 mod down;
 mod exec;
 #[cfg(test)]

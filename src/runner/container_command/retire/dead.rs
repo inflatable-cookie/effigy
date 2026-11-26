@@ -73,6 +73,7 @@ pub(super) fn run(
     let mut human = effigy_ui::HumanError::new("retirement of dead checkouts did not complete");
     for group in dead {
         let mut outcome = retire_owned(&caller, &group.resources, keep_data)?;
+        return_retired_leases(&inventory, &outcome);
         outcome
             .kept
             .extend(inventory.unlabelled_kept(&group.projects));

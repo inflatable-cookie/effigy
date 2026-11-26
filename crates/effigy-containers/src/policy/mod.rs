@@ -1,3 +1,4 @@
+pub mod barge_lease;
 pub mod compose_file;
 pub mod data_from;
 pub mod host_alias;
