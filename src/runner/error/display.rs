@@ -33,6 +33,7 @@ pub(super) fn fmt_runner_error(
         RunnerError::Task(err) => write!(f, "{err}"),
         RunnerError::Ui(msg) => write!(f, "ui render failed: {msg}"),
         RunnerError::TaskInvocation(msg) => write!(f, "{msg}"),
+        RunnerError::HostDependencyDrift { detail, .. } => f.write_str(detail),
         // The guest adapter's own sentence, kept for the person standing in the
         // container. Host diagnostics read `operation`/`kind` instead, because
         // this text can carry the stream and the bytes it moved.

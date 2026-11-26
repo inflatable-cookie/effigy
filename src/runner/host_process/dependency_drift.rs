@@ -390,21 +390,21 @@ fn drift_refusal(
     if drift.total > drift.entries.len() {
         described.push(format!("and {} more", drift.total - drift.entries.len()));
     }
-    let mut message = format!(
-        "JavaScript dependencies for `{}` disagree with `{lock_name}`: {}; a stale install fails only after a host process starts, so this start was refused before any managed host process ran. Prepare dependencies with `{}`",
+    let detail = format!(
+        "JavaScript dependencies for `{}` disagree with `{lock_name}`: {}. Effigy refused to launch this environment's managed host processes because a stale install can fail after launch.",
         drift.package_root.display(),
         described.join("; "),
-        frozen_install(manager),
     );
+    let mut remediation = format!("Run `{}`", frozen_install(manager));
     if manifest
         .bootstrap
         .as_ref()
         .is_some_and(|bootstrap| !bootstrap.setup.is_empty())
     {
-        message.push_str(", or `effigy bootstrap` (this checkout's `[bootstrap].setup`)");
+        remediation.push_str(" or `effigy bootstrap` (this checkout's `[bootstrap].setup`)");
     }
-    message.push_str(", then rerun this command.");
-    RunnerError::task_invocation(message)
+    remediation.push_str(", then rerun the container start.");
+    RunnerError::host_dependency_drift(detail, remediation)
 }
 
 #[cfg(test)]
@@ -517,25 +517,38 @@ run = "bun run dev"
     /// The failure this preflight exists for: an installed package that the
     /// checkout's own lock resolves elsewhere.
     #[test]
-    fn stale_installed_dependency_refuses_before_a_managed_host_process_starts() {
+    fn stale_installed_dependency_refuses_to_launch_managed_host_processes() {
         let (_fixture, root) = fixture("drift-stale", Some("bun"), None);
         write_package_json(&root, "app", &[("praxis", "0.7.1")]);
         write_bun_lock(&root, "praxis", "0.7.1");
         write_installed(&root, "praxis", "0.6.0");
         let error = validate_host_process_preflight(&root, &policy(&root))
-            .expect_err("a stale install refuses the start")
-            .to_string();
-        assert!(error.contains("praxis"), "{error}");
+            .expect_err("a stale install refuses the start");
+        let RunnerError::HostDependencyDrift {
+            detail,
+            remediation,
+        } = error
+        else {
+            panic!("expected a typed dependency drift refusal: {error:?}");
+        };
+        assert!(detail.contains("praxis"), "{detail}");
         assert!(
-            error.contains("0.6.0") && error.contains("0.7.1"),
-            "{error}"
+            detail.contains("0.6.0") && detail.contains("0.7.1"),
+            "{detail}"
         );
         assert!(
-            error.contains("before any managed host process ran"),
-            "{error}"
+            detail.contains("Effigy refused to launch this environment's managed host processes"),
+            "{detail}"
         );
-        assert!(error.contains("bun install --frozen-lockfile"), "{error}");
-        assert!(error.contains("effigy bootstrap"), "{error}");
+        assert!(
+            remediation.contains("bun install --frozen-lockfile"),
+            "{remediation}"
+        );
+        assert!(remediation.contains("effigy bootstrap"), "{remediation}");
+        assert!(
+            remediation.contains("rerun the container start"),
+            "{remediation}"
+        );
     }
 
     #[test]
@@ -590,11 +603,17 @@ run = "bun run dev"
         write_package_json(&root, "app", &[("praxis", "0.7.1")]);
         write_npm_lock(&root, "praxis", "0.7.1");
         write_installed(&root, "praxis", "0.6.0");
-        let error = validate_host_process_preflight(&root, &policy(&root))
-            .expect_err("npm drift refuses")
-            .to_string();
-        assert!(error.contains("package-lock.json"), "{error}");
-        assert!(error.contains("npm ci"), "{error}");
+        let error =
+            validate_host_process_preflight(&root, &policy(&root)).expect_err("npm drift refuses");
+        let RunnerError::HostDependencyDrift {
+            detail,
+            remediation,
+        } = error
+        else {
+            panic!("expected a typed dependency drift refusal: {error:?}");
+        };
+        assert!(detail.contains("package-lock.json"), "{detail}");
+        assert!(remediation.contains("npm ci"), "{remediation}");
     }
 
     /// A machine-local link is a deliberate different version, not drift.

@@ -73,6 +73,10 @@ pub(super) fn mapped(error: &RunnerError) -> Option<HumanError> {
             details,
             ..
         } => container_wait_refused(environment, diagnostic, details),
+        RunnerError::HostDependencyDrift {
+            detail,
+            remediation,
+        } => host_dependency_drift(detail, remediation),
         RunnerError::DetachedActivationFailure { container, cause } => {
             detached_activation_failed(container.as_deref(), cause)
         }
@@ -521,6 +525,15 @@ const DETACHED_ACTIVATION_NEXT: &str =
 /// `Details:`. The cause's generic next step is dropped, so it never reads as
 /// the advice for this failure (effigy#1105).
 fn detached_activation_failed(container: Option<&str>, cause: &RunnerError) -> HumanError {
+    if let RunnerError::HostDependencyDrift {
+        detail,
+        remediation,
+    } = cause
+    {
+        return host_dependency_drift(detail, remediation)
+            .explain("Any backing containers already started were left running.");
+    }
+
     let headline = match container {
         Some(name) => format!("Container `{name}` did not finish starting"),
         None => "Container did not finish starting".to_owned(),
@@ -549,6 +562,12 @@ fn detached_activation_failed(container: Option<&str>, cause: &RunnerError) -> H
         human = human.detail(label, value);
     }
     human
+}
+
+fn host_dependency_drift(detail: &str, remediation: &str) -> HumanError {
+    HumanError::new("Host JavaScript dependencies have drifted")
+        .explain(detail)
+        .next_action(remediation)
 }
 
 fn concise_diagnostic_sentence(diagnostic: &str) -> String {
