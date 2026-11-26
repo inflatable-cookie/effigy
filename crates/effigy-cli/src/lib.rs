@@ -603,6 +603,10 @@ pub enum ContainerSubcommand {
         keep_data: bool,
         yes: bool,
     },
+    /// Sweep ended Barge container leases and orphaned `barge.lease` stacks.
+    Prune {
+        profile: Option<String>,
+    },
 }
 
 /// Strict caller-supplied limits for the opt-in bounded finite named

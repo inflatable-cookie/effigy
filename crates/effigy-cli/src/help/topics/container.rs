@@ -26,6 +26,7 @@ const CONTAINER_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         "`container volume list` is repo-scoped; `--global` lists every runtime, `--dormant` superseded repo volumes, and `--global --orphans` ownerless volumes.",
         "`container hosts` prints this checkout's HTTP and TCP host map (linked worktrees use `<apex>-w<scope>.test`); `container scope` prints its runtime token.",
         "`container retire` removes every container, volume and network labelled for this checkout, then releases its routes, ports and loopback addresses by checkout path. It takes no container name; for a checkout that is gone, `retire --dead` finds its stack by label alone. Use it from `paseo.json` worktree teardown.",
+        "`container prune [--profile <PROFILE>]` sweeps ended Barge container leases and orphaned `barge.lease`-labelled stacks on the named profile (or all running Colima profiles) without requiring a manifest.",
     ],
     usage: text_lines![
         "effigy container render [<NAME>] [--repo <PATH>] [--json]",
@@ -75,6 +76,7 @@ const CONTAINER_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         "effigy container scope [--repo <PATH>] [--json]",
         "effigy container retire [--repo <PATH>] [--scope <TOKEN>] [--keep-data] [--yes] [--json]",
         "effigy container retire --dead [--keep-data] [--yes] [--json]",
+        "effigy container prune [--profile <PROFILE>] [--json]",
         "effigy --json container up [--repo <PATH>]",
     ],
     leading_common_options: &[CommonOption::Repo],
@@ -136,6 +138,8 @@ const CONTAINER_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         "effigy container retire --scope abcdef0123456789abcdef0123456789 --yes",
         "effigy container retire --keep-data --yes",
         "effigy container retire --dead --yes",
+        "effigy container prune",
+        "effigy container prune --profile effigy --json",
     ],
 };
 
@@ -145,7 +149,7 @@ const CONTAINER_OPTIONS: &[(&str, &str)] = option_rows![
     "--detach" => "Force non-attached bring-up for `up` and exit once the environment reaches ready state",
     "--service <NAME>" => "Select one explicit service for `logs` or `shell` instead of the manifest `primary_service`",
     "--project <PROJECT>" => "For `down`, tear down one project's Effigy stack on the `--profile` Colima profile, from any directory. Needs `--profile`; takes no name, `--system`, `--global` or `--repo`. It reads only that profile and never starts it",
-    "--profile <PROFILE>" => "For `down --project`, the Colima profile to read and tear down. A stopped or unreachable profile is an error, not a silent skip",
+    "--profile <PROFILE>" => "For `down --project`, the Colima profile to read and tear down (a stopped or unreachable profile is an error, not a silent skip). For `prune`, limit the ended-lease and orphan sweep to one Colima profile instead of all running profiles",
     "--volumes" => "For `down --project`, also remove the project's volumes, including persistent (`com.effigy.persist=true`) ones. Without it every volume is kept",
     "--global" => "For `down`, `status`, or `stats`, discover running Effigy-managed environments across repos. For `cache list`, inspect the Effigy Colima profile's named-volume inventory, including stopped projects. For `volume list`, inspect Effigy-managed named volumes across available runtimes.",
     "--orphans" => "For `volume list --global`, show only ownerless volumes whose repo is gone or no longer declares them.",
