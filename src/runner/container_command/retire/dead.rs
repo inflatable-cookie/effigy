@@ -40,7 +40,13 @@ pub(super) fn run(
     yes: bool,
     output_json: bool,
 ) -> Result<String, RunnerError> {
-    let caller = retire_checkout(repo_override)?;
+    // `--dead` discovers ownership from runtime labels, so it has no need for
+    // an Effigy manifest or git checkout. Keep a useful observation cwd for
+    // runtime commands even when invoked outside a repository.
+    let caller = match repo_override {
+        Some(path) => retire_checkout(Some(path))?,
+        None => std::env::current_dir().unwrap_or_else(|_| Path::new("/").to_path_buf()),
+    };
     let inventory = Inventory::read(&caller)?;
     let mut dead = Vec::new();
     let mut unknown = Vec::new();
