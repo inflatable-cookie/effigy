@@ -1377,7 +1377,9 @@ case "$1" in
       printf '{"name":"%s","status":"%s","cpus":2,"memory":%s,"disk":%s}\n' "$profile" "$state" "$memory" "$disk"
     fi
     ;;
-  start) : > "$root/running"; : > "$root/listed"; printf 'started\n' ;;
+  start)
+    printf '%s\n' "$PWD" "${TMPDIR-unset}" "${TMP-unset}" "${TEMP-unset}" "$PATH" "$HOME" "$COLIMA_HOME" "$SSH_AUTH_SOCK" > "$root/start-env"
+    : > "$root/running"; : > "$root/listed"; printf 'started\n' ;;
   stop) if [ ! -f "$root/stop-stays-running" ]; then rm -f "$root/running"; fi; printf 'stopped\n' ;;
   nerdctl)
     if [ -f "$root/offline" ]; then
@@ -1451,6 +1453,11 @@ esac
             let env = EnvRestore::set(&[
                 ("PATH", path.into()),
                 ("HOME", home.clone().into_os_string()),
+                ("COLIMA_HOME", home.join(".colima").into_os_string()),
+                ("SSH_AUTH_SOCK", "fixture-agent".into()),
+                ("TMPDIR", root.clone().into_os_string()),
+                ("TMP", root.clone().into_os_string()),
+                ("TEMP", root.clone().into_os_string()),
                 ("EFFIGY_COMPOSE_BACKEND", "colima".into()),
                 (
                     "EFFIGY_MANAGED_PROFILE_FIXTURE",
@@ -1503,6 +1510,29 @@ esac
                 .map(str::to_owned)
                 .collect()
         }
+    }
+
+    #[test]
+    fn colima_starts_and_recovery_use_neutral_host_environment() {
+        let _lock = crate::test_env_lock();
+        let fixture = ManagedProfileFixture::new();
+        let policy = fixture.policy();
+        let assert_start = || {
+            let recorded = std::fs::read_to_string(fixture.root.join("start-env"))
+                .expect("recorded start environment");
+            let lines: Vec<_> = recorded.lines().collect();
+            assert_eq!(lines[0], fixture.home.to_str().unwrap());
+            assert_eq!(&lines[1..4], &["unset", "unset", "unset"]);
+            assert_eq!(lines[4], std::env::var("PATH").unwrap());
+            assert_eq!(lines[5], fixture.home.to_str().unwrap());
+            assert_eq!(lines[6], fixture.home.join(".colima").to_str().unwrap());
+            assert_eq!(lines[7], "fixture-agent");
+        };
+        ensure_colima_running_report(&policy, &fixture.root).expect("start profile");
+        assert_start();
+        std::fs::remove_file(fixture.root.join("start-env")).expect("clear recording");
+        recover_colima_runtime(&policy, &fixture.root).expect("recover profile");
+        assert_start();
     }
 
     #[test]

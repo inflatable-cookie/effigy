@@ -997,8 +997,12 @@ fn run_command(
     label: &str,
     allow_failure: bool,
 ) -> Result<Output, RunnerError> {
-    Command::new(program)
-        .args(args)
+    let mut command = Command::new(program);
+    command.args(args);
+    if program == "colima" && args.first() == Some(&"start") {
+        effigy_containers::colima::configure_colima_start(&mut command);
+    }
+    command
         .output()
         .map_err(|error| RunnerError::TaskCommandLaunch {
             command: format!("{label} ({program} {})", args.join(" ")),

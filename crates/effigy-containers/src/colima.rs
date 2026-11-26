@@ -16,6 +16,23 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
+/// Configure a Colima start so its long-lived descendants do not retain a checkout or scratch directory.
+pub fn configure_colima_start(command: &mut Command) {
+    let home = std::env::var_os("HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .filter(|path| path.is_dir());
+    #[cfg(unix)]
+    let fallback = PathBuf::from("/");
+    #[cfg(not(unix))]
+    let fallback = std::env::temp_dir();
+    command
+        .current_dir(home.unwrap_or(fallback))
+        .env_remove("TMPDIR")
+        .env_remove("TMP")
+        .env_remove("TEMP");
+}
+
 const FALLBACK_COLIMA_DNS_SERVERS: [&str; 2] = ["1.1.1.1", "8.8.8.8"];
 const BYTES_PER_GIB: u64 = 1024 * 1024 * 1024;
 const MIN_EFFIGY_MEMORY_GIB: u64 = 4;
