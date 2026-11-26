@@ -716,6 +716,28 @@ pub(in crate::runner) fn signal_owner(record: &RunRecord) -> bool {
     )
 }
 
+/// Acknowledge verified-dead `closed` + `incomplete` residue on a durable run
+/// through the kernel store, removing any orphaned temporary interpolation file.
+pub(in crate::runner) fn acknowledge_run(
+    record: &RunRecord,
+) -> Result<effigy_kernel::run::AcknowledgeOutcome, RunnerError> {
+    if record.foreground() || record.is_terminal_record() {
+        return Err(RunnerError::task_invocation(format!(
+            "run {} is a foreground run with no durable residue record to acknowledge",
+            record.id
+        )));
+    }
+    let root = effects_for_record(record)?;
+    let cx = kernel::effects();
+    let effigy_home = effigy_containers::effigy_home()
+        .or_else(|| kernel::state_home_path().map(|home| home.join(".effigy")));
+    effigy_kernel::run::acknowledge_residue(&cx, &root, record.id, effigy_home.as_deref())
+        .map_err(|error| match error {
+            effigy_kernel::run::RunError::Refused(detail) => RunnerError::task_invocation(detail),
+            other => RunnerError::task_invocation(other.to_string()),
+        })
+}
+
 /// Bound for one journal poll while following or stopping: one cheap read of
 /// the run's own journal per interval, never a tight spin.
 pub(in crate::runner) const POLL: Duration = Duration::from_millis(250);

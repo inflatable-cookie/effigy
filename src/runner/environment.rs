@@ -99,7 +99,14 @@ fn inside_guest() -> bool {
 }
 
 pub(in crate::runner) fn error(error: EnvError) -> RunnerError {
-    RunnerError::task_invocation(error.to_string())
+    match error {
+        EnvError::Unsettled { run, effects } => RunnerError::PredecessorUnsettled {
+            run: run.to_string(),
+            effects,
+            context: Some("container environment"),
+        },
+        other => RunnerError::task_invocation(other.to_string()),
+    }
 }
 
 fn runtime_error(error: RunnerError) -> effigy_runtime::EffigyRuntimeError {
@@ -1300,5 +1307,190 @@ mod tests {
                 "stop\n"
             );
         }
+    }
+
+    #[test]
+    fn closed_incomplete_residue_blocks_container_up_and_down_until_run_acknowledge() {
+        use effigy_containers::environment::{EngineRecord, EnvRun};
+        use effigy_kernel::id::{Generation, RunId};
+        use effigy_kernel::run::{Effect, EffectSpec, EffectState, Fence, Settlement};
+        use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+
+        const CUSTODY_KIND: &str = "kernel:process";
+
+        let _lock = lock_test();
+        let fixture = EnvironmentFixture::new("ack-unblocks", "#!/bin/sh\nexit 0\n");
+        let _env = fixture.env();
+        let policy = fixture.policy();
+        let env = env_ref(&policy).unwrap();
+        let ctx = context(&policy.repo_root).unwrap();
+
+        let mut initial = EnvRun::begin(&ctx, &env, Operation::Up, Wait::FailFast).unwrap();
+        initial
+            .write_record(&EngineRecord::new(Retention::Held, &policy.project_name))
+            .unwrap();
+        initial.activate(&[]).unwrap();
+        initial.finish(true).unwrap();
+
+        let effigy_home = fixture.home.join(".effigy");
+        let compose_env_dir = effigy_home.join("compose-env");
+        fs::create_dir_all(&compose_env_dir).unwrap();
+        fs::set_permissions(&compose_env_dir, fs::Permissions::from_mode(0o700)).unwrap();
+        let file_name = "compose-ack-fixture.env";
+        let file_path = compose_env_dir.join(file_name);
+        {
+            let _f = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&file_path)
+                .unwrap();
+        }
+        let dir_meta = fs::metadata(&compose_env_dir).unwrap();
+        let file_meta = fs::metadata(&file_path).unwrap();
+
+        let mut dead_child = std::process::Command::new("/bin/sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        let dead_id = effigy_kernel::ident::process_identity(dead_child.id())
+            .verified()
+            .cloned()
+            .unwrap();
+        let _ = dead_child.kill();
+        let _ = dead_child.wait();
+
+        let state_root =
+            crate::runner::task_engine::checkout_effects_root(&fixture.repo_root).unwrap();
+
+        let run_id_str = {
+            let conn =
+                rusqlite::Connection::open(state_root.path().join(effigy_kernel::store::DB_NAME))
+                    .unwrap();
+            let (run_id_str, generation): (String, i64) = conn
+                .query_row(
+                    "SELECT run_id, generation FROM runs WHERE owner=?1 ORDER BY created_at DESC LIMIT 1",
+                    [env.resource.name().to_string()],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .unwrap();
+            let run_id: RunId = run_id_str.parse().unwrap();
+            let fence = Fence {
+                resource: env.resource.clone(),
+                generation: Generation::new(generation as u64),
+            };
+            let target_spec = EffectSpec {
+                target: fence.clone(),
+                kind: CUSTODY_KIND.to_owned(),
+                payload: serde_json::Value::Null,
+                settlement: Settlement::Release(serde_json::Value::Null),
+                required: true,
+            };
+            let effect = Effect {
+                sequence: 1,
+                spec: target_spec.clone(),
+                state: EffectState::Applied,
+                receipt: None,
+                reason: None,
+            };
+            let invocation = "abcdef0123456789abcdef0123456789";
+            let binding = serde_json::json!({
+                "version": 1,
+                "invocation": invocation,
+                "run": run_id,
+                "fence": fence,
+                "effect": effect,
+                "original": file_name,
+                "location": "Original",
+                "file": { "device": file_meta.dev(), "inode": file_meta.ino() },
+                "directory": { "device": dir_meta.dev(), "inode": dir_meta.ino() },
+                "completed": false,
+            });
+            {
+                use std::io::Write;
+                let mut custody = fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .mode(0o600)
+                    .open(compose_env_dir.join(format!(".custody-{invocation}")))
+                    .unwrap();
+                custody
+                    .write_all(&serde_json::to_vec(&binding).unwrap())
+                    .unwrap();
+            }
+            let receipt = serde_json::json!({
+                "interpolation_v1": {
+                    "identity": dead_id,
+                    "pgid": 0,
+                    "nonce": "dead-nonce",
+                    "grace_millis": 100,
+                },
+                "binding": binding,
+            });
+            conn.execute(
+                "UPDATE runs SET phase='closed', cleanup_outcome='incomplete', residue_ack=NULL WHERE run_id=?1",
+                [&run_id_str],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO events(run_id, seq, effect_id, kind, target, settlement, state, receipt, error, wall_time) \
+                 VALUES (?1, 1, '1', ?2, ?3, ?4, 'residue', ?5, 'retained interpolation requires its live descriptor owner', 1)",
+                rusqlite::params![
+                    run_id_str,
+                    CUSTODY_KIND,
+                    serde_json::to_string(&target_spec).unwrap(),
+                    serde_json::to_string(&Settlement::Release(serde_json::Value::Null)).unwrap(),
+                    serde_json::to_string(&receipt).unwrap(),
+                ],
+            )
+            .unwrap();
+            run_id_str
+        };
+
+        let expected_hint = format!("effigy run acknowledge {run_id_str}");
+
+        // `container up` (`EnvRun::begin`) refuses with the exact acknowledge hint.
+        let up_err = EnvRun::begin(&ctx, &env, Operation::Up, Wait::FailFast)
+            .map(|_| ())
+            .map_err(error)
+            .expect_err("residue run must block container up");
+        assert!(matches!(up_err, RunnerError::PredecessorUnsettled { .. }), "{up_err:?}");
+        assert!(up_err.to_string().contains(&expected_hint), "{up_err}");
+        assert!(!up_err.to_string().contains("stop what holds it"), "{up_err}");
+        let up_human = up_err.human_error().render_text();
+        assert!(up_human.contains(&expected_hint), "{up_human}");
+
+        // `container down` (`stop`) refuses with the same acknowledge hint.
+        let down_err = stop(&fixture.repo_root, &policy, Operation::Down, |_| Ok(()))
+            .expect_err("residue run must block container down");
+        assert!(
+            matches!(down_err, RunnerError::PredecessorUnsettled { .. }),
+            "{down_err:?}"
+        );
+        assert!(down_err.to_string().contains(&expected_hint), "{down_err}");
+        assert!(file_path.exists(), "orphaned env file stays until acknowledged");
+
+        let ack_json = crate::runner::run_control::run_runs(effigy_cli::RunsArgs {
+            repo_override: Some(fixture.repo_root.clone()),
+            output_json: true,
+            action: effigy_cli::RunsAction::Acknowledge {
+                run: run_id_str.clone(),
+            },
+        })
+        .expect("effigy run acknowledge succeeds");
+        let parsed: serde_json::Value = serde_json::from_str(&ack_json).unwrap();
+        assert_eq!(parsed["acknowledged"], true);
+        assert_eq!(parsed["run"], run_id_str);
+        assert!(
+            !file_path.exists(),
+            "orphaned compose-env file should be cleaned on acknowledgement"
+        );
+
+        // Both `container down` and subsequent `container up` are now unblocked.
+        stop(&fixture.repo_root, &policy, Operation::Down, |_| Ok(()))
+            .expect("acknowledged residue unblocks container down");
+        let next_up = EnvRun::begin(&ctx, &env, Operation::Up, Wait::FailFast)
+            .expect("acknowledged residue unblocks container up");
+        drop(next_up);
     }
 }

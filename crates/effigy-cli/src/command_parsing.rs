@@ -1481,9 +1481,12 @@ where
             run: required(run)?,
             wait_ms,
         },
+        Some("acknowledge") => RunsAction::Acknowledge {
+            run: required(run)?,
+        },
         Some(other) => {
             return Err(CliParseError::InvalidArguments(format!(
-                "`effigy run` supports `status`, `logs`, `stop` or `release`, not `{other}`"
+                "`effigy run` supports `status`, `logs`, `stop`, `release` or `acknowledge`, not `{other}`"
             )))
         }
     };

@@ -3,6 +3,8 @@
 //! Engines supply effect observations and idempotent undo. A `Run` is the only
 //! writer of its journal; dropping it releases liveness, never claims cleanup.
 mod aliases;
+mod acknowledge;
+pub use acknowledge::{acknowledge_residue, AcknowledgeOutcome};
 mod attachments;
 mod children;
 mod facts;
@@ -278,6 +280,13 @@ impl std::fmt::Display for RunError {
         // reader: no category's next step applies (F7).
         if let Self::Interrupted(interrupt @ Interrupt::Cancelled { .. }) = self {
             return write!(f, "the run was {interrupt}");
+        }
+        if let Self::PredecessorUnsettled { run, effects } = self {
+            return write!(
+                f,
+                "the run was refused: run {run} has {} effect(s) still unsettled; inspect it with `effigy run status {run}`, and once its processes are gone, clear the residue with `effigy run acknowledge {run}`",
+                effects.len()
+            );
         }
         let detail = match self {
             Self::Refused(rule) => rule.clone(),

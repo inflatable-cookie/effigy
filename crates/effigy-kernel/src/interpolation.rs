@@ -3,14 +3,17 @@
 //! authorize removal. A dead helper leaves its binding and residue untouched.
 pub(crate) mod channel;
 use crate::id::RunId;
-use crate::run::{Effect, Fence};
+use crate::run::{Effect, Fence, RunError};
+use nix::errno::Errno;
 use nix::fcntl::{openat, AtFlags, Flock, FlockArg, OFlag};
 use nix::sys::stat::{fstat, fstatat, FileStat, Mode};
 use nix::unistd::{unlinkat, UnlinkatFlags};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::os::fd::{AsRawFd, OwnedFd, RawFd};
+use std::path::{Component, Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -544,6 +547,216 @@ fn rename(directory: &OwnedFd, from: &str, to: &str) -> io::Result<()> {
         Ok(())
     } else {
         Err(io::Error::last_os_error())
+    }
+}
+
+/// Remove an orphaned Compose interpolation file (and its `.custody-*` binding
+/// journal) after verifying the run is closed with dead processes and no live
+/// owner holds `LOCK_SH` on the file's exact inode.
+pub(crate) fn cleanup_dead_residue_interpolation(
+    home: &Path,
+    run: RunId,
+    fence: &Fence,
+    binding_value: &Value,
+) -> Result<Option<PathBuf>, RunError> {
+    if binding_value.get("pending") == Some(&Value::Bool(true)) {
+        return Ok(None);
+    }
+    let binding: Binding = serde_json::from_value(binding_value.clone())?;
+    if binding.version != 1
+        || binding.run != run
+        || binding.fence != *fence
+        || !component(&binding.original)
+        || matches!(&binding.location, Location::Quarantine(name) if !component(name))
+        || binding.invocation.len() != 32
+        || !binding.invocation.bytes().all(|b| b.is_ascii_hexdigit())
+    {
+        return Err(RunError::broken("invalid interpolation residue binding"));
+    }
+
+    let compose_dir_path = home.join("compose-env");
+    let Some(dir_fd) = open_compose_env_dir(home)? else {
+        return Ok(None);
+    };
+    let dir_stat = fstat(&dir_fd).map_err(io::Error::from)?;
+    if dir_stat.st_mode & nix::libc::S_IFMT != nix::libc::S_IFDIR
+        || dir_stat.st_uid != crate::fs::operator_uid()
+        || dir_stat.st_mode & 0o777 != 0o700
+        || dir_stat.st_nlink == 0
+        || Stamp::of(&dir_stat) != binding.directory
+    {
+        return Ok(None);
+    }
+
+    let lock_fd = openat(
+        &dir_fd,
+        ".",
+        OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(io::Error::from)?;
+    let _dir_lock = Flock::lock(File::from(lock_fd), FlockArg::LockExclusive)
+        .map_err(|(_, error)| io::Error::from(error))?;
+
+    let custody_name = format!(".custody-{}", binding.invocation);
+    let mut effective_location = binding.location.clone();
+    let mut verified_custody = false;
+    match openat(
+        &dir_fd,
+        custody_name.as_str(),
+        OFlag::O_RDONLY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC,
+        Mode::empty(),
+    ) {
+        Ok(custody_fd) => {
+            let custody_file = File::from(custody_fd);
+            let custody_stat = fstat(&custody_file).map_err(io::Error::from)?;
+            if private_file(&custody_stat) {
+                let mut bytes = vec![0u8; 65537];
+                let mut total = 0;
+                let mut reader = custody_file;
+                while total < bytes.len() {
+                    let read = reader.read(&mut bytes[total..])?;
+                    if read == 0 {
+                        break;
+                    }
+                    total += read;
+                }
+                bytes.truncate(total);
+                if bytes.len() <= 65536 {
+                    if let Ok(disk_binding) = serde_json::from_slice::<Binding>(&bytes) {
+                        if disk_binding.version == 1
+                            && disk_binding.run == run
+                            && disk_binding.invocation == binding.invocation
+                            && disk_binding.file == binding.file
+                            && !matches!(&disk_binding.location, Location::Quarantine(q) if !component(q))
+                        {
+                            effective_location = disk_binding.location;
+                            verified_custody = true;
+                        }
+                    }
+                }
+            }
+        }
+        Err(Errno::ENOENT) => {}
+        Err(error) => return Err(io::Error::from(error).into()),
+    }
+
+    let primary_name = match &effective_location {
+        Location::Original => binding.original.clone(),
+        Location::Quarantine(name) => name.clone(),
+    };
+    let quarantine_name = format!(".rm-{}", binding.invocation);
+    let mut candidates = vec![primary_name.clone()];
+    if primary_name != binding.original {
+        candidates.push(binding.original.clone());
+    }
+    if !candidates.contains(&quarantine_name) {
+        candidates.push(quarantine_name.clone());
+    }
+
+    let mut removed = None;
+    for candidate in candidates {
+        let stat = match fstatat(&dir_fd, candidate.as_str(), AtFlags::AT_SYMLINK_NOFOLLOW) {
+            Ok(stat) => stat,
+            Err(Errno::ENOENT) => continue,
+            Err(error) => return Err(io::Error::from(error).into()),
+        };
+        if Stamp::of(&stat) != binding.file || !private_file(&stat) {
+            continue;
+        }
+        let file_fd = openat(
+            &dir_fd,
+            candidate.as_str(),
+            OFlag::O_RDONLY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(io::Error::from)?;
+        let file = File::from(file_fd);
+        if Stamp::of(&fstat(&file).map_err(io::Error::from)?) != binding.file {
+            continue;
+        }
+        // Every live owner (`InterpolationFile`, `RetainedInterpolation`,
+        // `MemoryGuard`) holds `LOCK_SH`. `LOCK_EX | LOCK_NB` succeeds only
+        // when no open description holds a shared lock on this inode.
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+            let err = io::Error::last_os_error();
+            if err.kind() == io::ErrorKind::WouldBlock {
+                return Err(RunError::refused(format!(
+                    "run {run} still has a held interpolation file `{candidate}`; stop its owner before acknowledging"
+                )));
+            }
+            return Err(err.into());
+        }
+        if candidate == binding.original {
+            rename(&dir_fd, &candidate, &quarantine_name)?;
+            File::from(dir_fd.try_clone()?).sync_all()?;
+            unlinkat(
+                &dir_fd,
+                quarantine_name.as_str(),
+                UnlinkatFlags::NoRemoveDir,
+            )
+            .map_err(io::Error::from)?;
+        } else {
+            unlinkat(&dir_fd, candidate.as_str(), UnlinkatFlags::NoRemoveDir)
+                .map_err(io::Error::from)?;
+        }
+        File::from(dir_fd.try_clone()?).sync_all()?;
+        removed = Some(compose_dir_path.join(candidate));
+        break;
+    }
+
+    if verified_custody {
+        match unlinkat(&dir_fd, custody_name.as_str(), UnlinkatFlags::NoRemoveDir) {
+            Ok(()) => {
+                File::from(dir_fd.try_clone()?).sync_all()?;
+            }
+            Err(Errno::ENOENT) => {}
+            Err(error) => return Err(io::Error::from(error).into()),
+        }
+    }
+
+    Ok(removed)
+}
+
+fn open_compose_env_dir(home: &Path) -> io::Result<Option<OwnedFd>> {
+    let canonical = match std::fs::canonicalize(home) {
+        Ok(path) => path,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let mut walk = nix::fcntl::open(
+        Path::new("/"),
+        OFlag::O_DIRECTORY | OFlag::O_RDONLY | OFlag::O_CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(io::Error::from)?;
+    for component in canonical.components() {
+        match component {
+            Component::RootDir => {}
+            Component::Normal(part) => {
+                walk = match openat(
+                    &walk,
+                    part,
+                    OFlag::O_DIRECTORY | OFlag::O_RDONLY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC,
+                    Mode::empty(),
+                ) {
+                    Ok(fd) => fd,
+                    Err(Errno::ENOENT) => return Ok(None),
+                    Err(error) => return Err(error.into()),
+                };
+            }
+            _ => return Ok(None),
+        }
+    }
+    match openat(
+        &walk,
+        "compose-env",
+        OFlag::O_DIRECTORY | OFlag::O_RDONLY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC,
+        Mode::empty(),
+    ) {
+        Ok(fd) => Ok(Some(fd)),
+        Err(Errno::ENOENT) => Ok(None),
+        Err(error) => Err(error.into()),
     }
 }
 

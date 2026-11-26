@@ -212,6 +212,19 @@ pub(super) fn fmt_runner_error(
         } => write_task_command_failure(f, command, code, stdout, stderr),
         RunnerError::TaskLockConflict(details) => write_lock_conflict(f, details),
         RunnerError::RunAdmission { message, .. } => f.write_str(message),
+        RunnerError::PredecessorUnsettled {
+            run,
+            effects,
+            context,
+        } => {
+            if let Some(context) = context {
+                write!(f, "{context}: ")?;
+            }
+            write!(
+                f,
+                "run {run} has {effects} unsettled effect(s) from incomplete cleanup\nnext: Inspect with `effigy run status {run}`, verify its processes are gone, then run `effigy run acknowledge {run}`"
+            )
+        }
         RunnerError::AdmissionRefused { detail, .. }
         | RunnerError::RunDeadline { detail, .. }
         | RunnerError::RunControl { detail, .. } => f.write_str(detail),

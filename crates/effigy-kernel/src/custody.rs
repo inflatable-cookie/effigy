@@ -256,18 +256,41 @@ struct DiscardRecord {
     discard_v1: ProcessRecord,
 }
 impl StoredProcessRecord {
-    fn into_record(self) -> ProcessRecord {
+    fn into_parts(self) -> (ProcessRecord, Option<Value>) {
         match self {
-            Self::Discard { discard_v1 } => discard_v1,
+            Self::Discard { discard_v1 } => (discard_v1, None),
             Self::Interpolated {
-                interpolation_v1, ..
-            } => interpolation_v1,
+                interpolation_v1,
+                binding,
+            } => (interpolation_v1, Some(binding)),
             Self::InterpolatedDiscard {
-                interpolation_v1, ..
-            } => interpolation_v1.discard_v1,
-            Self::Legacy(record) => record,
+                interpolation_v1,
+                binding,
+            } => (interpolation_v1.discard_v1, Some(binding)),
+            Self::Legacy(record) => (record, None),
         }
     }
+
+    fn into_record(self) -> ProcessRecord {
+        self.into_parts().0
+    }
+}
+
+pub(crate) struct ResidueReceipt {
+    pub process: ProcessReceipt,
+    pub anchor: Option<ProcessIdentity>,
+    pub binding: Option<Value>,
+}
+
+pub(crate) fn residue_receipt(effect: &Effect) -> Option<ResidueReceipt> {
+    let value = effect.receipt.as_ref()?;
+    let record: StoredProcessRecord = serde_json::from_value(value.clone()).ok()?;
+    let (record, binding) = record.into_parts();
+    Some(ResidueReceipt {
+        process: record.process,
+        anchor: record.anchor,
+        binding,
+    })
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Exit {

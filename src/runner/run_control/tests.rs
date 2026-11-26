@@ -1668,3 +1668,101 @@ fn a_parked_foreground_holder_names_the_release_command() {
     let warnings = memory.close(effigy_kernel::outcome::WorkloadOutcome::Interrupted);
     assert!(warnings.is_empty(), "{warnings:?}");
 }
+
+fn acknowledge(checkout: &Path, run: &str, json: bool) -> Result<String, RunnerError> {
+    run_runs(RunsArgs {
+        repo_override: Some(checkout.to_path_buf()),
+        output_json: json,
+        action: RunsAction::Acknowledge {
+            run: run.to_owned(),
+        },
+    })
+}
+
+/// `effigy run acknowledge <RUN_ID>` refuses while any recorded process PID is
+/// alive (without signalling it), surfaces the hint on `run status`, and then
+/// sets `runs.residue_ack` via the kernel store once dead so subsequent runs admit.
+#[test]
+fn run_acknowledge_refuses_live_pid_then_clears_residue_and_reports_json_and_text() {
+    let directory = tempfile::tempdir().expect("checkout");
+    let target = target(directory.path(), "ack-control");
+    let request = || TaskRunRequest {
+        target: &target,
+        lock_wait_ms: 0,
+        custody: true,
+        scratch: false,
+        managed_run_token: None,
+        args: &[],
+        key: None,
+        admission: None,
+        cwd: None,
+    };
+    let run = TaskRun::begin(request()).expect("initial run admitted");
+    let id = run.id();
+    let warnings = run.close(effigy_kernel::outcome::WorkloadOutcome::Succeeded);
+    assert!(warnings.is_empty(), "{warnings:?}");
+
+    let mut live_child = std::process::Command::new("/bin/sleep")
+        .arg("30")
+        .spawn()
+        .expect("spawn sleep");
+    let live_pid = live_child.id();
+    let live_identity = effigy_kernel::ident::process_identity(live_pid)
+        .verified()
+        .cloned()
+        .expect("live child identity");
+    let live_json = serde_json::to_string(&live_identity).expect("serialize live identity");
+
+    let state_root = checkout_effects_root(directory.path()).expect("effects root");
+    {
+        let conn =
+            rusqlite::Connection::open(state_root.path().join(effigy_kernel::store::DB_NAME))
+                .expect("open db");
+        conn.execute(
+            "UPDATE runs SET phase='closed', cleanup_outcome='incomplete', residue_ack=NULL, \
+             owner_identity=NULL, supervisor_identity=NULL, sentinel_identity=?2 WHERE run_id=?1",
+            rusqlite::params![id.to_string(), live_json],
+        )
+        .expect("stage closed incomplete run");
+    }
+
+    let status_text = run_runs(RunsArgs {
+        repo_override: Some(directory.path().to_path_buf()),
+        output_json: false,
+        action: RunsAction::Status {
+            run: id.to_string(),
+        },
+    })
+    .expect("run status");
+    assert!(
+        status_text.contains(&format!("effigy run acknowledge {id}")),
+        "{status_text}"
+    );
+
+    let refused =
+        acknowledge(directory.path(), &id.to_string(), false).expect_err("live pid must refuse");
+    let detail = refused.to_string();
+    assert!(detail.contains(&live_pid.to_string()), "{detail}");
+    assert!(detail.contains("signals nothing"), "{detail}");
+
+    let _ = live_child.kill();
+    let _ = live_child.wait();
+
+    let json_text =
+        acknowledge(directory.path(), &id.to_string(), true).expect("acknowledge json succeeds");
+    let payload: serde_json::Value = serde_json::from_str(&json_text).expect("valid json");
+    assert_eq!(payload["schema"], "effigy.run.v1");
+    assert_eq!(payload["schema_version"], 1);
+    assert_eq!(payload["acknowledged"], true);
+    assert_eq!(payload["run"], id.to_string());
+    assert!(payload["acknowledged_at_epoch_ms"].as_i64().is_some());
+    assert_eq!(payload["removed_interpolation_files"], serde_json::json!([]));
+
+    let again =
+        acknowledge(directory.path(), &id.to_string(), false).expect_err("second ack must refuse");
+    assert!(again.to_string().contains("already acknowledged"), "{again}");
+
+    let successor = TaskRun::begin(request()).expect("acknowledged run unblocks successor");
+    let warnings = successor.close(effigy_kernel::outcome::WorkloadOutcome::Succeeded);
+    assert!(warnings.is_empty(), "{warnings:?}");
+}

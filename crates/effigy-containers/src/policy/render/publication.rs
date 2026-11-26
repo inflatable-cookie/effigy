@@ -333,7 +333,15 @@ fn with_owner(
         &cleanup,
         &mut adapter,
     )
-    .map_err(error)?;
+    .map_err(|err| match err {
+        effigy_kernel::run::RunError::PredecessorUnsettled { run, effects } => {
+            ContainerPolicyError::PredecessorUnsettled {
+                run: run.to_string(),
+                effects: effects.len(),
+            }
+        }
+        other => error(other),
+    })?;
     let result = effect(&mut run).map_err(error);
     let outcome = run.settle(&cleanup, &mut adapter).map_err(error)?;
     if outcome.cleanup() != CleanupOutcome::Complete {
