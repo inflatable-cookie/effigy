@@ -551,17 +551,19 @@ composes the existing `build:release` task, and the artifact pattern is
 records its sha256; publish re-hashes that copy, so a task that rebuilt the
 binary instead of using the candidate is refused as §6 requires.
 
-**The task target dispatches, then verification inspects the result.**
-`release:publish:binaries` reads the candidate at `$EFFIGY_RELEASE_INPUT` and
-runs `gh workflow run release-binaries.yml -f tag=<tag>`; it reports
-`committed: true` with the workflow run URL and the GitHub Release as
-destinations, and never waits for the workflow. `release:check:binaries` answers
-§7's idempotency question from `gh release view`. `release:verify:binaries` runs
-after the workflow and checks the four binary assets and four matching checksum
+**The task target dispatches and waits, then verification inspects the result.**
+`release:publish:binaries` reads the candidate at `$EFFIGY_RELEASE_INPUT`,
+runs `gh workflow run release-binaries.yml -f tag=<tag>`, identifies the newly
+dispatched run ID, and waits for that workflow run to complete (unless
+`--no-wait` or `EFFIGY_RELEASE_NO_WAIT=1` is passed for non-blocking manual
+dispatch). On success it reports `committed: true` with the workflow run URL
+and the GitHub Release as destinations; if the workflow fails or cannot be
+tracked, `publish-binaries` fails before `verify` runs, and
+`release:check:binaries` answers §7's idempotency question from `gh release
+view` on `effigy release resume`. `release:verify:binaries` runs after the
+workflow succeeds and checks the four binary assets and four matching checksum
 sidecars on the GitHub Release, the Homebrew formula's version, and the
-tagged-source install through `release:verify:install`. A workflow that has not
-finished therefore leaves the release published but unverified, which §7
-already covers: Effigy never unpublishes, and the receipt records the failure.
+tagged-source install through `release:verify:install`.
 
 **`[distribution]` retires as an ignored section, not a manifest error.** The
 table only configured the retired Effigy-only commands, so dropping it changes

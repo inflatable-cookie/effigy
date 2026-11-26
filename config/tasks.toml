@@ -694,7 +694,7 @@
 "release:artifact" = { visibility = "internal", group = "Release", description = "Build the release binary that certify records as the artifact.", run = [{ task = "build:release" }] }
 "release:verify:install" = { visibility = "public", group = "Release", description = "Prove the tagged-source install of a released binary.", admission = "heavy", run = "sh scripts/release/checks.sh verify-install {args}" }
 "release:verify:binaries" = { visibility = "internal", group = "Release", description = "Verify the published GitHub Release, Homebrew tap and tagged-source install.", admission = "heavy", run = "sh scripts/release/checks.sh verify-binaries {args}" }
-"release:publish:binaries" = { visibility = "internal", group = "Release", description = "Dispatch release-binaries.yml for the release tag and record the run.", run = "sh scripts/release/checks.sh publish-binaries" }
+"release:publish:binaries" = { visibility = "internal", group = "Release", description = "Dispatch release-binaries.yml for the release tag and wait for it to complete.", run = "sh scripts/release/checks.sh publish-binaries {args}" }
 "release:check:binaries" = { visibility = "internal", group = "Release", description = "Report whether this release tag already publishes its binary assets.", run = "sh scripts/release/checks.sh check-binaries" }
 "release:evidence:validate" = { visibility = "public", group = "Release", description = "Validate captured release artifact evidence.", run = "sh scripts/release/checks.sh evidence-validate {args}" }
 "release:evidence:closeout" = { visibility = "public", group = "Release", description = "Write the release closeout record from captured artifacts.", run = "sh scripts/release/checks.sh evidence-closeout {args}" }
