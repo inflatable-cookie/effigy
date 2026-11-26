@@ -114,10 +114,13 @@ pub fn resolve_targets(
         {
             return Err(invalid("invalid relay mount"));
         }
-        let host = m
-            .host
-            .canonicalize()
-            .map_err(|e| invalid(format!("invalid relay mount: {e}")))?;
+        let host = match m.host.canonicalize() {
+            Ok(host) => host,
+            // Runtime inventories can include VM-only sources such as named
+            // volumes; they do not prevent relaying host-visible mounts.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(invalid(format!("invalid relay mount: {e}"))),
+        };
         if !safe_path(&host) {
             return Err(invalid("invalid canonical relay mount"));
         }
@@ -372,5 +375,43 @@ mod tests {
             .expect("resolve mount alias");
         assert_eq!(targets[0].host, real.join("src"));
         assert_eq!(targets[0].guest, PathBuf::from("/data/src"));
+    }
+    #[test]
+    fn missing_observed_mount_does_not_block_valid_mount() {
+        let fixture = tempfile::tempdir().expect("fixture");
+        let repo = fixture.path().join("repo");
+        std::fs::create_dir(&repo).expect("workspace");
+        let repo = repo.canonicalize().expect("canonical workspace");
+        let missing = fixture.path().join("vm-only");
+        let mut policy = crate::policy::model::test_policy(&repo);
+        let mounts = [
+            ServiceMount {
+                service: "app".into(),
+                container: "one".into(),
+                host: missing.clone(),
+                guest: "/data".into(),
+                writable: true,
+            },
+            ServiceMount {
+                service: "app".into(),
+                container: "one".into(),
+                host: repo.clone(),
+                guest: "/workspace".into(),
+                writable: true,
+            },
+        ];
+        let targets = resolve_targets(&policy, Path::new("/workspace"), &mounts, true)
+            .expect("valid target remains available");
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].host, repo);
+        assert_eq!(targets[0].guest, PathBuf::from("/workspace"));
+
+        policy.declared_mounts = vec![format!("{}:/data", missing.display())];
+        policy.fs_events.paths = vec![missing.to_str().expect("utf8 path").into()];
+        let error = resolve_targets(&policy, Path::new("/workspace"), &mounts, true)
+            .expect_err("missing explicit mount is refused");
+        assert!(error
+            .to_string()
+            .contains("relay path outside running writable mounts"));
     }
 }
