@@ -365,6 +365,47 @@ fn a_nerdctl_render_quotes_exec_form_health_checks_and_docker_keeps_them() {
     });
 }
 
+/// A catalog MariaDB renders under an init process on both backends, so the
+/// children its periodic health check leaves are reaped instead of becoming
+/// zombies under mariadbd (effigy#1130). The health check itself stays exact.
+#[test]
+fn a_mariadb_render_runs_under_an_init_process_on_both_backends() {
+    let (_fixture, checkout, home) = fixture_before_migration();
+    std::fs::write(
+        checkout.join("effigy.toml"),
+        "[containers]\ndefault = \"web\"\n\n[containers.web]\nprimary_service = \"db\"\n\n[containers.web.services.db]\ncatalog = \"mariadb\"\nversion = \"10.11\"\n",
+    )
+    .unwrap();
+    crate::with_test_effigy_home(&home, || {
+        for backend in [
+            crate::compose::ComposeBackend::ColimaNerdctl,
+            crate::compose::ComposeBackend::Docker,
+        ] {
+            let policy = crate::compose::with_test_compose_backend(backend, || {
+                crate::tests::fixture_prepared_policy(&checkout, Some("web")).unwrap()
+            });
+            let document: serde_yaml::Value =
+                serde_yaml::from_str(&policy.read_compose(&policy.compose_files[0]).unwrap())
+                    .unwrap();
+            let db = &document["services"]["db"];
+            assert_eq!(
+                db["init"],
+                serde_yaml::Value::Bool(true),
+                "{backend:?} renders MariaDB under an init process"
+            );
+            assert_eq!(
+                healthcheck_tests(&policy.read_compose(&policy.compose_files[0]).unwrap())["db"][0],
+                if backend == crate::compose::ComposeBackend::ColimaNerdctl {
+                    "CMD-SHELL"
+                } else {
+                    "CMD"
+                },
+                "{backend:?} keeps the MariaDB health check in its backend's form"
+            );
+        }
+    });
+}
+
 /// The render hands Compose a file that names no restart policy at all, so the
 /// runtime's restart manager cannot settle a container between Compose's create
 /// and start (effigy#383); a policy the stack declares is what Compose reads.

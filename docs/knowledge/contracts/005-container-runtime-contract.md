@@ -2689,3 +2689,31 @@ pass `--force-recreate`), so the corrected check replaces the broken one.
 A catalog check that needs an argument with a space or a metacharacter — a
 `node -e` or `php -r` probe — writes shell form with its own quoting, so it is
 exact on any backend instead of depending on the render's conversion.
+
+## MariaDB catalog init process — 2026-11-26
+
+The MariaDB catalog fragment declares `init: true` on every backend (effigy#1130).
+Its health check runs `healthcheck.sh` every five seconds. The children that
+script leaves behind are reparented to the container's PID 1, which is
+`mariadbd` when no init runs, and `mariadbd` does not reap them, so they stayed
+as zombies on long-lived local containers.
+
+With `init: true`, PID 1 is an init process that reaps orphans and forwards
+signals. Docker runs `docker-init`. `nerdctl` maps the key to `--init`, which
+runs `tini`. The `effigy` Colima profile's VM ships `/usr/local/bin/tini` (nerdctl
+2.4.2), and the `default` profile runs the Docker runtime, so it is not a
+nerdctl target. The entrypoint execs `mariadbd`, and `tini` forwards SIGTERM to
+its child, so a stop still reaches `mariadbd` directly and shuts it down
+gracefully.
+
+The key changes the render digest of every MariaDB stack, shared MariaDB
+included. The next `container up` recreates the MariaDB container once and
+reuses its named data volume. The exec-form health check is rendered as before.
+
+Live proof is outstanding. Offline checks confirm the render and the Docker
+Compose parse (`docker compose config` keeps `init: true`). This checkout's
+`nerdctl compose config` cannot run here, because it needs a rootless
+containerd. Before this reaches any shared MariaDB, prove a disposable
+containerd profile: the container starts with a `tini` PID 1, zombie count stays
+flat across several health-check intervals, and a stop shuts `mariadbd` down
+cleanly. Do not run that proof against a live Acowtancy stack.
