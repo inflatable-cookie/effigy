@@ -1390,6 +1390,11 @@ fn release_checks_verify_install_normalizes_scp_git_urls() {
             "https://github.com/inflatable-cookie/effigy.git",
             "https://github.com/inflatable-cookie/effigy.git",
         ),
+        (
+            "local",
+            "/tmp/dev@host:repo",
+            "/tmp/dev@host:repo",
+        ),
     ] {
         let root = temp_workspace(&format!("release-checks-verify-install-{label}"));
         super::support::write_effigy_release_root_marker(&root);

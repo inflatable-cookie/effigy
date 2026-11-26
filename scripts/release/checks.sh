@@ -153,9 +153,14 @@ normalize_git_url() {
   case "$url" in
     *@*:*)
       hostpart=${url%%:*}
-      pathpart=${url#*:}
-      printf 'ssh://%s/%s\n' "$hostpart" "$pathpart"
-      return 0
+      case "$hostpart" in
+        */*) ;; # a path separator before the colon means a local path
+        *)
+          pathpart=${url#*:}
+          printf 'ssh://%s/%s\n' "$hostpart" "$pathpart"
+          return 0
+          ;;
+      esac
       ;;
   esac
   printf '%s\n' "$url"
