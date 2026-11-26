@@ -203,6 +203,102 @@ fn detached_json_failure_keeps_the_stage_identity_and_sanitized_cause() {
 }
 
 #[test]
+fn detached_json_host_dependency_drift_keeps_its_recovery_and_refusal_kind() {
+    let policy = test_policy(Vec::new());
+    let operation = DetachedOperationState {
+        active: true,
+        stage: Some("runtime_integrations"),
+        identity: Some(detached_activation_identity(&policy)),
+        ..Default::default()
+    };
+    let remediation =
+        "Run `bun install --frozen-lockfile` or `effigy bootstrap`, then rerun the container start.";
+    let failure = detached_activation_failure(
+        &operation,
+        true,
+        RunnerError::HostDependencyDrift {
+            detail: "JavaScript dependencies for `/repo/apps/web` disagree with `bun.lock`: `praxis` is installed at 0.6.0 but the lock resolves 0.7.1. Effigy refused to launch this environment's managed host processes because a stale install can fail after launch.".to_owned(),
+            remediation: remediation.to_owned(),
+        },
+    );
+    let human = failure.human_error();
+    assert_eq!(
+        human.what_failed(),
+        "Host JavaScript dependencies have drifted"
+    );
+    assert_eq!(human.next_action_text(), Some(remediation));
+    assert!(
+        human
+            .explanation_lines()
+            .join(" ")
+            .contains("Backing containers were started and left running."),
+        "{:?}",
+        human.explanation_lines()
+    );
+    let RunnerError::StructuredCommandFailure(failure) = failure else {
+        panic!("detached JSON mode must render a machine failure");
+    };
+    let document: serde_json::Value = failure.json_value();
+    let message = document["message"].as_str().expect("message");
+    assert!(
+        message.starts_with("Host JavaScript dependencies have drifted:"),
+        "{message}"
+    );
+    assert!(message.contains(remediation), "{message}");
+    assert_eq!(document["failure_kind"], "invocation_refusal");
+    assert_eq!(document["recovery"], remediation);
+    assert_eq!(document["remediation"], remediation);
+    let cause = document["cause"].as_str().expect("cause");
+    assert!(cause.contains("`praxis`"), "{cause}");
+    assert!(cause.contains("`bun.lock`"), "{cause}");
+    assert!(cause.contains(remediation), "{cause}");
+    assert!(
+        cause.contains("Backing containers were started and left running."),
+        "{cause}"
+    );
+}
+
+#[test]
+fn detached_text_host_dependency_drift_only_notes_started_backing_containers() {
+    let host_drift = || RunnerError::HostDependencyDrift {
+        detail: "JavaScript dependencies for `/repo/apps/web` disagree with `bun.lock`: `praxis` is installed at 0.6.0 but the lock resolves 0.7.1. Effigy refused to launch this environment's managed host processes because a stale install can fail after launch.".to_owned(),
+        remediation: "Run `bun install --frozen-lockfile`, then rerun the container start.".to_owned(),
+    };
+    let policy = test_policy(Vec::new());
+    let operation = DetachedOperationState {
+        active: true,
+        stage: Some("preparation"),
+        identity: Some(detached_activation_identity(&policy)),
+        ..Default::default()
+    };
+    let preparation = detached_activation_failure(&operation, false, host_drift()).human_error();
+    assert_eq!(
+        preparation.what_failed(),
+        "Host JavaScript dependencies have drifted"
+    );
+    assert!(
+        !preparation
+            .render_text()
+            .contains("Backing containers were started and left running."),
+        "{}",
+        preparation.render_text()
+    );
+
+    let operation = DetachedOperationState {
+        stage: Some("readiness"),
+        ..operation
+    };
+    let after_compose = detached_activation_failure(&operation, false, host_drift()).human_error();
+    assert!(
+        after_compose
+            .render_text()
+            .contains("Backing containers were started and left running."),
+        "{}",
+        after_compose.render_text()
+    );
+}
+
+#[test]
 fn lifecycle_progress_contract_cases() {
     concise_container_progress_transcript();
     annotate_shared_service_notes_adds_text_and_json();

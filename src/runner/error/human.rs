@@ -530,8 +530,7 @@ fn detached_activation_failed(container: Option<&str>, cause: &RunnerError) -> H
         remediation,
     } = cause
     {
-        return host_dependency_drift(detail, remediation)
-            .explain("Any backing containers already started were left running.");
+        return host_dependency_drift(detail, remediation);
     }
 
     let headline = match container {
