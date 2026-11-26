@@ -1008,6 +1008,13 @@ debounce_ms = 100
 services = ["app"]    # default: every service
 ```
 
+`paths` are subpaths of writable bind mounts, relative to the checkout unless
+absolute; each must resolve inside a running writable mount. `services` filters
+the receiving services. `ignore` adds glob patterns to the built-in ignores
+`.git`, `node_modules`, `vendor`, `target`, and `.effigy/runtime`; it does not
+replace them. `debounce_ms` coalesces repeated events for the same path,
+defaults to 100 ms, and must be greater than zero.
+
 | Command | `auto` | `on` |
 | --- | --- | --- |
 | `effigy dev` with a client attached | relay for the session, on a terminal | relay for the session |
@@ -1015,8 +1022,19 @@ services = ["app"]    # default: every service
 | `container up --detach` | nothing starts | relay stays with the stack |
 | CI, no terminal, ephemeral clone | nothing starts | relay |
 
-`off` never relays. Native Linux Docker and OrbStack already deliver host
-events, so the relay does nothing there.
+`auto` enables a session relay for interactive `dev`, foreground `container up`
+and `shell` when a terminal is attached. It stays off for detached `up`, CI,
+headless commands, and ephemeral clones. Explicit `on` requests relay for those
+cases too, if a writable target exists, except inside a guest or when the
+backend already provides native inotify. `off` never relays. Linux Docker and OrbStack already deliver host
+events, so Effigy reports a no-op there, including when explicitly set to `on`.
+
+The guest signal preserves the file's current permission mode by applying that
+same mode after a host change. This produces an `IN_ATTRIB` event in the guest;
+watchers that ignore `IN_ATTRIB` may not react. The relay avoids feedback in two
+places: the host watcher forwards create, data, rename, and remove events, not
+metadata-only events such as the chmod signal; and it ignores Effigy's own
+`.effigy/runtime` relay records and stream state.
 
 One environment has one relay at a time, and a running stack relay is reused.
 The stack relay is a supervised host process: `container down`, `reset`,
@@ -1025,6 +1043,7 @@ The stack relay is a supervised host process: `container down`, `reset`,
 
 If the Colima profile also has `mountInotify: true`, both relays run and
 `doctor` warns. Set `mountInotify: false` at your next planned profile restart.
+For the machine-readable status shape, see [JSON payload examples](026-json-payload-examples.md#container-status-effigycontainerstatusv1).
 
 ## External Host Mounts
 

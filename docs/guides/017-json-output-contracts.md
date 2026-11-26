@@ -219,6 +219,9 @@ Operator workflow and recovery: [`077-local-dependency-linking.md`](077-local-de
 - `effigy.artifact.stage.v1` (`state artifact stage --json`)
 - `effigy.artifact.capture.v1` (`state artifact capture --json`)
 - `effigy.container.restart.v1` (`container <NAME> restart --json`)
+- `effigy.container.status.v1` (`container <NAME> status --json`), including
+  the additive `fs_events` object (`mode`, `state`, `reason`, `owner`, `pid`,
+  and runtime-observed `targets`)
 - `effigy.container.hosts.v1`
 - `effigy.container.retire.v1`
 - `effigy.container.retire-dead.v1` (`container retire --dead --json`)
