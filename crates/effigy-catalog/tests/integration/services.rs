@@ -641,6 +641,32 @@ fn every_catalog_healthcheck_names_only_tools_its_image_ships() {
     }
 }
 
+/// MariaDB's periodic health check leaves child processes behind. Under a PID 1
+/// that does not reap, those become zombies, so the assembled service must run
+/// an init process on every backend (effigy#1130).
+#[test]
+fn mariadb_assembles_with_an_init_process_that_reaps_health_check_children() {
+    let assembler = ComposeAssembler::new(bundled_resolver());
+    let services = vec![ServiceDeclaration {
+        name: "db".to_string(),
+        catalog: "mariadb".to_string(),
+        params: HashMap::new(),
+        variant: None,
+        config: None,
+    }];
+    let result = assembler
+        .assemble(&services, "init-check", ".", ".effigy-catalog", 1000, 1000)
+        .unwrap();
+    let doc = validate_compose_structure(&result.compose_yaml);
+    let db = validate_service(&doc, "db");
+    assert_eq!(
+        db.get("init"),
+        Some(&serde_yaml::Value::Bool(true)),
+        "mariadb must run under an init process:\n{}",
+        result.compose_yaml
+    );
+}
+
 /// A check is exact on every backend only when the fragment writes shell form
 /// itself, or keeps every `CMD` exec-form argument a plain shell word.
 ///
