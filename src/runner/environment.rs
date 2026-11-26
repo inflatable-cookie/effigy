@@ -1454,9 +1454,15 @@ mod tests {
             .map(|_| ())
             .map_err(error)
             .expect_err("residue run must block container up");
-        assert!(matches!(up_err, RunnerError::PredecessorUnsettled { .. }), "{up_err:?}");
+        assert!(
+            matches!(up_err, RunnerError::PredecessorUnsettled { .. }),
+            "{up_err:?}"
+        );
         assert!(up_err.to_string().contains(&expected_hint), "{up_err}");
-        assert!(!up_err.to_string().contains("stop what holds it"), "{up_err}");
+        assert!(
+            !up_err.to_string().contains("stop what holds it"),
+            "{up_err}"
+        );
         let up_human = up_err.human_error().render_text();
         assert!(up_human.contains(&expected_hint), "{up_human}");
 
@@ -1468,7 +1474,10 @@ mod tests {
             "{down_err:?}"
         );
         assert!(down_err.to_string().contains(&expected_hint), "{down_err}");
-        assert!(file_path.exists(), "orphaned env file stays until acknowledged");
+        assert!(
+            file_path.exists(),
+            "orphaned env file stays until acknowledged"
+        );
 
         let ack_json = crate::runner::run_control::run_runs(effigy_cli::RunsArgs {
             repo_override: Some(fixture.repo_root.clone()),

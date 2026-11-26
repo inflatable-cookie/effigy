@@ -2,8 +2,8 @@
 //!
 //! Engines supply effect observations and idempotent undo. A `Run` is the only
 //! writer of its journal; dropping it releases liveness, never claims cleanup.
-mod aliases;
 mod acknowledge;
+mod aliases;
 pub use acknowledge::{acknowledge_residue, AcknowledgeOutcome, SkippedInterpolationCleanup};
 mod attachments;
 mod children;

@@ -427,7 +427,10 @@ mod tests {
             effects: 1,
         };
         let msg = err.to_string();
-        assert!(msg.contains(&format!("effigy run acknowledge {run_id}")), "{msg}");
+        assert!(
+            msg.contains(&format!("effigy run acknowledge {run_id}")),
+            "{msg}"
+        );
         assert!(!msg.contains("stop what holds it"), "{msg}");
     }
 }

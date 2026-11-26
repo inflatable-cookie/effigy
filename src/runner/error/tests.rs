@@ -1648,7 +1648,10 @@ fn predecessor_unsettled_names_acknowledge_and_detached_failure_promotes_it() {
         context: Some("container environment"),
     };
     let display = error.to_string();
-    assert!(display.contains(&format!("effigy run acknowledge {run_id}")), "{display}");
+    assert!(
+        display.contains(&format!("effigy run acknowledge {run_id}")),
+        "{display}"
+    );
     assert!(!display.contains("stop what holds it"), "{display}");
     let human = error.human_error();
     assert!(
@@ -1661,13 +1664,18 @@ fn predecessor_unsettled_names_acknowledge_and_detached_failure_promotes_it() {
 
     let wrapped = RunnerError::wrap_detached_activation(
         Some("web".to_owned()),
-        RunnerError::from(effigy_containers::ContainerPolicyError::PredecessorUnsettled {
-            run: run_id.to_owned(),
-            effects: 1,
-        }),
+        RunnerError::from(
+            effigy_containers::ContainerPolicyError::PredecessorUnsettled {
+                run: run_id.to_owned(),
+                effects: 1,
+            },
+        ),
     );
     let rendered = wrapped.human_error().render_text();
-    assert!(rendered.contains(&format!("effigy run acknowledge {run_id}")), "{rendered}");
+    assert!(
+        rendered.contains(&format!("effigy run acknowledge {run_id}")),
+        "{rendered}"
+    );
     assert!(!rendered.contains("stop what holds it"), "{rendered}");
     assert!(
         !rendered.contains("Run effigy container up --detach"),

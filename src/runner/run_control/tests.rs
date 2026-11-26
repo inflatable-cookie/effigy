@@ -1756,12 +1756,21 @@ fn run_acknowledge_refuses_live_pid_then_clears_residue_and_reports_json_and_tex
     assert_eq!(payload["acknowledged"], true);
     assert_eq!(payload["run"], id.to_string());
     assert!(payload["acknowledged_at_epoch_ms"].as_i64().is_some());
-    assert_eq!(payload["removed_interpolation_files"], serde_json::json!([]));
-    assert_eq!(payload["skipped_interpolation_files"], serde_json::json!([]));
+    assert_eq!(
+        payload["removed_interpolation_files"],
+        serde_json::json!([])
+    );
+    assert_eq!(
+        payload["skipped_interpolation_files"],
+        serde_json::json!([])
+    );
 
     let again =
         acknowledge(directory.path(), &id.to_string(), false).expect_err("second ack must refuse");
-    assert!(again.to_string().contains("already acknowledged"), "{again}");
+    assert!(
+        again.to_string().contains("already acknowledged"),
+        "{again}"
+    );
 
     let successor = TaskRun::begin(request()).expect("acknowledged run unblocks successor");
     let warnings = successor.close(effigy_kernel::outcome::WorkloadOutcome::Succeeded);
@@ -1925,7 +1934,12 @@ fn run_acknowledge_reports_skipped_pending_interpolation_and_distinguishes_termi
         .expect("gate scopes")
         .flatten()
         .filter(|entry| entry.path().is_dir())
-        .flat_map(|scope| std::fs::read_dir(scope.path()).into_iter().flatten().flatten())
+        .flat_map(|scope| {
+            std::fs::read_dir(scope.path())
+                .into_iter()
+                .flatten()
+                .flatten()
+        })
         .find_map(|gate| {
             let body = std::fs::read_to_string(gate.path()).ok()?;
             let value: serde_json::Value = serde_json::from_str(&body).ok()?;

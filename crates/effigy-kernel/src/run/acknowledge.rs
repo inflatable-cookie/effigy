@@ -249,7 +249,9 @@ fn read_run_row(conn: &rusqlite::Connection, id: RunId) -> Result<StoredRunRow, 
             },
         )
         .optional()?
-        .ok_or_else(|| RunError::refused(format!("run {id} was not found in this checkout journal")))?;
+        .ok_or_else(|| {
+            RunError::refused(format!("run {id} was not found in this checkout journal"))
+        })?;
 
     let invocation = row
         .3
@@ -702,7 +704,10 @@ mod tests {
         let refused =
             acknowledge_residue(&cx, &root, super::super::tests::id(1), Some(&effigy_home))
                 .expect_err("live owner_identity must refuse acknowledgement");
-        assert!(refused.to_string().contains(&owner_pid.to_string()), "{refused}");
+        assert!(
+            refused.to_string().contains(&owner_pid.to_string()),
+            "{refused}"
+        );
         assert!(env_dir.join("compose-fixture.env").exists());
 
         // Simulate the crashed owner & detached supervisor process having exited cleanly.
@@ -832,15 +837,14 @@ mod tests {
                 .unwrap();
         }
 
-        let refused = acknowledge_residue(&cx, &root, super::super::tests::id(1), Some(&effigy_home))
-            .expect_err("must refuse acknowledgement while recorded sentinel PID is alive");
+        let refused =
+            acknowledge_residue(&cx, &root, super::super::tests::id(1), Some(&effigy_home))
+                .expect_err("must refuse acknowledgement while recorded sentinel PID is alive");
         let detail = refused.to_string();
         assert!(detail.contains(&live_pid.to_string()), "{detail}");
         assert!(detail.contains("signals nothing"), "{detail}");
         assert!(
-            effigy_home
-                .join("compose-env/compose-fixture.env")
-                .exists(),
+            effigy_home.join("compose-env/compose-fixture.env").exists(),
             "refused acknowledgement must leave orphaned interpolation file untouched"
         );
 
@@ -851,9 +855,7 @@ mod tests {
             acknowledge_residue(&cx, &root, super::super::tests::id(1), Some(&effigy_home))
                 .expect("once the recorded process exits, acknowledgement succeeds");
         assert_eq!(outcome.run, super::super::tests::id(1));
-        assert!(!effigy_home
-            .join("compose-env/compose-fixture.env")
-            .exists());
+        assert!(!effigy_home.join("compose-env/compose-fixture.env").exists());
     }
 
     #[test]
@@ -879,7 +881,10 @@ mod tests {
         .unwrap();
         let open_err = acknowledge_residue(&cx, &root, super::super::tests::id(1), None)
             .expect_err("open run cannot be acknowledged");
-        assert!(open_err.to_string().contains("must be closed"), "{open_err}");
+        assert!(
+            open_err.to_string().contains("must be closed"),
+            "{open_err}"
+        );
 
         // 2. Closed + complete run is refused.
         run1.finish(WorkloadOutcome::Succeeded).unwrap();
@@ -888,7 +893,9 @@ mod tests {
         let complete_err = acknowledge_residue(&cx, &root, super::super::tests::id(1), None)
             .expect_err("complete run has no residue");
         assert!(
-            complete_err.to_string().contains("already completed cleanup"),
+            complete_err
+                .to_string()
+                .contains("already completed cleanup"),
             "{complete_err}"
         );
 
@@ -905,7 +912,9 @@ mod tests {
         fake.unknown = true;
         super::super::tests::apply(&mut run2, &fake, "owned");
         run2.finish(WorkloadOutcome::Succeeded).unwrap();
-        let settled = run2.settle(&super::super::tests::cleanup(&cx), &mut fake).unwrap();
+        let settled = run2
+            .settle(&super::super::tests::cleanup(&cx), &mut fake)
+            .unwrap();
         assert_eq!(settled.cleanup(), CleanupOutcome::Incomplete);
 
         acknowledge_residue(&cx, &root, super::super::tests::id(2), None)
@@ -1047,9 +1056,13 @@ mod tests {
 
         setup_closed_incomplete_interpolated_run(home.path(), &cx, &root, &owner, &effigy_home);
 
-        // Replace compose-fixture.env with a distinct inode so the recorded stamp mismatches.
+        // Move the original file outside compose-env without unlinking it first so its
+        // inode remains allocated, guaranteeing the replacement file gets a distinct inode
+        // even on filesystems that immediately reuse recently freed inodes.
         let file_path = effigy_home.join("compose-env/compose-fixture.env");
-        std::fs::remove_file(&file_path).unwrap();
+        let original_inode = std::fs::metadata(&file_path).unwrap().ino();
+        let kept_original = effigy_home.join("kept-original.env");
+        std::fs::rename(&file_path, &kept_original).unwrap();
         {
             let _replacement = std::fs::OpenOptions::new()
                 .write(true)
@@ -1058,6 +1071,11 @@ mod tests {
                 .open(&file_path)
                 .unwrap();
         }
+        assert_ne!(
+            std::fs::metadata(&file_path).unwrap().ino(),
+            original_inode,
+            "replacement file must carry a distinct inode"
+        );
 
         let outcome =
             acknowledge_residue(&cx, &root, super::super::tests::id(1), Some(&effigy_home))

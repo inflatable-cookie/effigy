@@ -737,11 +737,12 @@ pub(in crate::runner) fn acknowledge_run(
     let cx = kernel::effects();
     let effigy_home = effigy_containers::effigy_home()
         .or_else(|| kernel::state_home_path().map(|home| home.join(".effigy")));
-    effigy_kernel::run::acknowledge_residue(&cx, &root, record.id, effigy_home.as_deref())
-        .map_err(|error| match error {
+    effigy_kernel::run::acknowledge_residue(&cx, &root, record.id, effigy_home.as_deref()).map_err(
+        |error| match error {
             effigy_kernel::run::RunError::Refused(detail) => RunnerError::task_invocation(detail),
             other => RunnerError::task_invocation(other.to_string()),
-        })
+        },
+    )
 }
 
 /// Bound for one journal poll while following or stopping: one cheap read of
