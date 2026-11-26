@@ -16,7 +16,7 @@ impl EventFilter {
         let mut builder = GlobSetBuilder::new();
         for pattern in DEFAULT_FS_EVENTS_IGNORES
             .iter()
-            .map(|s| *s)
+            .copied()
             .chain(extra.iter().map(String::as_str))
         {
             let pattern = pattern.trim_matches('/');
