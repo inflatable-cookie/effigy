@@ -120,6 +120,16 @@ pub(in crate::runner) fn effect_context(reason: OpenReason) -> EffectContext {
         .expect("mutate context has effects")
 }
 
+/// An effect context that expires after `budget`.
+pub(in crate::runner) fn bounded_effect_context(budget: Duration) -> EffectContext {
+    operation(
+        EffectClass::Mutate,
+        Deadline::At(std::time::Instant::now() + budget),
+    )
+    .effects()
+    .expect("mutate context has effects")
+}
+
 /// An Observe context bounded by `budget`, for an engine's probes.
 pub(in crate::runner) fn observe_context(budget: Duration) -> ObserveContext {
     let observe = operation(

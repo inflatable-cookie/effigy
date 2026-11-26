@@ -490,6 +490,7 @@ pub fn status_report(
         "services": services,
         "compose_ps": compose_ps,
         "media_mounts": policy.declared_media_mounts,
+        "fs_events": crate::fs_relay::state::fs_events_status(policy),
     });
 
     let mut lines = vec![

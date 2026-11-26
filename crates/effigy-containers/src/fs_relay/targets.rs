@@ -168,10 +168,16 @@ pub fn resolve_targets(
             if let Some(index) = index {
                 matched_paths[index] = true;
             }
-            let guest = m.guest.join(
-                root.strip_prefix(&host)
-                    .map_err(|_| invalid("relay path outside mount"))?,
-            );
+            // Collecting components drops the trailing separator that
+            // joining an empty relative path adds.
+            let guest = m
+                .guest
+                .join(
+                    root.strip_prefix(&host)
+                        .map_err(|_| invalid("relay path outside mount"))?,
+                )
+                .components()
+                .collect::<PathBuf>();
             candidates.push(RelayTarget {
                 service: m.service.clone(),
                 container: m.container.clone(),

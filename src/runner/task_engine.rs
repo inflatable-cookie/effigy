@@ -33,6 +33,7 @@ pub(in crate::runner) use control::{
 };
 pub(in crate::runner) use holders::{live_holders, HolderKind};
 pub(in crate::runner) use identity::TaskTarget;
+pub(in crate::runner) use kernel::bounded_effect_context;
 pub(in crate::runner) use kernel::shared_service_gate;
 pub use kernel::{adopt_signal_router, capture_startup_executable, run_internal_kernel_entry};
 pub(in crate::runner) use legacy::legacy_families;

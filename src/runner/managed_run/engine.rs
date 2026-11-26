@@ -15,6 +15,8 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use effigy_containers::fs_relay::detect::Invocation;
+use effigy_containers::fs_relay::host::FsRelaySession;
 use effigy_core::managed_waits::{
     should_publish, EntryPhase, EntryState, EntryWaits, SessionOrder, WaitOn,
 };
@@ -32,6 +34,7 @@ use super::environment::{self, EnvironmentPlan, Health, NotReady, RouteHealth};
 use super::settlement::{self, Binding, ExecGroupEffect};
 use super::wire::{self, ClientFrame, EngineEvent, Payload};
 use crate::runner::error::RunnerError;
+use crate::runner::fs_relay::RelayInvocation;
 use crate::runner::host_process::{attributed_environment_failure, HostWaitGraph};
 use crate::runner::managed_wait::{WaitLedger, WaitPublisher};
 use crate::runner::task_engine::{self, EnvOverride, TaskRun, TaskRunRequest, TaskTarget};
@@ -239,6 +242,16 @@ pub(in crate::runner) fn own<T>(
         payload,
     } = owner;
     let ansi_front = matches!(payload.front, super::wire::Front::Tui);
+    let attached = !matches!(payload.front, super::wire::Front::Detached);
+    let relay_invocation = RelayInvocation {
+        invocation: if plan.task == "dev" {
+            Invocation::Dev
+        } else {
+            Invocation::Other
+        },
+        attached,
+        interactive_tty: attached && payload.interactive,
+    };
     let _front = crate::runner::managed_color::enter(ansi_front);
     // The commands were rendered against the generation selected at the start
     // of this invocation. The supervisor outlives its client, so it holds that
@@ -340,6 +353,8 @@ pub(in crate::runner) fn own<T>(
         probe_since: None,
         host_waits: None,
         holds_environment: plan.environment.is_some(),
+        relay_invocation,
+        fs_relay: None,
         watch: None,
         terminal: payload.terminal,
         ansi_front,
@@ -359,6 +374,9 @@ struct Owner {
     session: EngineSession,
     workloads: Vec<Workload>,
     holds_environment: bool,
+    relay_invocation: RelayInvocation,
+    /// The session's file-event relay into its environment, while it runs.
+    fs_relay: Option<FsRelaySession>,
     /// The owning client's death, observed during the blocking phases this
     /// owner runs itself (a setup step, a process setup).
     watch: Option<OwnerWatch>,
@@ -505,6 +523,16 @@ impl Owner {
                         hosts.environment_ready(now);
                     }
                     self.health = Some(RouteHealth::new(environment));
+                    // An environment that no longer resolves has nothing to
+                    // relay into; its workloads report that themselves.
+                    if let Ok(policy) = settlement::policy(&environment.repo, &environment.binding)
+                    {
+                        self.fs_relay = crate::runner::fs_relay::start_session(
+                            &environment.repo,
+                            &policy,
+                            self.relay_invocation,
+                        );
+                    }
                 }
                 Err(NotReady::Stopped(cause)) => return Err(End::Stopped(self.cause(cause))),
                 Err(NotReady::Failed(reason)) => {
@@ -1098,6 +1126,8 @@ impl Owner {
         end: End,
     ) -> Result<Option<String>, RunnerError> {
         self.event(&EngineEvent::Stopping);
+        // The relay ends before the settle can stop its environment.
+        drop(self.fs_relay.take());
         // A wait that ends with the run is not a live wait: drop it, and keep
         // the entries that failed or never started, which are the run's
         // terminal, attributed result (effigy#458).

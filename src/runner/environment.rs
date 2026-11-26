@@ -603,6 +603,7 @@ pub(in crate::runner) fn stop_hook_exempting(
 ) -> Result<(), effigy_runtime::EffigyRuntimeError> {
     move |repo_root, policy, effect| {
         stop_exempting(repo_root, policy, op, exempt, |progress| {
+            crate::runner::fs_relay::stop_stack_relay(repo_root, policy);
             report_host_process_stop(
                 crate::runner::host_process::stop_host_processes_for_container(repo_root, policy),
             );
@@ -620,6 +621,7 @@ pub(in crate::runner) fn reset_hook() -> impl Fn(
 ) -> Result<(), effigy_runtime::EffigyRuntimeError> {
     move |repo_root, policy, effect| {
         reset(repo_root, policy, |progress| {
+            crate::runner::fs_relay::stop_stack_relay(repo_root, policy);
             report_host_process_stop(
                 crate::runner::host_process::stop_host_processes_for_container(repo_root, policy),
             );
@@ -932,6 +934,7 @@ fn stop_idle(
 ) -> Result<(), EnvError> {
     let backend = engine::effective_backend(repo_root, policy, run.record().recorded_backend());
     run.stop_with(&backend, &policy.project_name, None, |_| {
+        crate::runner::fs_relay::stop_stack_relay(repo_root, policy);
         effigy_containers::exec::shutdown_container(repo_root, policy)
             .map_err(|error| BackendError::Uncertain(error.to_string()))
     })

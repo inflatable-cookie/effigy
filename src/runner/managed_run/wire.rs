@@ -26,6 +26,9 @@ pub(in crate::runner) struct Payload {
     pub(in crate::runner) state_home: PathBuf,
     /// The TUI's terminal size, for workload terminals.
     pub(in crate::runner) terminal: Option<(u16, u16)>,
+    /// Whether the client's own input and output are a terminal.
+    #[serde(default)]
+    pub(in crate::runner) interactive: bool,
 }
 
 /// A supervisor event for its owning client. Delivery is best effort; every

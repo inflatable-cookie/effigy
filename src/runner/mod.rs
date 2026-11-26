@@ -23,6 +23,7 @@ mod exec_command;
 mod execute;
 mod feedback;
 mod format_command;
+mod fs_relay;
 mod gateway_command;
 mod host_process;
 mod interactive_session;

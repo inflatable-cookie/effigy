@@ -293,7 +293,46 @@ fn collect_runtime_diagnostics_with_advice_mode(
 
     append_workspace_ownership_diagnostics(resolved_root, &policies, deadline, &mut diagnostics);
 
+    append_fs_events_diagnostics(resolved_root, &policies, &mut diagnostics);
+
     Ok(diagnostics)
+}
+
+/// Each environment's file-event relay, a Colima profile still relaying the
+/// same events itself, and a detached relay run that never settled.
+fn append_fs_events_diagnostics(
+    resolved_root: &Path,
+    policies: &[effigy_containers::EffectiveContainerPolicy],
+    diagnostics: &mut DoctorRuntimeDiagnostics,
+) {
+    for policy in policies {
+        let status = crate::runner::fs_relay::observed_status(resolved_root, policy);
+        diagnostics.evidence.push(format!(
+            "container `{}` fs-events: {}",
+            policy.name,
+            status.summary()
+        ));
+        let active = matches!(status.state.as_str(), "active" | "reconnecting");
+        let relay_applies = active
+            || (policy.fs_events.mode != effigy_containers::EffectiveFsEventsMode::Off
+                && status.state != "noop");
+        if policy.driver == ManifestContainerDriver::Colima
+            && relay_applies
+            && effigy_containers::colima_profile_mount_inotify(&policy.profile) == Some(true)
+        {
+            diagnostics.warnings.push(format!(
+                "Colima profile `{}` has `mountInotify: true` while container `{}` uses Effigy's `fs_events` relay (mode {}, {}): both relays run until the profile switches to `mountInotify: false` at a planned restart.",
+                policy.profile, policy.name, status.mode, status.state
+            ));
+        }
+        if let Some(run) = crate::runner::fs_relay::unsettled_relay_run(resolved_root, policy) {
+            diagnostics.warnings.push(format!(
+                "container `{name}` detached fs-events relay run {run} is interrupted: its supervisor is gone. Inspect it with `effigy run status {run}`; `effigy container {name} up --detach` replaces it and `effigy container {name} down` removes it.",
+                name = policy.name,
+                run = run
+            ));
+        }
+    }
 }
 
 fn append_colima_profile_diagnostics(
@@ -739,6 +778,61 @@ mod tests {
         compose_backend_with_deadline, diagnose_workspace_ownership, rust_nested_probe_paths,
         WorkspaceOwnershipProbeStatus,
     };
+
+    #[test]
+    fn fs_events_warn_while_the_colima_profile_relays_through_mount_inotify_too() {
+        let _lock = lock_test();
+        let fixture = tempfile::tempdir().expect("fixture");
+        let root = fixture.path().canonicalize().expect("canonical fixture");
+        let profile = root.join("colima/effigy");
+        fs::create_dir_all(&profile).expect("profile directory");
+        let _env = EnvGuard::set_many(&[
+            ("HOME", Some(root.display().to_string())),
+            (
+                "COLIMA_HOME",
+                Some(root.join("colima").display().to_string()),
+            ),
+            ("EFFIGY_COMPOSE_BACKEND", Some("containerd".to_owned())),
+        ]);
+        let mut policy =
+            effective_container_policy("web", "fs-events", "app", root.join("compose.yml"));
+        policy.repo_root = root.clone();
+        let diagnose = |policy: &EffectiveContainerPolicy, mount_inotify: bool| {
+            fs::write(
+                profile.join("colima.yaml"),
+                format!("mountInotify: {mount_inotify}\n"),
+            )
+            .expect("profile config");
+            let mut diagnostics = DoctorRuntimeDiagnostics::default();
+            super::append_fs_events_diagnostics(
+                &root,
+                std::slice::from_ref(policy),
+                &mut diagnostics,
+            );
+            diagnostics
+        };
+
+        let overlapping = diagnose(&policy, true);
+        assert_eq!(
+            overlapping.evidence,
+            ["container `web` fs-events: inactive (not_running, targets=none)"]
+        );
+        assert_eq!(overlapping.warnings.len(), 1, "{:?}", overlapping.warnings);
+        assert!(
+            overlapping.warnings[0].contains("`mountInotify: true`")
+                && overlapping.warnings[0].contains("`mountInotify: false`"),
+            "{:?}",
+            overlapping.warnings
+        );
+        assert!(diagnose(&policy, false).warnings.is_empty());
+        policy.fs_events.mode = effigy_containers::EffectiveFsEventsMode::Off;
+        let off = diagnose(&policy, true);
+        assert!(off.warnings.is_empty(), "{:?}", off.warnings);
+        assert_eq!(
+            off.evidence,
+            ["container `web` fs-events: inactive (explicit_off, targets=none)"]
+        );
+    }
 
     #[test]
     fn docker_context_warning_shows_when_colima_repo_has_no_pinned_containerd_preference() {

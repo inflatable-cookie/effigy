@@ -1,7 +1,7 @@
 use super::down::lifecycle_cleanup_failed_container_up;
 use super::integrations::{
-    ContainerUpRuntimeIntegrations, IntegrationOutcomePolicy, RuntimeIntegrationContext,
-    RuntimeIntegrationState,
+    reconcile_stack_fs_relay, ContainerUpRuntimeIntegrations, IntegrationOutcomePolicy,
+    RuntimeIntegrationContext, RuntimeIntegrationState,
 };
 use super::prepare::{prepare_container_up, prepare_sources_for_container_up};
 use super::report::{
@@ -116,6 +116,9 @@ fn run_container_up_inner(
         &publisher,
         std::time::Instant::now(),
     );
+    // Whether this bring-up may have replaced the containers a running relay
+    // watches into.
+    let applied = std::cell::Cell::new(false);
     let result = (|| {
         operation.active = plan.attach_mode == EffectiveAttachMode::Detached;
         operation.identity = Some(detached_activation_identity(&plan.policy));
@@ -156,6 +159,7 @@ fn run_container_up_inner(
             &plan.policy,
             retention,
             |run, effect, deadline| {
+                applied.set(true);
                 match run_container_up_compose(
                     &plan,
                     &mut compose_steps.borrow_mut(),
@@ -244,7 +248,7 @@ fn run_container_up_inner(
         }
 
         operation.stage = Some("runtime_integrations");
-        let integrations = steps::during(
+        let mut integrations = steps::during(
             ProgressSource::waiting_for("the runtime integrations of this environment"),
             "routes and host listeners registered",
             |progress| {
@@ -281,6 +285,7 @@ fn run_container_up_inner(
             return Err(finish_container_up_failure(failure, cleanup_result));
         }
 
+        reconcile_stack_fs_relay(&plan.policy, repo_root, plan.attach_mode, &mut integrations);
         activation_waits.finish(true)?;
         render_container_up_result(
             repo_root,
@@ -291,6 +296,9 @@ fn run_container_up_inner(
             output_json,
         )
     })();
+    if result.is_err() && applied.get() {
+        crate::runner::fs_relay::stop_stack_relay(repo_root, &plan.policy);
+    }
     activation_waits.finish(result.is_ok())?;
     result
 }

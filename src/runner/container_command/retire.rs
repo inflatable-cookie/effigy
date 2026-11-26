@@ -65,6 +65,7 @@ pub(super) fn run_container_retire(
             yes,
         )?;
     }
+    crate::runner::fs_relay::stop_checkout_stack_relays(&checkout, &owned.projects, None);
     let mut outcome = retire_owned(&checkout, &owned.resources, keep_data)?;
     outcome.kept.splice(0..0, kept.drain(..));
     outcome.gateway = release_gateway(&checkout_label)?;

@@ -6,6 +6,8 @@ use crate::runner::container_command::shell_prep::{
 use crate::runner::container_command::{runtime_error_from_runner, RunnerError};
 use crate::runner::container_runtime::HandoffLocalExecution;
 use crate::runner::exec_command::probe_container_capabilities;
+use crate::runner::fs_relay::RelayInvocation;
+use effigy_containers::fs_relay::detect::Invocation;
 use effigy_containers::EffectiveContainerPolicy;
 use effigy_runtime::shell::{
     container_shell_completion, run_container_shell_with_resolved_session,
@@ -35,6 +37,17 @@ pub(in crate::runner::container_command) fn run_container_shell(
     }
     let (policy, service, working_dir) = resolve_container_shell_session(repo_root, name, service)?;
     maybe_refresh_workspace_effigy_for_shell(repo_root, &policy, &service)?;
+    // An interactive shell relays host file events for as long as it runs.
+    let relay = command
+        .is_none()
+        .then(|| {
+            crate::runner::fs_relay::start_session(
+                repo_root,
+                &policy,
+                RelayInvocation::terminal(Invocation::Shell),
+            )
+        })
+        .flatten();
     let shell_output = run_container_shell_with_resolved_session(
         repo_root,
         &policy,
@@ -43,8 +56,9 @@ pub(in crate::runner::container_command) fn run_container_shell(
         command,
         probe_runtime_shell_capability,
         run_runtime_shell_exec,
-    )
-    .map_err(RunnerError::from)?;
+    );
+    drop(relay);
+    let shell_output = shell_output.map_err(RunnerError::from)?;
     if command.is_none()
         && maybe_confirm_container_shell_exit_cleanup(&policy.name)?.unwrap_or(false)
     {

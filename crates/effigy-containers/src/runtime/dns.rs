@@ -247,6 +247,20 @@ fn bounded_profile_text(path: &Path) -> Result<String, ProfileRead> {
     String::from_utf8(bytes).map_err(|error| ProfileRead::Unreadable(error.to_string()))
 }
 
+/// Whether one Colima profile's own configuration turns on `mountInotify`.
+/// `None` when the profile configuration cannot be read.
+pub fn colima_profile_mount_inotify(profile: &str) -> Option<bool> {
+    let path = colima_home_dir()?.join(profile).join("colima.yaml");
+    let text = bounded_profile_text(&path).ok()?;
+    let document: serde_yaml::Value = serde_yaml::from_str(&text).ok()?;
+    Some(
+        document
+            .get("mountInotify")
+            .and_then(serde_yaml::Value::as_bool)
+            .unwrap_or(false),
+    )
+}
+
 pub(crate) fn colima_home_dir() -> Option<PathBuf> {
     if let Some(home) = std::env::var_os("COLIMA_HOME")
         .filter(|home| !home.is_empty())

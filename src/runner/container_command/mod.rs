@@ -255,6 +255,13 @@ fn run_container_with(
                 args.output_json,
             )
         }
+        ContainerSubcommand::FsRelay { name } => {
+            let context = resolve_active_command_context(args.repo_override.clone())?;
+            crate::runner::fs_relay::run_stack_relay(
+                context.resolved.resolved_root,
+                name.as_deref(),
+            )
+        }
         ContainerSubcommand::Restart { name, processes } => restart::run_container_restart(
             args.repo_override.clone(),
             name.as_deref(),
