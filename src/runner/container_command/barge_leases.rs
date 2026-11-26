@@ -863,8 +863,49 @@ pub(in crate::runner) fn acquire_container_lease_with(
                 max,
                 active,
             } => {
+                if !attempted_full_sweep {
+                    attempted_full_sweep = true;
+                    if started.elapsed() < wait_budget && !announced_wait {
+                        announced_wait = true;
+                        eprintln!(
+                            "{}",
+                            format_lease_wait_notice(
+                                Some(barge),
+                                &profile,
+                                active,
+                                max,
+                                wait_budget,
+                            )
+                        );
+                    }
+                    let sweep_result = sweep_profile_with_mode(
+                        Some(barge),
+                        runtime,
+                        &request.profile,
+                        SweepMode::Full,
+                        SweepLockMode::TryLock,
+                    );
+                    let reclaimed = sweep_result_reclaimed(&sweep_result);
+                    record_try_sweep_notes(sweep_result, &mut last_sweep_notes);
+                    if reclaimed {
+                        continue;
+                    }
+                    if started.elapsed() >= wait_budget {
+                        return Err(lease_pool_full_error(
+                            Some(barge),
+                            &profile,
+                            active,
+                            max,
+                            wait_budget,
+                            &last_sweep_notes,
+                        ));
+                    }
+                    continue;
+                }
+
                 if started.elapsed() >= wait_budget {
                     return Err(lease_pool_full_error(
+                        Some(barge),
                         &profile,
                         active,
                         max,
@@ -875,22 +916,16 @@ pub(in crate::runner) fn acquire_container_lease_with(
                 if !announced_wait {
                     announced_wait = true;
                     eprintln!(
-                        "[info] waiting up to {}s for a container slot on profile `{profile}` ({active}/{max} in use)",
-                        wait_budget.as_secs()
+                        "{}",
+                        format_lease_wait_notice(Some(barge), &profile, active, max, wait_budget)
                     );
                 }
-                let mode = if attempted_full_sweep {
-                    SweepMode::EndedOnly
-                } else {
-                    attempted_full_sweep = true;
-                    SweepMode::Full
-                };
                 record_try_sweep_notes(
                     sweep_profile_with_mode(
                         Some(barge),
                         runtime,
                         &request.profile,
-                        mode,
+                        SweepMode::EndedOnly,
                         SweepLockMode::TryLock,
                     ),
                     &mut last_sweep_notes,
@@ -986,6 +1021,10 @@ pub(in crate::runner) fn hold_existing_lease_with(
     })
 }
 
+fn sweep_result_reclaimed(result: &Result<Option<SweepReport>, RunnerError>) -> bool {
+    matches!(result, Ok(Some(report)) if !report.returned_leases.is_empty())
+}
+
 fn record_try_sweep_notes(
     result: Result<Option<SweepReport>, RunnerError>,
     last_notes: &mut Vec<String>,
@@ -1015,7 +1054,80 @@ fn collect_sweep_notes(result: Result<SweepReport, RunnerError>, last_notes: &mu
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WorkerSlotHolder {
+    project: String,
+    owner: String,
+    ended_reason: Option<&'static str>,
+}
+
+fn resolve_worker_slot_holders(barge: &Barge, profile: &str) -> Vec<WorkerSlotHolder> {
+    // Best-effort diagnostics: unreadable Barge state must never mask a Full error.
+    let Ok(statuses) = barge.container_status() else {
+        return Vec::new();
+    };
+    let mut worker_leases: Vec<ContainerLeaseStatus> = statuses
+        .into_iter()
+        .filter(|lease| lease.profile == profile && lease.class == ContainerClass::Worker)
+        .collect();
+    worker_leases.sort_by(|left, right| {
+        left.project
+            .cmp(&right.project)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    worker_leases
+        .into_iter()
+        .map(|lease| WorkerSlotHolder {
+            owner: describe_container_owner(barge, &lease.owner),
+            ended_reason: lease.ended.map(end_reason_label),
+            project: lease.project,
+        })
+        .collect()
+}
+
+fn describe_container_owner(barge: &Barge, owner: &ContainerOwner) -> String {
+    match owner {
+        ContainerOwner::Worktree(worktree_id) => match barge.worktree_lease_by_id(worktree_id) {
+            Ok(lease) => lease.path,
+            Err(_) => format!("worktree:{worktree_id}"),
+        },
+        ContainerOwner::Checkout(path) => path.display().to_string(),
+    }
+}
+
+fn format_holder_label(holder: &WorkerSlotHolder) -> String {
+    match holder.ended_reason {
+        Some(reason) => format!("{} ({}, ended: {reason})", holder.project, holder.owner),
+        None => format!("{} ({})", holder.project, holder.owner),
+    }
+}
+
+fn format_lease_wait_notice(
+    barge: Option<&Barge>,
+    profile: &str,
+    active: u32,
+    max: u32,
+    wait_budget: Duration,
+) -> String {
+    let holders = barge
+        .map(|account| resolve_worker_slot_holders(account, profile))
+        .unwrap_or_default();
+    if holders.is_empty() {
+        return format!(
+            "[info] waiting up to {}s for a container slot on profile `{profile}` ({active}/{max} in use)",
+            wait_budget.as_secs()
+        );
+    }
+    let summary: Vec<String> = holders.iter().map(format_holder_label).collect();
+    format!(
+        "[info] waiting up to {}s for a container slot on profile `{profile}` ({active}/{max} in use: {})",
+        wait_budget.as_secs(),
+        summary.join(", "),
+    )
+}
+
 fn lease_pool_full_error(
+    barge: Option<&Barge>,
     profile: &str,
     active: u32,
     max: u32,
@@ -1026,6 +1138,15 @@ fn lease_pool_full_error(
         "container lease pool for profile `{profile}` is full ({active}/{max} active worker slots) after waiting {}s",
         wait_budget.as_secs(),
     );
+    let holders = barge
+        .map(|account| resolve_worker_slot_holders(account, profile))
+        .unwrap_or_default();
+    if !holders.is_empty() {
+        message.push_str("\nactive holders:");
+        for holder in &holders {
+            message.push_str(&format!("\n  - {}", format_holder_label(holder)));
+        }
+    }
     if !sweep_notes.is_empty() {
         message.push_str(&format!(
             "\nsweep failures during wait: {}",
@@ -2439,5 +2560,352 @@ mod tests {
         );
         assert_eq!(runtime.running_profiles_count(), 1);
         assert_eq!(runtime.list_containers_count(), 1);
+    }
+
+    #[test]
+    fn full_error_and_wait_notice_name_worktree_and_checkout_holders_and_handle_status_errors() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let state_dir = temp.path().join("barge-state");
+        let mount = temp.path().join("builds-vol");
+        std::fs::create_dir_all(&mount).expect("mkdir mount");
+        let os = Arc::new(FakeOs::with_volume(
+            &mount,
+            "11111111-1111-1111-1111-111111111111",
+            100 * 1024 * 1024 * 1024,
+        ));
+        let clock = Arc::new(ManualClock::new(1_700_000_000_000));
+        let barge = Barge::open_with(&state_dir, os, clock).expect("open barge");
+
+        barge
+            .register_volume(
+                barge::VolumeRegistration::new("Builds", mount.clone())
+                    .uuid(Some("11111111-1111-1111-1111-111111111111"))
+                    .reserve_bytes(0)
+                    .floor_bytes(0),
+            )
+            .expect("register volume");
+        barge
+            .set_layout(
+                barge::Class::Worktrees,
+                barge::Placement {
+                    volume: "Builds".to_owned(),
+                    path: "worktrees".to_owned(),
+                    absent: barge::Absent::Fail,
+                },
+            )
+            .expect("set layout");
+
+        let origin = temp.path().join("origin");
+        std::fs::create_dir_all(&origin).expect("mkdir origin");
+        let run_git = |args: &[&str]| -> String {
+            let output = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&origin)
+                .args(args)
+                .env("GIT_AUTHOR_NAME", "Test")
+                .env("GIT_AUTHOR_EMAIL", "test@example.invalid")
+                .env("GIT_COMMITTER_NAME", "Test")
+                .env("GIT_COMMITTER_EMAIL", "test@example.invalid")
+                .output()
+                .expect("run git");
+            assert!(output.status.success(), "git failed");
+            String::from_utf8_lossy(&output.stdout).trim().to_owned()
+        };
+        run_git(&["init", "--quiet", "-b", "main"]);
+        std::fs::write(origin.join("README.md"), "ok\n").expect("write readme");
+        run_git(&["add", "-A"]);
+        run_git(&["commit", "--quiet", "-m", "base"]);
+        let base = run_git(&["rev-parse", "HEAD"]);
+        let canonical_origin = std::fs::canonicalize(&origin).expect("canonical origin");
+        let repo_id = canonical_origin.to_string_lossy().to_ascii_lowercase();
+        std::fs::write(
+            state_dir.join("worktree-pools.json"),
+            json!({
+                "schema": barge::worktree::POOLS_SCHEMA,
+                "pools": [{
+                    "repo": repo_id,
+                    "origin": canonical_origin.to_string_lossy(),
+                    "warm": 1,
+                    "max": 2
+                }]
+            })
+            .to_string(),
+        )
+        .expect("write pools");
+        std::fs::write(
+            state_dir.join("container-profiles.json"),
+            json!({ "profiles": [{ "name": "effigy", "max": 3 }] }).to_string(),
+        )
+        .expect("write container-profiles.json");
+
+        let wt_lease = barge
+            .worktree_lease(
+                barge::worktree::LeaseRequest {
+                    repo: canonical_origin.to_string_lossy().into_owned(),
+                    base,
+                    base_name: Some("main".to_owned()),
+                    branch: "task/holder-names".to_owned(),
+                    request: "req-holder-1".to_owned(),
+                    label: None,
+                },
+                Duration::ZERO,
+            )
+            .expect("lease worktree");
+
+        let plain_checkout = temp.path().join("plain-checkout");
+        let retained_checkout = temp.path().join("retained-checkout");
+        let interactive_checkout = temp.path().join("interactive-checkout");
+        let waiter_checkout = temp.path().join("waiter-checkout");
+        for dir in [
+            &plain_checkout,
+            &retained_checkout,
+            &interactive_checkout,
+            &waiter_checkout,
+        ] {
+            std::fs::create_dir_all(dir).expect("mkdir checkout");
+        }
+        let canonical_plain = std::fs::canonicalize(&plain_checkout).expect("canonical plain");
+        let canonical_retained =
+            std::fs::canonicalize(&retained_checkout).expect("canonical retained");
+
+        // 1. Worktree-owned worker lease.
+        let wt_req = ContainerLeaseRequest {
+            profile: "effigy".to_owned(),
+            project: "proj-wt".to_owned(),
+            owner: ContainerOwner::Worktree(wt_lease.lease_id.clone()),
+            class: ContainerClass::Worker,
+            hold: true,
+            wait: None,
+        };
+        let _wt_container_lease = match barge.container_lease(&wt_req).expect("wt container lease")
+        {
+            ContainerLeaseOutcome::Leased(lease) => lease,
+            _ => panic!("expected wt container lease"),
+        };
+
+        // 2. Checkout-owned worker lease.
+        let checkout_req = worker_request("effigy", "proj-checkout", &canonical_plain, true);
+        let _checkout_lease = match barge
+            .container_lease(&checkout_req)
+            .expect("checkout lease")
+        {
+            ContainerLeaseOutcome::Leased(lease) => lease,
+            _ => panic!("expected checkout lease"),
+        };
+
+        // 3. Retained ended worker lease (teardown fails so it remains in the pool).
+        let retained_req = worker_request("effigy", "proj-retained", &canonical_retained, true);
+        let retained_lease = match barge
+            .container_lease(&retained_req)
+            .expect("retained lease")
+        {
+            ContainerLeaseOutcome::Leased(lease) => lease,
+            _ => panic!("expected retained lease"),
+        };
+        drop(retained_lease);
+
+        // 4. Interactive lease (must not appear in worker holder diagnostics).
+        let interactive_req = ContainerLeaseRequest {
+            profile: "effigy".to_owned(),
+            project: "proj-interactive".to_owned(),
+            owner: ContainerOwner::Checkout(
+                std::fs::canonicalize(&interactive_checkout).expect("canonical interactive"),
+            ),
+            class: ContainerClass::Interactive,
+            hold: false,
+            wait: None,
+        };
+        let _interactive_lease = match barge
+            .container_lease(&interactive_req)
+            .expect("interactive lease")
+        {
+            ContainerLeaseOutcome::Leased(lease) => lease,
+            _ => panic!("expected interactive lease"),
+        };
+
+        let runtime = FakeLeaseRuntime::new(&["effigy"]);
+        runtime.set_teardown_result(
+            "effigy",
+            "proj-retained",
+            Err("simulated teardown failure".to_owned()),
+        );
+
+        let wait_notice =
+            format_lease_wait_notice(Some(&barge), "effigy", 3, 3, Duration::from_secs(300));
+        assert!(
+            wait_notice.contains("proj-checkout")
+                && wait_notice.contains(&canonical_plain.display().to_string()),
+            "{wait_notice}"
+        );
+        assert!(
+            wait_notice.contains("proj-retained")
+                && wait_notice.contains(&canonical_retained.display().to_string())
+                && wait_notice.contains("ended: hold_released"),
+            "{wait_notice}"
+        );
+        assert!(
+            wait_notice.contains("proj-wt") && wait_notice.contains(&wt_lease.path),
+            "{wait_notice}"
+        );
+        assert!(
+            !wait_notice.contains("proj-interactive"),
+            "interactive lease must not be listed as worker slot holder: {wait_notice}"
+        );
+
+        let waiter_req = worker_request("effigy", "proj-waiter", &waiter_checkout, false);
+        let err = acquire_container_lease_with(
+            Some(&barge),
+            &runtime,
+            &waiter_req,
+            Duration::from_millis(30),
+            Duration::from_millis(15),
+        )
+        .expect_err("full pool refuses with holder diagnostics");
+        let msg = err.to_string();
+        assert!(msg.contains("active holders:"), "{msg}");
+        let idx_checkout = msg.find("proj-checkout").expect("proj-checkout in error");
+        let idx_retained = msg.find("proj-retained").expect("proj-retained in error");
+        let idx_wt = msg.find("proj-wt").expect("proj-wt in error");
+        assert!(
+            idx_checkout < idx_retained && idx_retained < idx_wt,
+            "holders must be sorted deterministically by project: {msg}"
+        );
+        assert!(
+            msg.contains(&canonical_plain.display().to_string()),
+            "{msg}"
+        );
+        assert!(
+            msg.contains(&canonical_retained.display().to_string()),
+            "{msg}"
+        );
+        assert!(msg.contains("ended: hold_released"), "{msg}");
+        assert!(msg.contains(&wt_lease.path), "{msg}");
+        assert!(!msg.contains("proj-interactive"), "{msg}");
+
+        // Fallback when worktree lease ID cannot be resolved.
+        assert_eq!(
+            describe_container_owner(
+                &barge,
+                &ContainerOwner::Worktree("missing-wt-id".to_owned())
+            ),
+            "worktree:missing-wt-id"
+        );
+
+        // Corrupt container-leases state must never mask the Full error.
+        std::fs::write(
+            state_dir.join("container-leases").join("corrupt.json"),
+            "{not valid json",
+        )
+        .expect("write corrupt lease");
+        let fallback_err =
+            lease_pool_full_error(Some(&barge), "effigy", 3, 3, Duration::from_secs(10), &[]);
+        let fallback_msg = fallback_err.to_string();
+        assert!(
+            fallback_msg.contains("container lease pool for profile `effigy` is full (3/3"),
+            "{fallback_msg}"
+        );
+        assert!(
+            !fallback_msg.contains("active holders:"),
+            "status failure should omit holders rather than masking Full: {fallback_msg}"
+        );
+    }
+
+    #[test]
+    fn short_budget_full_runs_first_full_sweep_before_timing_out() {
+        for budget in [Duration::ZERO, Duration::from_millis(20)] {
+            let fixture = BargeFixture::new();
+            fixture.declare_profiles(&[("effigy", 1)]);
+            let checkout = fixture._temp.path().join("wt-short-budget");
+            std::fs::create_dir_all(&checkout).expect("mkdir");
+
+            let held_req = worker_request("effigy", "proj-held", &checkout, true);
+            let _held_lease = match fixture.barge.container_lease(&held_req).expect("lease") {
+                ContainerLeaseOutcome::Leased(lease) => lease,
+                _ => panic!("expected held lease"),
+            };
+
+            let runtime = FakeLeaseRuntime::new(&["effigy"]);
+            runtime.set_containers(
+                "effigy",
+                vec![ContainerRow {
+                    name: "orphan-app-1".to_owned(),
+                    project: Some("orphan-short-proj".to_owned()),
+                    effigy_project: Some("orphan-short-proj".to_owned()),
+                    checkout: Some(checkout.display().to_string()),
+                    repo_root: None,
+                    scope: None,
+                    managed: true,
+                    barge_lease: Some("stale-orphan-id".to_owned()),
+                }],
+            );
+            runtime.set_teardown_result(
+                "effigy",
+                "orphan-short-proj",
+                Ok(ok_outcome("effigy", "orphan-app-1")),
+            );
+
+            let second_req = worker_request("effigy", "proj-second", &checkout, false);
+            let err = acquire_container_lease_with(
+                Some(&fixture.barge),
+                &runtime,
+                &second_req,
+                budget,
+                Duration::from_millis(100),
+            )
+            .expect_err("short budget still times out when held slot stays occupied");
+            assert!(err.to_string().contains("proj-held"), "{err}");
+            assert_eq!(runtime.running_profiles_count(), 1);
+            assert_eq!(runtime.list_containers_count(), 1);
+            let teardowns = runtime.teardown_calls();
+            assert_eq!(teardowns.len(), 1);
+            assert_eq!(teardowns[0].project, "orphan-short-proj");
+        }
+    }
+
+    #[test]
+    fn short_budget_full_reclaims_lease_that_ends_during_first_wait_slice() {
+        let fixture = BargeFixture::new();
+        fixture.declare_profiles(&[("effigy", 1)]);
+        let checkout = fixture._temp.path().join("wt-short-reclaim");
+        std::fs::create_dir_all(&checkout).expect("mkdir");
+
+        let first_req = worker_request("effigy", "proj-first", &checkout, true);
+        let first_lease = match fixture.barge.container_lease(&first_req).expect("lease") {
+            ContainerLeaseOutcome::Leased(lease) => lease,
+            _ => panic!("expected first lease"),
+        };
+
+        let runtime = FakeLeaseRuntime::new(&["effigy"]);
+        runtime.set_teardown_result(
+            "effigy",
+            "proj-first",
+            Ok(ok_outcome("effigy", "proj-first-app-1")),
+        );
+        let second_req = worker_request("effigy", "proj-second", &checkout, false);
+
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                std::thread::sleep(Duration::from_millis(15));
+                drop(first_lease);
+            });
+            let acquired = acquire_container_lease_with(
+                Some(&fixture.barge),
+                &runtime,
+                &second_req,
+                Duration::from_millis(50),
+                Duration::from_millis(200),
+            )
+            .expect("first Full sweep reclaims lease that ended during the single wait slice");
+            assert!(matches!(
+                acquired,
+                LeaseAcquireOutcome::Leased(ref lease) if lease.project() == "proj-second"
+            ));
+        });
+
+        assert_eq!(runtime.list_containers_count(), 1);
+        let teardowns = runtime.teardown_calls();
+        assert_eq!(teardowns.len(), 1);
+        assert_eq!(teardowns[0].project, "proj-first");
+        assert!(!teardowns[0].remove_volumes);
     }
 }

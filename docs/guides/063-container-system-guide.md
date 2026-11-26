@@ -1315,7 +1315,9 @@ lasts until teardown or until the checkout is gone.
 
 When the profile is full, a worker waits up to 300 seconds
 (`EFFIGY_CONTAINER_LEASE_WAIT_SECS`), sweeping between tries, then refuses
-before starting anything.
+before starting anything; both the wait notice and the refusal name the worker
+leases occupying slots (project, worktree or checkout path, and ended reason if
+retained).
 
 - **Immediate return.** `down` (all forms), `reset`, `retire`, the idle stop, a
   task's own stop and a failed bring-up that leaves nothing running return the

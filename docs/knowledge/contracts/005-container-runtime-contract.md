@@ -2799,7 +2799,9 @@ and no Barge state is created. Unreadable Barge state is an error.
 owner is the Barge worktree lease holding the checkout, else the checkout path.
 Workers are linked worktrees, ephemeral clones, CI, detached `up` without a
 terminal, and the release builder; everything else is interactive. A full pool
-waits, sweeps, then refuses before any apply.
+waits, sweeps, then refuses before any apply, naming the active worker leases
+(project, resolved worktree or checkout owner, and ended reason when retained)
+in both the wait notice and the refusal.
 
 **Label.** The ID is recorded in
 `.effigy/runtime/barge-lease/<profile>.<project>`, and every render of that
