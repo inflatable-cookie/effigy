@@ -3,7 +3,7 @@ use effigy_containers::exec::ContainerLifecycle;
 #[cfg(test)]
 use effigy_containers::exec::PublishedPort;
 use std::ffi::{OsStr, OsString};
-use std::io::{self, IsTerminal, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::thread;
@@ -805,6 +805,20 @@ pub(in crate::runner) fn list_running_rows_with_colima_repair(
     policy: &EffectiveContainerPolicy,
     deadline: Option<std::time::Instant>,
 ) -> Result<Vec<RunningComposeContainer>, RunnerError> {
+    list_running_rows_with_colima_repair_and_advice_mode(
+        repo_root,
+        policy,
+        deadline,
+        colima_advice_mode(),
+    )
+}
+
+fn list_running_rows_with_colima_repair_and_advice_mode(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    deadline: Option<std::time::Instant>,
+    advice_mode: effigy_containers::exec::ColimaAdviceMode,
+) -> Result<Vec<RunningComposeContainer>, RunnerError> {
     match list_running_compose_containers_for_policy_with_deadline(repo_root, policy, deadline) {
         Ok(rows) => Ok(rows),
         Err(_error) if colima_profile_is_running_but_unreachable(repo_root, policy) => {
@@ -815,14 +829,14 @@ pub(in crate::runner) fn list_running_rows_with_colima_repair(
             let detail = format!(
                 "Colima profile `{}` is running but unreachable, often after a host sleep or crash. {}",
                 policy.profile,
-                colima_profile_recovery_advice(&policy.profile, colima_advice_mode())
+                colima_profile_recovery_advice(&policy.profile, advice_mode)
             );
             run_colima_restart_if_confirmed(
                 &detail,
-                io::stdin().is_terminal(),
-                io::stdout().is_terminal(),
-                effigy_ui::steps::json_output() || std::env::args_os().any(|arg| arg == "--json"),
-                effigy_ui::steps::in_managed_pane(),
+                advice_mode == effigy_containers::exec::ColimaAdviceMode::Interactive,
+                advice_mode == effigy_containers::exec::ColimaAdviceMode::Interactive,
+                advice_mode == effigy_containers::exec::ColimaAdviceMode::Automated,
+                advice_mode == effigy_containers::exec::ColimaAdviceMode::Automated,
                 || {
                     use std::io::BufRead as _;
                     effigy_ui::steps::prompt_terminal_stderr(|stdin, stderr| {

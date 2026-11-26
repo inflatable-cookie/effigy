@@ -177,6 +177,18 @@ fn collect_runtime_diagnostics(
     resolved_root: &Path,
     remaining_budget: Option<Duration>,
 ) -> Result<DoctorRuntimeDiagnostics, DoctorError> {
+    collect_runtime_diagnostics_with_advice_mode(
+        resolved_root,
+        remaining_budget,
+        colima_advice_mode(),
+    )
+}
+
+fn collect_runtime_diagnostics_with_advice_mode(
+    resolved_root: &Path,
+    remaining_budget: Option<Duration>,
+    advice_mode: effigy_containers::exec::ColimaAdviceMode,
+) -> Result<DoctorRuntimeDiagnostics, DoctorError> {
     // One monotonic deadline for every preliminary probe that follows. Each
     // probe converts its own remainder from this deadline, so no subprocess
     // gets a fresh budget of its own.
@@ -230,41 +242,13 @@ fn collect_runtime_diagnostics(
             profiles.join(", ")
         ));
         for profile in &profiles {
-            match colima_profile_running(profile, deadline) {
-                Ok(running) => {
-                    let reachable = running && colima_ssh_reachable(profile, deadline);
-                    let listed_running =
-                        !reachable && colima_list_reports_running(profile, deadline);
-                    diagnostics.evidence.push(format!(
-                        "colima-profile `{profile}`: {}",
-                        if reachable {
-                            "running"
-                        } else if listed_running {
-                            "running but unreachable"
-                        } else {
-                            "stopped"
-                        }
-                    ));
-                    if listed_running {
-                        diagnostics.warnings.push(format!(
-                            "Colima profile `{profile}` is running but unreachable, often after a host sleep or crash. {}",
-                            colima_profile_recovery_advice(profile, colima_advice_mode())
-                        ));
-                    }
-                    if reachable {
-                        append_ssh_agent_socket_warning(
-                            profile,
-                            resolved_root,
-                            deadline,
-                            &mut diagnostics,
-                        );
-                        append_managed_swap_warning(profile, deadline, &mut diagnostics);
-                    }
-                }
-                Err(error) => diagnostics
-                    .warnings
-                    .push(format!("colima profile `{profile}` probe failed: {error}")),
-            }
+            append_colima_profile_diagnostics(
+                profile,
+                resolved_root,
+                deadline,
+                advice_mode,
+                &mut diagnostics,
+            );
         }
     }
 
@@ -312,6 +296,44 @@ fn collect_runtime_diagnostics(
     Ok(diagnostics)
 }
 
+fn append_colima_profile_diagnostics(
+    profile: &str,
+    resolved_root: &Path,
+    deadline: Option<Instant>,
+    advice_mode: effigy_containers::exec::ColimaAdviceMode,
+    diagnostics: &mut DoctorRuntimeDiagnostics,
+) {
+    match colima_profile_running(profile, deadline) {
+        Ok(running) => {
+            let reachable = running && colima_ssh_reachable(profile, deadline);
+            let listed_running = !reachable && colima_list_reports_running(profile, deadline);
+            diagnostics.evidence.push(format!(
+                "colima-profile `{profile}`: {}",
+                if reachable {
+                    "running"
+                } else if listed_running {
+                    "running but unreachable"
+                } else {
+                    "stopped"
+                }
+            ));
+            if listed_running {
+                diagnostics.warnings.push(format!(
+                    "Colima profile `{profile}` is running but unreachable, often after a host sleep or crash. {}",
+                    colima_profile_recovery_advice(profile, advice_mode)
+                ));
+            }
+            if reachable {
+                append_ssh_agent_socket_warning(profile, resolved_root, deadline, diagnostics);
+                append_managed_swap_warning(profile, deadline, advice_mode, diagnostics);
+            }
+        }
+        Err(error) => diagnostics
+            .warnings
+            .push(format!("colima profile `{profile}` probe failed: {error}")),
+    }
+}
+
 fn colima_list_reports_running(profile: &str, deadline: Option<Instant>) -> bool {
     let args = [OsString::from("list"), OsString::from("--json")];
     let deadline = Some(deadline.unwrap_or_else(|| Instant::now() + Duration::from_secs(5)));
@@ -351,6 +373,7 @@ fn colima_ssh_reachable(profile: &str, deadline: Option<Instant>) -> bool {
 fn append_managed_swap_warning(
     profile: &str,
     deadline: Option<Instant>,
+    advice_mode: effigy_containers::exec::ColimaAdviceMode,
     diagnostics: &mut DoctorRuntimeDiagnostics,
 ) {
     if effigy_containers::colima::managed_colima_profile_resources(profile).is_none() {
@@ -372,7 +395,7 @@ fn append_managed_swap_warning(
     if !active {
         diagnostics.warnings.push(format!(
             "Colima profile `{profile}` does not have Effigy's managed `/swapfile` active; its swap provision may have failed. {}",
-            colima_profile_recovery_advice(profile, colima_advice_mode())
+            colima_profile_recovery_advice(profile, advice_mode)
         ));
     }
 }
@@ -846,23 +869,43 @@ mod tests {
         let (_temp, root) = fresh_root("running-unreachable");
         let bin = install_fake_colima(
             &root,
-            "#!/bin/sh\ncase \"$1\" in\n  list) printf '%s\\n' '{\"name\":\"fixture\",\"status\":\"Running\"}' ;;\n  status) exit 1 ;;\n  *) exit 99 ;;\nesac\n",
+            "#!/bin/sh\ncase \"$1\" in\n  list) printf '%s\\n' '{\"name\":\"fixture\",\"status\":\"Running\"}' ;;\n  status) printf 'status: Running\\n' ;;\n  ssh) exit 255 ;;\n  *) exit 99 ;;\nesac\n",
         );
         let _env = with_runtime_env(&bin);
 
         assert!(colima_list_reports_running("fixture", None));
-        let mut diagnostics = DoctorRuntimeDiagnostics::default();
-        let profile = "fixture";
-        diagnostics.warnings.push(format!(
-            "Colima profile `{profile}` is running but unreachable, often after a host sleep or crash. {}",
-            effigy_containers::exec::colima_profile_recovery_advice(
-                profile,
-                effigy_containers::exec::ColimaAdviceMode::Automated,
-            )
-        ));
-        assert!(diagnostics.warnings[0].contains("running but unreachable"));
-        assert!(diagnostics.warnings[0].contains("shared across checkouts"));
-        assert!(!diagnostics.warnings[0].contains("colima stop"));
+        for (mode, forbidden) in [
+            (effigy_containers::exec::ColimaAdviceMode::Automated, "colima stop"),
+            (
+                effigy_containers::exec::ColimaAdviceMode::Interactive,
+                "shared across checkouts",
+            ),
+        ] {
+            let mut diagnostics = DoctorRuntimeDiagnostics::default();
+            super::append_colima_profile_diagnostics(
+                "fixture",
+                &root,
+                None,
+                mode,
+                &mut diagnostics,
+            );
+            let warning = diagnostics
+                .warnings
+                .iter()
+                .find(|warning| warning.contains("running but unreachable"))
+                .expect("unreachable profile warning");
+            assert!(!warning.contains(forbidden), "{warning}");
+            match mode {
+                effigy_containers::exec::ColimaAdviceMode::Automated => {
+                    assert!(warning.contains("shared across checkouts"));
+                    assert!(warning.contains("report the degraded profile to the host operator"));
+                }
+                effigy_containers::exec::ColimaAdviceMode::Interactive => {
+                    assert!(warning.contains("colima stop --profile fixture"));
+                    assert!(warning.contains("stops every container on that profile"));
+                }
+            }
+        }
     }
 
     #[test]

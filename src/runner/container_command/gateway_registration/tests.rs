@@ -22,6 +22,54 @@ fn unreachable_profile_advice_is_safe_for_automated_callers_and_actionable_for_p
 }
 
 #[test]
+fn gateway_unreachable_profile_failure_uses_injected_automated_advice() {
+    let _lock = crate::contract_test_support::lock_test();
+    let fixture = tempfile::tempdir().expect("fixture tempdir");
+    let bin = fixture.path().join("bin");
+    std::fs::create_dir_all(&bin).expect("fixture bin");
+    let colima = bin.join("colima");
+    std::fs::write(
+        &colima,
+        "#!/bin/sh\ncase \"$1\" in\n  list) printf '%s\\n' '{\"name\":\"effigy\",\"status\":\"Running\"}' ;;\n  status) exit 0 ;;\n  ssh) exit 255 ;;\n  *) exit 99 ;;\nesac\n",
+    )
+    .expect("fake Colima");
+    let nerdctl = bin.join("nerdctl");
+    std::fs::write(&nerdctl, "#!/bin/sh\nexit 1\n").expect("fake nerdctl");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for executable in [&colima, &nerdctl] {
+            let mut permissions = std::fs::metadata(executable)
+                .expect("fake executable metadata")
+                .permissions();
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(executable, permissions).expect("make executable");
+        }
+    }
+    let path = std::env::var("PATH").unwrap_or_default();
+    let _env = crate::contract_test_support::EnvGuard::set_many(&[
+        ("PATH", Some(format!("{}:{path}", bin.display()))),
+        ("EFFIGY_COMPOSE_BACKEND", Some("colima".to_owned())),
+    ]);
+    let mut policy = test_policy();
+    policy.repo_root = fixture.path().to_owned();
+
+    let error = list_running_rows_with_colima_repair_and_advice_mode(
+        fixture.path(),
+        &policy,
+        None,
+        effigy_containers::exec::ColimaAdviceMode::Automated,
+    )
+    .expect_err("unreachable shared profile is reported without restart advice");
+    let message = error.to_string();
+    assert!(message.contains("shared across checkouts"), "{message}");
+    assert!(message.contains("report the degraded profile to the host operator"));
+    assert!(!message.contains("colima stop"));
+    assert!(!message.contains("effigy container profile repair"));
+    assert!(!message.contains("effigy container profile reset-runtime"));
+}
+
+#[test]
 fn unreachable_profile_wrapper_never_restarts_without_interactive_non_json_yes() {
     let detail = "profile is running but unreachable; repair command; stops every container";
     for (stdin_tty, stdout_tty, json, managed_pane) in [

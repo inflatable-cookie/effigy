@@ -38,6 +38,20 @@ pub fn recover_colima_runtime_with_progress(
     repo_root: &Path,
     progress: ColimaRecoveryProgress<'_>,
 ) -> Result<ColimaRecoveryReport, ContainerExecError> {
+    recover_colima_runtime_with_progress_and_advice_mode(
+        policy,
+        repo_root,
+        progress,
+        colima_advice_mode(),
+    )
+}
+
+pub(super) fn recover_colima_runtime_with_progress_and_advice_mode(
+    policy: &EffectiveContainerPolicy,
+    repo_root: &Path,
+    progress: ColimaRecoveryProgress<'_>,
+    advice_mode: ColimaAdviceMode,
+) -> Result<ColimaRecoveryReport, ContainerExecError> {
     let mut steps = vec![format!(
         "[check] recovering Colima profile `{}`",
         policy.profile
@@ -59,10 +73,10 @@ pub fn recover_colima_runtime_with_progress(
     };
 
     progress(ColimaRecoveryPhase::TerminatingProcesses);
-    force_terminate_colima_profile_processes(policy, graceful_ok, &mut steps)?;
+    force_terminate_colima_profile_processes(policy, graceful_ok, &mut steps, advice_mode)?;
 
     progress(ColimaRecoveryPhase::VerifyingStopped);
-    verify_profile_stopped(policy, repo_root, &steps, true)?;
+    verify_profile_stopped(policy, repo_root, &steps, true, advice_mode)?;
 
     if let Err(error) = restart_and_verify_colima_profile(policy, repo_root, &mut steps, progress) {
         let runtime_state_loss = match &error {
@@ -88,9 +102,9 @@ pub fn recover_colima_runtime_with_progress(
             }
         };
         progress(ColimaRecoveryPhase::TerminatingProcesses);
-        force_terminate_colima_profile_processes(policy, stopped, &mut steps)?;
+        force_terminate_colima_profile_processes(policy, stopped, &mut steps, advice_mode)?;
         progress(ColimaRecoveryPhase::VerifyingStopped);
-        verify_profile_stopped(policy, repo_root, &steps, true)?;
+        verify_profile_stopped(policy, repo_root, &steps, true, advice_mode)?;
         restart_and_verify_colima_profile(policy, repo_root, &mut steps, progress)?;
     }
 
@@ -113,6 +127,20 @@ pub fn reset_colima_runtime_with_progress(
     repo_root: &Path,
     progress: ColimaRecoveryProgress<'_>,
 ) -> Result<ColimaRecoveryReport, ContainerExecError> {
+    reset_colima_runtime_with_progress_and_advice_mode(
+        policy,
+        repo_root,
+        progress,
+        colima_advice_mode(),
+    )
+}
+
+pub(super) fn reset_colima_runtime_with_progress_and_advice_mode(
+    policy: &EffectiveContainerPolicy,
+    repo_root: &Path,
+    progress: ColimaRecoveryProgress<'_>,
+    advice_mode: ColimaAdviceMode,
+) -> Result<ColimaRecoveryReport, ContainerExecError> {
     let mut steps = vec![format!(
         "[check] resetting Colima profile `{}` to a fully stopped state",
         policy.profile
@@ -134,9 +162,9 @@ pub fn reset_colima_runtime_with_progress(
     };
 
     progress(ColimaRecoveryPhase::TerminatingProcesses);
-    force_terminate_colima_profile_processes(policy, graceful_ok, &mut steps)?;
+    force_terminate_colima_profile_processes(policy, graceful_ok, &mut steps, advice_mode)?;
     progress(ColimaRecoveryPhase::VerifyingStopped);
-    verify_profile_stopped(policy, repo_root, &steps, false)?;
+    verify_profile_stopped(policy, repo_root, &steps, false, advice_mode)?;
     steps.push(format!(
         "[ok] verified Colima profile `{}` is fully stopped",
         policy.profile
@@ -279,6 +307,7 @@ fn verify_profile_stopped(
     repo_root: &Path,
     steps: &[String],
     allow_empty_runtime: bool,
+    advice_mode: ColimaAdviceMode,
 ) -> Result<(), ContainerExecError> {
     let reason = match colima_running_probe_after_stop(policy, repo_root) {
         Ok(Some(false)) => return Ok(()),
@@ -291,7 +320,10 @@ fn verify_profile_stopped(
         command: "colima status".to_owned(),
         code: None,
         stdout: steps.join("\n"),
-        stderr: format!("{reason}; refusing profile recovery. Verify pidfile ownership before manually running `colima stop -p {} --force`; Effigy did not run it.", policy.profile),
+        stderr: format!(
+            "{reason}; refusing profile recovery. {}",
+            colima_profile_force_stop_advice(&policy.profile, advice_mode)
+        ),
     })
 }
 
@@ -299,9 +331,14 @@ fn force_terminate_colima_profile_processes(
     policy: &EffectiveContainerPolicy,
     graceful_ok: bool,
     steps: &mut Vec<String>,
+    advice_mode: ColimaAdviceMode,
 ) -> Result<(), ContainerExecError> {
-    let stopped =
-        crate::exec::colima_cleanup::terminate(&policy.profile, graceful_ok).map_err(|error| {
+    let stopped = crate::exec::colima_cleanup::terminate_with_advice_mode(
+        &policy.profile,
+        graceful_ok,
+        advice_mode,
+    )
+    .map_err(|error| {
             ContainerExecError::Failure {
                 command: "Colima profile pidfile cleanup".to_owned(),
                 code: None,

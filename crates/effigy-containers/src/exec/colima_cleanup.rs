@@ -238,14 +238,24 @@ fn cleanup<P: Processes>(
     }
 }
 
-pub(super) fn terminate(profile: &str, graceful_ok: bool) -> Result<Vec<String>, String> {
-    terminate_with_home(profile, graceful_ok, std::env::var_os("HOME"))
+pub(super) fn terminate_with_advice_mode(
+    profile: &str,
+    graceful_ok: bool,
+    advice_mode: super::ColimaAdviceMode,
+) -> Result<Vec<String>, String> {
+    terminate_with_home_and_advice_mode(
+        profile,
+        graceful_ok,
+        std::env::var_os("HOME"),
+        advice_mode,
+    )
 }
 
-fn terminate_with_home(
+fn terminate_with_home_and_advice_mode(
     profile: &str,
     graceful_ok: bool,
     home: Option<OsString>,
+    advice_mode: super::ColimaAdviceMode,
 ) -> Result<Vec<String>, String> {
     let safe_profile = !profile.is_empty()
         && profile
@@ -262,7 +272,10 @@ fn terminate_with_home(
         cleanup(&mut Host, &instance, graceful_ok)
     })();
     let profile_hint = if safe_profile { profile } else { "<profile>" };
-    result.map_err(|error| format!("{error}\nVerify the profile pidfile ownership before manually running `colima stop -p {profile_hint} --force`; Effigy did not run it. External limactl shell and SSH processes are not signalled."))
+    result.map_err(|error| format!(
+        "{error}\n{} External limactl shell and SSH processes are not signalled.",
+        super::colima_profile_force_stop_advice(profile_hint, advice_mode)
+    ))
 }
 
 #[cfg(test)]
@@ -479,10 +492,31 @@ mod tests {
         // Through the real entry point the same refusal carries the manual
         // force-stop and verification instructions verbatim.
         let dir = tempfile::tempdir().unwrap();
-        let error = terminate_with_home("effigy", false, Some(dir.path().into())).unwrap_err();
+        let error = terminate_with_home_and_advice_mode(
+            "effigy",
+            false,
+            Some(dir.path().into()),
+            crate::exec::ColimaAdviceMode::Interactive,
+        )
+        .unwrap_err();
         assert_eq!(
             error,
-            "\nmissing profile pidfile(s): ha.pid, vz.pid\nVerify the profile pidfile ownership before manually running `colima stop -p effigy --force`; Effigy did not run it. External limactl shell and SSH processes are not signalled."
+            "\nmissing profile pidfile(s): ha.pid, vz.pid\nVerify profile pidfile ownership before manually running `colima stop -p effigy --force`; this stops every container on the shared profile. Effigy did not run it. External limactl shell and SSH processes are not signalled."
         );
+    }
+
+    #[test]
+    fn automated_colima_runtime_refusal_never_suggests_force_stop() {
+        let dir = tempfile::tempdir().unwrap();
+        let error = terminate_with_home_and_advice_mode(
+            "effigy",
+            false,
+            Some(dir.path().into()),
+            crate::exec::ColimaAdviceMode::Automated,
+        )
+        .unwrap_err();
+        assert!(error.contains("shared across checkouts"));
+        assert!(error.contains("report the degraded profile to the host operator"));
+        assert!(!error.contains("colima stop"));
     }
 }
