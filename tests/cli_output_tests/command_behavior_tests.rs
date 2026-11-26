@@ -2406,7 +2406,15 @@ fn container_status_payload_template() -> Value {
         "environment": {"backend": {}},
         "profile": "effigy",
         "compose_ps": null,
-        "detach_timeout_secs": 10
+        "detach_timeout_secs": 10,
+        "fs_events": {
+            "mode": "auto",
+            "state": "inactive",
+            "reason": "not_running",
+            "owner": null,
+            "pid": null,
+            "targets": []
+        }
     })
 }
 
