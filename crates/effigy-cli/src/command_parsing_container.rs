@@ -224,22 +224,22 @@ fn validate_down_project_selection(
     }
     if selection.name.is_some() {
         return invalid(
-            "`effigy container down --project` selects a stack by profile, so it does not take `<NAME>`",
+            "`effigy container down --project <PROJECT> --profile <PROFILE>` selects a stack by profile, so it does not take `<NAME>`",
         );
     }
     if selection.system.is_some() {
         return invalid(
-            "`effigy container down --project` selects a stack by profile, so it does not accept `--system`",
+            "`effigy container down --project <PROJECT> --profile <PROFILE>` selects a stack by profile, so it does not accept `--system`",
         );
     }
     if selection.global {
         return invalid(
-            "`effigy container down --project` selects one project, so it does not accept `--global`",
+            "`effigy container down --project <PROJECT> --profile <PROFILE>` selects one project, so it does not accept `--global`",
         );
     }
     if selection.repo_override {
         return invalid(
-            "`effigy container down --project` works from any directory, so it does not accept `--repo`",
+            "`effigy container down --project <PROJECT> --profile <PROFILE>` works from any directory, so it does not accept `--repo`",
         );
     }
     Ok(())
