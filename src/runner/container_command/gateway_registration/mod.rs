@@ -10,19 +10,19 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use effigy_containers::exec::{
-    colima_advice_mode, colima_profile_recovery_advice,
+    RunningComposeContainer, colima_advice_mode, colima_profile_recovery_advice,
     list_compose_containers_for_policy_including_stopped_with_timeout,
     list_running_compose_containers_for_policy,
-    list_running_compose_containers_for_policy_with_deadline, RunningComposeContainer,
+    list_running_compose_containers_for_policy_with_deadline,
 };
 use effigy_containers::{EffectiveContainerPolicy, EffectiveDnsRoute};
 use effigy_gateway::endpoint_store::EndpointStore;
 use effigy_gateway::loopback;
-use effigy_gateway::registration::{
-    dead_claim_reason, owned_by, withdraw_owned_routes, TARGET_PROBE_TIMEOUT,
-};
 #[cfg(test)]
-use effigy_gateway::registration::{register_route, RouteRegistration};
+use effigy_gateway::registration::{RouteRegistration, register_route};
+use effigy_gateway::registration::{
+    TARGET_PROBE_TIMEOUT, dead_claim_reason, owned_by, withdraw_owned_routes,
+};
 use effigy_gateway::routes::{Route, RouteSource, RouteTable};
 
 use crate::runner::error::RunnerError;
@@ -359,7 +359,7 @@ fn finish_gateway_route_registration_with_tls(
     let mut routes = match observe_gateway_routes(repo_root, policy, rows)? {
         GatewayRoutes::Published(routes) => routes,
         GatewayRoutes::Unpublished { route, .. } => {
-            return Err(unpublished_route_error(policy, route))
+            return Err(unpublished_route_error(policy, route));
         }
     };
     let project_alias_routes =
@@ -1546,8 +1546,7 @@ fn validate_gateway_tcp_alias_bindings_in_table(
                 if existing_target != tcp_target {
                     return Err(gateway_runtime_target_error(format!(
                         "gateway TCP alias bind {bind_ip}:{bind_port} is ambiguous: `{}` targets `{existing_target}` but `{}` targets `{tcp_target}`; raw TCP listeners cannot dispatch by hostname",
-                        existing_domain,
-                        route.domain,
+                        existing_domain, route.domain,
                     )));
                 }
             }

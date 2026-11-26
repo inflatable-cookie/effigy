@@ -338,14 +338,12 @@ fn force_terminate_colima_profile_processes(
         graceful_ok,
         advice_mode,
     )
-    .map_err(|error| {
-            ContainerExecError::Failure {
-                command: "Colima profile pidfile cleanup".to_owned(),
-                code: None,
-                stdout: steps.join("\n"),
-                stderr: error,
-            }
-        })?;
+    .map_err(|error| ContainerExecError::Failure {
+        command: "Colima profile pidfile cleanup".to_owned(),
+        code: None,
+        stdout: steps.join("\n"),
+        stderr: error,
+    })?;
     steps.extend(stopped);
     Ok(())
 }

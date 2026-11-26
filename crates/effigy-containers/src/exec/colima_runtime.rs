@@ -14,14 +14,15 @@ use super::process::{
     run_command_capture_with_timeout,
 };
 use crate::{
+    BackendId, ContainerBackendDetection, ContainerManager, ContainerManagerError,
+    DEFAULT_COLIMA_PROFILE, EffectiveContainerPolicy,
     colima::{
-        classify_colima_observation, colima_start_command, colima_status_command,
-        colima_stop_command, managed_colima_profile_drift, managed_colima_profile_resources,
-        parse_colima_running, prepare_managed_colima_profile, ColimaObservation,
+        ColimaObservation, classify_colima_observation, colima_start_command,
+        colima_status_command, colima_stop_command, managed_colima_profile_drift,
+        managed_colima_profile_resources, parse_colima_running, prepare_managed_colima_profile,
     },
-    compose::{resolve_compose_backend_for_repo, resolve_host_cli_program, ComposeBackend},
-    user_global_colima_profile, BackendId, ContainerBackendDetection, ContainerManager,
-    ContainerManagerError, EffectiveContainerPolicy, DEFAULT_COLIMA_PROFILE,
+    compose::{ComposeBackend, resolve_compose_backend_for_repo, resolve_host_cli_program},
+    user_global_colima_profile,
 };
 
 const COLIMA_START_TIMEOUT: Duration = Duration::from_secs(90);
@@ -255,7 +256,9 @@ fn ensure_running_managed_profile_ready(
                     stdout: String::new(),
                     stderr: format!(
                         "Colima profile `{}` is running with {actual_gib}GiB RAM (requires {planned_gib}GiB)\nEffigy wrote the managed settings and did not restart the VM.\nnext: restart it deliberately with `colima restart {}`",
-                        policy.profile, policy.profile, planned_gib = resources.memory_gib
+                        policy.profile,
+                        policy.profile,
+                        planned_gib = resources.memory_gib
                     ),
                 });
             }
@@ -574,8 +577,7 @@ fn verify_colima_profile_no_change(
     policy: &EffectiveContainerPolicy,
     repo_root: &Path,
 ) -> Result<ColimaEnsureReport, ContainerExecError> {
-    let refusal = |reason: &str, next: String| {
-        ContainerExecError::Failure {
+    let refusal = |reason: &str, next: String| ContainerExecError::Failure {
         command: "Colima profile no-change check".to_owned(),
         code: None,
         stdout: String::new(),
@@ -583,7 +585,6 @@ fn verify_colima_profile_no_change(
             "Colima profile `{}` {reason}\nno-change mode refuses to start, create, restart, rewrite or unit-start the shared profile\nnext: {next}",
             policy.profile
         ),
-    }
     };
     if !colima_is_running(policy, repo_root)? {
         return Err(refusal(
@@ -899,8 +900,8 @@ pub fn running_colima_profiles(repo_root: &Path) -> Result<Vec<String>, Containe
 /// starting it, so absence is unprovable for an owner recorded on that
 /// profile; every other owner is unaffected, because a stopped VM publishes no
 /// host port (effigy#294).
-pub(super) fn colima_profiles_for_all_states_inventory(
-) -> Result<(Vec<String>, Vec<String>), ContainerExecError> {
+pub(super) fn colima_profiles_for_all_states_inventory()
+-> Result<(Vec<String>, Vec<String>), ContainerExecError> {
     let entries = list_colima_profiles(Path::new("."))?;
     let mut running = Vec::new();
     let mut stopped = Vec::new();
@@ -1053,8 +1054,8 @@ fn start_colima_runtime_units(
 
 mod recovery;
 pub use recovery::{
-    recover_colima_runtime, recover_colima_runtime_with_progress, reset_colima_runtime,
-    reset_colima_runtime_with_progress, ColimaRecoveryPhase,
+    ColimaRecoveryPhase, recover_colima_runtime, recover_colima_runtime_with_progress,
+    reset_colima_runtime, reset_colima_runtime_with_progress,
 };
 
 fn runtime_detection_for_policy(
@@ -1163,8 +1164,8 @@ mod tests {
     use super::*;
     use crate::EffectiveComposeSource;
     use effigy_manifest::{
-        with_test_user_config_home, ManifestContainerDriver, ManifestContainerOnTaskExit,
-        ManifestContainerShutdownMode, ManifestContainerStartup,
+        ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerShutdownMode,
+        ManifestContainerStartup, with_test_user_config_home,
     };
     use std::path::PathBuf;
 
@@ -1682,9 +1683,11 @@ esac
         policy.render.as_mut().unwrap().request = Request::Named(Some(Default::default()));
         let warnings = colima_profile_warnings(&policy, &fixture.root);
         assert_eq!(warnings.len(), 2, "{warnings:?}");
-        assert!(warnings
-            .iter()
-            .any(|warning| warning.contains("memory and")));
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("memory and"))
+        );
         assert!(warnings.iter().any(|warning| warning.contains("disk for")));
         policy.primary_service = "missing".into();
         assert!(colima_profile_warnings(&policy, &fixture.root).is_empty());
@@ -1784,10 +1787,12 @@ esac
             error.to_string(),
             "colima status failed (no exit code: the command ended on a signal)\nstdout:\n[check] recovering Colima profile `effigy`\n[ok] stopped Colima profile `effigy`\nstderr:\nprofile is still running; refusing profile recovery. Colima profile `effigy` is shared across checkouts. Automated runs must not stop or restart it; report the degraded profile to the host operator. Effigy did not run it."
         );
-        assert!(!fixture
-            .calls()
-            .iter()
-            .any(|call| call.starts_with("start ")));
+        assert!(
+            !fixture
+                .calls()
+                .iter()
+                .any(|call| call.starts_with("start "))
+        );
         fixture.state("status-unknown");
         let error = recovery::reset_colima_runtime_with_progress_and_advice_mode(
             &policy,
@@ -1919,7 +1924,7 @@ esac
             &fixture.root,
             ColimaAdviceMode::Automated,
         )
-            .expect_err("runtime record loss must stop before starting or waiting");
+        .expect_err("runtime record loss must stop before starting or waiting");
         let message = error.to_string();
         assert!(message.contains("shared across checkouts"), "{message}");
         assert!(
@@ -1952,8 +1957,12 @@ esac
         std::fs::remove_file(fixture.root.join("small")).expect("set below-floor memory");
         fixture.state("under-floor");
         fixture.write_colima_profile_config("effigy-release", "memory: 2\nforwardAgent: true\n");
-        let error = ensure_running_managed_profile_ready(&policy, &fixture.root, ColimaAdviceMode::Automated)
-            .expect_err("running release profile below the floor refuses");
+        let error = ensure_running_managed_profile_ready(
+            &policy,
+            &fixture.root,
+            ColimaAdviceMode::Automated,
+        )
+        .expect_err("running release profile below the floor refuses");
         let message = error.to_string();
         assert!(message.contains("running with 2GiB RAM"), "{message}");
         assert!(message.contains("requires 8GiB"), "{message}");
@@ -1983,8 +1992,12 @@ esac
 
         fixture.state("under-floor");
         fixture.write_colima_config("memory: 2\nforwardAgent: true\n");
-        let error = ensure_running_managed_profile_ready(&policy, &fixture.root, ColimaAdviceMode::Automated)
-            .expect_err("running default profile below its plan refuses");
+        let error = ensure_running_managed_profile_ready(
+            &policy,
+            &fixture.root,
+            ColimaAdviceMode::Automated,
+        )
+        .expect_err("running default profile below its plan refuses");
         let message = error.to_string();
         assert!(message.contains("running with 2GiB RAM"), "{message}");
         assert!(

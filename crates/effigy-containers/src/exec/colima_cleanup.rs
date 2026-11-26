@@ -243,12 +243,7 @@ pub(super) fn terminate_with_advice_mode(
     graceful_ok: bool,
     advice_mode: super::ColimaAdviceMode,
 ) -> Result<Vec<String>, String> {
-    terminate_with_home_and_advice_mode(
-        profile,
-        graceful_ok,
-        std::env::var_os("HOME"),
-        advice_mode,
-    )
+    terminate_with_home_and_advice_mode(profile, graceful_ok, std::env::var_os("HOME"), advice_mode)
 }
 
 fn terminate_with_home_and_advice_mode(
@@ -272,10 +267,12 @@ fn terminate_with_home_and_advice_mode(
         cleanup(&mut Host, &instance, graceful_ok)
     })();
     let profile_hint = if safe_profile { profile } else { "<profile>" };
-    result.map_err(|error| format!(
-        "{error}\n{} External limactl shell and SSH processes are not signalled.",
-        super::colima_profile_force_stop_advice(profile_hint, advice_mode)
-    ))
+    result.map_err(|error| {
+        format!(
+            "{error}\n{} External limactl shell and SSH processes are not signalled.",
+            super::colima_profile_force_stop_advice(profile_hint, advice_mode)
+        )
+    })
 }
 
 #[cfg(test)]
@@ -439,9 +436,11 @@ mod tests {
         fake.arguments.clear();
         assert!(cleanup(&mut fake, dir.path(), false).is_err());
         fake.unknown.push(40);
-        assert!(cleanup(&mut fake, dir.path(), false)
-            .unwrap_err()
-            .contains("identity unavailable"));
+        assert!(
+            cleanup(&mut fake, dir.path(), false)
+                .unwrap_err()
+                .contains("identity unavailable")
+        );
         assert!(fake.signalled.is_empty());
     }
 

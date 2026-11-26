@@ -638,12 +638,10 @@ fn registered_gateway_routes_match_project_requires_exact_project_owned_routes()
         managed_listener: None,
         registered: chrono::Utc::now(),
     });
-    assert!(registered_gateway_routes_match_project(
-        &table,
-        &repo_root,
-        std::slice::from_ref(&desired)
-    )
-    .expect("registered routes should match"));
+    assert!(
+        registered_gateway_routes_match_project(&table, &repo_root, std::slice::from_ref(&desired))
+            .expect("registered routes should match")
+    );
 
     let original = table.lookup(&desired.domain).unwrap().clone();
     for field in [
@@ -765,7 +763,9 @@ fn resolves_multiple_gateway_routes_from_their_own_published_ports() {
 fn validates_gateway_route_against_matching_runtime_port() {
     let policy = test_policy();
     let repo_root = PathBuf::from("/tmp/repo");
-    let rows = vec![runtime_row("demo-web-dev-app-1\tUp 10 seconds\t0.0.0.0:8080->80/tcp, :::8080->80/tcp\tdemo-web-dev\t\tapp\tfalse")];
+    let rows = vec![runtime_row(
+        "demo-web-dev-app-1\tUp 10 seconds\t0.0.0.0:8080->80/tcp, :::8080->80/tcp\tdemo-web-dev\t\tapp\tfalse",
+    )];
     let routes = resolve_gateway_routes_against_rows(&repo_root, &policy, &rows)
         .expect("routes")
         .expect("published");
@@ -787,8 +787,12 @@ fn gateway_readiness_waits_for_declared_service_ports_before_returning_rows() {
     let delayed_rows = [
         Vec::new(),
         vec![
-            runtime_row("demo-web-dev-app-1\tUp 10 seconds\t0.0.0.0:8080->80/tcp\tdemo-web-dev\t/tmp\tapp\tfalse"),
-            runtime_row("demo-web-dev-db-1\tUp 10 seconds\t127.0.0.1:15432->5432/tcp\tdemo-web-dev\t/tmp\tdb\tfalse"),
+            runtime_row(
+                "demo-web-dev-app-1\tUp 10 seconds\t0.0.0.0:8080->80/tcp\tdemo-web-dev\t/tmp\tapp\tfalse",
+            ),
+            runtime_row(
+                "demo-web-dev-db-1\tUp 10 seconds\t127.0.0.1:15432->5432/tcp\tdemo-web-dev\t/tmp\tdb\tfalse",
+            ),
         ],
     ];
     let mut calls = 0;
@@ -844,8 +848,12 @@ fn gateway_readiness_reports_a_blocked_poll_then_the_ready_one() {
         oneoff: false,
     }];
     let ready = vec![
-        runtime_row("demo-web-dev-app-1\tUp 10 seconds\t0.0.0.0:8080->80/tcp\tdemo-web-dev\t/tmp\tapp\tfalse"),
-        runtime_row("demo-web-dev-db-1\tUp 10 seconds\t127.0.0.1:15432->5432/tcp\tdemo-web-dev\t/tmp\tdb\tfalse"),
+        runtime_row(
+            "demo-web-dev-app-1\tUp 10 seconds\t0.0.0.0:8080->80/tcp\tdemo-web-dev\t/tmp\tapp\tfalse",
+        ),
+        runtime_row(
+            "demo-web-dev-db-1\tUp 10 seconds\t127.0.0.1:15432->5432/tcp\tdemo-web-dev\t/tmp\tdb\tfalse",
+        ),
     ];
     let mut observed = Vec::new();
     let mut calls = 0;
@@ -905,8 +913,12 @@ fn route_registration_reports_its_post_poll_stages() {
         let mut policy = test_policy();
         policy.repo_root = PathBuf::from(&project_path);
         let rows = vec![
-            runtime_row(&format!("demo-web-dev-app-1\tUp 10 seconds\t0.0.0.0:8080->80/tcp\tdemo-web-dev\t{project_path}\tapp\tfalse")),
-            runtime_row(&format!("demo-web-dev-db-1\tUp 10 seconds\t127.0.0.1:15432->5432/tcp\tdemo-web-dev\t{project_path}\tdb\tfalse")),
+            runtime_row(&format!(
+                "demo-web-dev-app-1\tUp 10 seconds\t0.0.0.0:8080->80/tcp\tdemo-web-dev\t{project_path}\tapp\tfalse"
+            )),
+            runtime_row(&format!(
+                "demo-web-dev-db-1\tUp 10 seconds\t127.0.0.1:15432->5432/tcp\tdemo-web-dev\t{project_path}\tdb\tfalse"
+            )),
         ];
         let mut observed = Vec::new();
         let mut certificates = Vec::new();
@@ -924,12 +936,14 @@ fn route_registration_reports_its_post_poll_stages() {
             &mut |_, _| Ok(()),
         )
         .expect("published ports register their declared routes");
-        assert!(registered_gateway_routes_match_project(
-            &RouteTable::load(&route_table_path).expect("persisted routes"),
-            &policy.repo_root,
-            &routes
-        )
-        .expect("owned exact routes"));
+        assert!(
+            registered_gateway_routes_match_project(
+                &RouteTable::load(&route_table_path).expect("persisted routes"),
+                &policy.repo_root,
+                &routes
+            )
+            .expect("owned exact routes")
+        );
         assert!(routes.iter().any(|route| route.domain == "clientname.test"
             && route.target.as_deref() == Some("127.0.0.1:8080")));
         assert_eq!(certificates, ["clientname.test"]);
@@ -1735,9 +1749,11 @@ fn foreign_teardown_preserves_tls_material_and_tcp_alias() {
 
         let mut policy = test_policy();
         policy.repo_root = paths[1].clone();
-        assert!(deregister_gateway_routes_for_container(&policy)
-            .unwrap()
-            .is_empty());
+        assert!(
+            deregister_gateway_routes_for_container(&policy)
+                .unwrap()
+                .is_empty()
+        );
         let table = RouteTable::load(&route_table_path).unwrap();
         assert_eq!(table.len(), 2);
         assert!(cert.exists() && key.exists());
@@ -1994,9 +2010,11 @@ fn rejects_tcp_alias_bind_tuple_collision_with_different_upstream() {
             result.expect(label);
         } else {
             let error = result.expect_err(label);
-            assert!(error
-                .to_string()
-                .contains("raw TCP listeners cannot dispatch by hostname"));
+            assert!(
+                error
+                    .to_string()
+                    .contains("raw TCP listeners cannot dispatch by hostname")
+            );
         }
     }
 }
