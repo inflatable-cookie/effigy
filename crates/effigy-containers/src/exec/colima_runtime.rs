@@ -43,6 +43,64 @@ const COLIMA_STOP_SETTLE_TIMEOUT: Duration = Duration::from_secs(10);
 /// readiness re-check that follows, before falling back to a VM restart.
 const COLIMA_UNIT_START_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Whether Colima recovery guidance targets a person at a terminal or an automated caller.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ColimaAdviceMode {
+    Interactive,
+    Automated,
+}
+
+/// Detects whether recovery guidance may include operator-run profile commands.
+pub fn colima_advice_mode() -> ColimaAdviceMode {
+    use std::io::IsTerminal as _;
+
+    advice_mode_for_caller(
+        std::io::stdin().is_terminal(),
+        std::io::stdout().is_terminal(),
+        std::env::args_os().any(|arg| arg == "--json"),
+        std::env::var_os("CI").is_some(),
+        effigy_ui::steps::in_managed_pane(),
+    )
+}
+
+fn advice_mode_for_caller(
+    stdin_is_terminal: bool,
+    stdout_is_terminal: bool,
+    json_output: bool,
+    in_ci: bool,
+    in_managed_pane: bool,
+) -> ColimaAdviceMode {
+    if stdin_is_terminal && stdout_is_terminal && !json_output && !in_ci && !in_managed_pane {
+        ColimaAdviceMode::Interactive
+    } else {
+        ColimaAdviceMode::Automated
+    }
+}
+
+/// Renders a guarded force-stop hint for refusals that require manual cleanup.
+pub fn colima_profile_force_stop_advice(profile: &str, mode: ColimaAdviceMode) -> String {
+    match mode {
+        ColimaAdviceMode::Interactive => format!(
+            "Verify profile pidfile ownership before manually running `colima stop -p {profile} --force`; this stops every container on the shared profile. Effigy did not run it."
+        ),
+        ColimaAdviceMode::Automated => format!(
+            "Colima profile `{profile}` is shared across checkouts. Automated runs must not stop or restart it; report the degraded profile to the host operator. Effigy did not run it."
+        ),
+    }
+}
+
+/// Renders recovery guidance without suggesting profile-wide actions to automation.
+pub fn colima_profile_recovery_advice(profile: &str, mode: ColimaAdviceMode) -> String {
+    match mode {
+        ColimaAdviceMode::Interactive => format!(
+            "Fix: `colima stop --profile {profile} && colima start --profile {profile}`. This stops every container on that profile."
+        ),
+        ColimaAdviceMode::Automated => format!(
+            "Colima profile `{profile}` is shared across checkouts. Automated runs must not stop or restart it; report the degraded profile to the host operator."
+        ),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ColimaRecoveryReport {
     pub profile: String,
@@ -88,7 +146,15 @@ pub fn ensure_colima_running_report(
     policy: &EffectiveContainerPolicy,
     repo_root: &Path,
 ) -> Result<ColimaEnsureReport, ContainerExecError> {
-    let action = ensure_colima_profile_running(policy, repo_root)?;
+    ensure_colima_running_report_with_advice_mode(policy, repo_root, colima_advice_mode())
+}
+
+fn ensure_colima_running_report_with_advice_mode(
+    policy: &EffectiveContainerPolicy,
+    repo_root: &Path,
+    advice_mode: ColimaAdviceMode,
+) -> Result<ColimaEnsureReport, ContainerExecError> {
+    let action = ensure_colima_profile_running(policy, repo_root, advice_mode)?;
     let report = ColimaEnsureReport {
         started: action != ColimaProfileAction::Reused,
         profile_created_or_restarted: action.recreates_profile(),
@@ -134,9 +200,10 @@ fn maintain_health_check_pid_files(policy: &EffectiveContainerPolicy, repo_root:
 fn ensure_colima_profile_running(
     policy: &EffectiveContainerPolicy,
     repo_root: &Path,
+    advice_mode: ColimaAdviceMode,
 ) -> Result<ColimaProfileAction, ContainerExecError> {
-    if colima_is_running_for_start(policy, repo_root)? {
-        return ensure_running_managed_profile_ready(policy, repo_root);
+    if colima_is_running_for_start(policy, repo_root, advice_mode)? {
+        return ensure_running_managed_profile_ready(policy, repo_root, advice_mode);
     }
     // A profile that is not running is either stopped or gone. Only the
     // inventory can tell them apart, and both take the same managed start; the
@@ -170,6 +237,7 @@ fn colima_profile_exists(
 fn ensure_running_managed_profile_ready(
     policy: &EffectiveContainerPolicy,
     repo_root: &Path,
+    advice_mode: ColimaAdviceMode,
 ) -> Result<ColimaProfileAction, ContainerExecError> {
     if let Some(drift) = managed_colima_profile_drift(&policy.profile) {
         // Write the managed settings so the operator's own restart applies them.
@@ -187,7 +255,9 @@ fn ensure_running_managed_profile_ready(
                     stdout: String::new(),
                     stderr: format!(
                         "Colima profile `{}` is running with {actual_gib}GiB RAM (requires {planned_gib}GiB)\nEffigy wrote the managed settings and did not restart the VM.\nnext: restart it deliberately with `colima restart {}`",
-                        policy.profile, policy.profile, planned_gib = resources.memory_gib
+                        policy.profile,
+                        policy.profile,
+                        planned_gib = resources.memory_gib
                     ),
                 });
             }
@@ -196,6 +266,7 @@ fn ensure_running_managed_profile_ready(
     ensure_running_profile_runtime_ready(
         policy.profile.as_str(),
         COLIMA_RUNNING_PROFILE_GRACE,
+        advice_mode,
         |timeout| wait_for_colima_runtime_ready(policy, repo_root, timeout),
         || start_colima_runtime_units(policy, repo_root),
     )?;
@@ -250,6 +321,7 @@ fn start_managed_colima_profile(
 fn ensure_running_profile_runtime_ready(
     profile: &str,
     grace: Duration,
+    advice_mode: ColimaAdviceMode,
     mut wait_for_runtime: impl FnMut(Duration) -> Result<(), String>,
     mut start_units: impl FnMut() -> Result<(), String>,
 ) -> Result<bool, ContainerExecError> {
@@ -275,6 +347,7 @@ fn ensure_running_profile_runtime_ready(
                         &readiness_error,
                         None,
                         &probe_error,
+                        advice_mode,
                     )),
                 },
                 Err(start_error) => Err(runtime_unit_start_refusal(
@@ -282,6 +355,7 @@ fn ensure_running_profile_runtime_ready(
                     &readiness_error,
                     Some(&start_error),
                     "not retried: the unit start itself failed",
+                    advice_mode,
                 )),
             }
         }
@@ -296,6 +370,7 @@ fn runtime_unit_start_refusal(
     readiness_error: &str,
     start_error: Option<&str>,
     probe_error: &str,
+    advice_mode: ColimaAdviceMode,
 ) -> ContainerExecError {
     let start = start_error
         .map(|error| format!("\nunit start: {error}"))
@@ -305,8 +380,16 @@ fn runtime_unit_start_refusal(
         code: None,
         stdout: String::new(),
         stderr: format!(
-            "Colima profile `{profile}` is running but containerd/BuildKit are not ready\nStarting those units inside the VM did not recover them within {}s; Effigy did not stop or restart the profile because that stops every stack on it.\nfirst readiness probe: {readiness_error}{start}\nruntime probe after unit start: {probe_error}\nnext: retry, recover this profile in place with `effigy container profile repair`, or stop it deliberately with `effigy container profile reset-runtime`",
+            "Colima profile `{profile}` is running but containerd/BuildKit are not ready\nStarting those units inside the VM did not recover them within {}s; Effigy did not stop or restart the profile because that stops every stack on it.\nfirst readiness probe: {readiness_error}{start}\nruntime probe after unit start: {probe_error}\nnext: retry, {}",
             COLIMA_UNIT_START_TIMEOUT.as_secs(),
+            match advice_mode {
+                ColimaAdviceMode::Interactive => {
+                    "recover this profile in place with `effigy container profile repair`, or stop it deliberately with `effigy container profile reset-runtime`".to_owned()
+                }
+                ColimaAdviceMode::Automated => {
+                    colima_profile_recovery_advice(profile, ColimaAdviceMode::Automated)
+                }
+            },
         ),
     }
 }
@@ -525,6 +608,7 @@ fn verify_colima_profile_no_change(
     ensure_running_profile_runtime_ready(
         policy.profile.as_str(),
         COLIMA_RUNNING_PROFILE_GRACE,
+        colima_advice_mode(),
         |timeout| wait_for_colima_runtime_ready(policy, repo_root, timeout),
         || Err("containerd/BuildKit units are not running and would need a unit start".to_owned()),
     )?;
@@ -534,6 +618,7 @@ fn verify_colima_profile_no_change(
 fn colima_is_running_for_start(
     policy: &EffectiveContainerPolicy,
     repo_root: &Path,
+    advice_mode: ColimaAdviceMode,
 ) -> Result<bool, ContainerExecError> {
     let output = colima_status_output(policy, repo_root, None)?;
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -548,8 +633,9 @@ fn colima_is_running_for_start(
             code: output.status.code(),
             stdout: stdout.into_owned(),
             stderr: format!(
-                "Colima profile `{0}` is running with an empty runtime record. Run `colima stop --profile {0} && colima start --profile {0}`, then retry.",
-                policy.profile
+                "Colima profile `{}` is running with an empty runtime record. {}",
+                policy.profile,
+                colima_profile_recovery_advice(&policy.profile, advice_mode)
             ),
         });
     }
@@ -1210,6 +1296,7 @@ mod tests {
         let started = ensure_running_profile_runtime_ready(
             "effigy",
             Duration::from_secs(30),
+            ColimaAdviceMode::Automated,
             |timeout| {
                 wait_timeouts.push(timeout);
                 Ok(())
@@ -1229,6 +1316,7 @@ mod tests {
         let started = ensure_running_profile_runtime_ready(
             "effigy",
             Duration::from_secs(30),
+            ColimaAdviceMode::Automated,
             |timeout| {
                 attempts += 1;
                 if attempts == 1 {
@@ -1257,6 +1345,7 @@ mod tests {
         let error = ensure_running_profile_runtime_ready(
             "effigy",
             Duration::from_secs(30),
+            ColimaAdviceMode::Automated,
             |_| {
                 attempts += 1;
                 Err("nerdctl info cannot reach containerd".to_owned())
@@ -1279,10 +1368,9 @@ mod tests {
             rendered.contains("did not stop or restart the profile"),
             "the refusal states what it did not do: {rendered}"
         );
-        assert!(
-            rendered.contains("effigy container profile repair"),
-            "names the explicit in-place recovery: {rendered}"
-        );
+        assert!(rendered.contains("report the degraded profile to the host operator"));
+        assert!(!rendered.contains("effigy container profile repair"));
+        assert!(!rendered.contains("effigy container profile reset-runtime"));
         assert!(
             rendered.contains("nerdctl info cannot reach containerd"),
             "keeps the last runtime diagnostic: {rendered}"
@@ -1294,6 +1382,7 @@ mod tests {
         let error = ensure_running_profile_runtime_ready(
             "effigy",
             Duration::from_secs(30),
+            ColimaAdviceMode::Automated,
             |_| Err("buildctl cannot reach BuildKit".to_owned()),
             || Err("systemctl start containerd buildkit timed out".to_owned()),
         )
@@ -1304,10 +1393,49 @@ mod tests {
             rendered.contains("systemctl start containerd buildkit timed out"),
             "names the unit-start failure: {rendered}"
         );
-        assert!(
-            rendered.contains("effigy container profile repair"),
-            "names the explicit in-place recovery: {rendered}"
+        assert!(rendered.contains("report the degraded profile to the host operator"));
+        assert!(!rendered.contains("effigy container profile repair"));
+    }
+
+    #[test]
+    fn colima_recovery_advice_matches_interactive_and_automated_callers() {
+        assert_eq!(
+            advice_mode_for_caller(true, true, false, false, false),
+            ColimaAdviceMode::Interactive
         );
+        for signals in [
+            (false, true, false, false, false),
+            (true, false, false, false, false),
+            (true, true, true, false, false),
+            (true, true, false, true, false),
+            (true, true, false, false, true),
+        ] {
+            assert_eq!(
+                advice_mode_for_caller(signals.0, signals.1, signals.2, signals.3, signals.4),
+                ColimaAdviceMode::Automated
+            );
+        }
+        let interactive = colima_profile_recovery_advice("effigy", ColimaAdviceMode::Interactive);
+        assert!(interactive.contains("colima stop --profile effigy"));
+        assert!(interactive.contains("stops every container on that profile"));
+
+        let automated = colima_profile_recovery_advice("effigy", ColimaAdviceMode::Automated);
+        assert!(automated.contains("shared across checkouts"));
+        assert!(automated.contains("must not stop or restart it"));
+        assert!(automated.contains("report the degraded profile to the host operator"));
+        assert!(!automated.contains("colima stop"));
+        assert!(!automated.contains("effigy container profile repair"));
+        assert!(!automated.contains("effigy container profile reset-runtime"));
+
+        let interactive_force =
+            colima_profile_force_stop_advice("effigy", ColimaAdviceMode::Interactive);
+        assert!(interactive_force.contains("colima stop -p effigy --force"));
+        assert!(interactive_force.contains("stops every container on the shared profile"));
+
+        let automated_force =
+            colima_profile_force_stop_advice("effigy", ColimaAdviceMode::Automated);
+        assert!(automated_force.contains("report the degraded profile to the host operator"));
+        assert!(!automated_force.contains("colima stop"));
     }
 
     #[test]
@@ -1677,20 +1805,32 @@ esac
         fixture.state("running");
         fixture.state("stop-stays-running");
         let policy = fixture.policy();
-        let error = recover_colima_runtime(&policy, &fixture.root).unwrap_err();
+        let error = recovery::recover_colima_runtime_with_progress_and_advice_mode(
+            &policy,
+            &fixture.root,
+            &mut |_| {},
+            ColimaAdviceMode::Automated,
+        )
+        .unwrap_err();
         assert_eq!(
             error.to_string(),
-            "colima status failed (no exit code: the command ended on a signal)\nstdout:\n[check] recovering Colima profile `effigy`\n[ok] stopped Colima profile `effigy`\nstderr:\nprofile is still running; refusing profile recovery. Verify pidfile ownership before manually running `colima stop -p effigy --force`; Effigy did not run it."
+            "colima status failed (no exit code: the command ended on a signal)\nstdout:\n[check] recovering Colima profile `effigy`\n[ok] stopped Colima profile `effigy`\nstderr:\nprofile is still running; refusing profile recovery. Colima profile `effigy` is shared across checkouts. Automated runs must not stop or restart it; report the degraded profile to the host operator. Effigy did not run it."
         );
         assert!(!fixture
             .calls()
             .iter()
             .any(|call| call.starts_with("start ")));
         fixture.state("status-unknown");
-        let error = reset_colima_runtime(&policy, &fixture.root).unwrap_err();
+        let error = recovery::reset_colima_runtime_with_progress_and_advice_mode(
+            &policy,
+            &fixture.root,
+            &mut |_| {},
+            ColimaAdviceMode::Automated,
+        )
+        .unwrap_err();
         assert_eq!(
             error.to_string(),
-            "colima status failed (no exit code: the command ended on a signal)\nstdout:\n[check] resetting Colima profile `effigy` to a fully stopped state\n[ok] stopped Colima profile `effigy`\nstderr:\ncolima status failed (exit code 1)\nstderr:\nColima stop status is unproven: status unavailable\n; refusing profile recovery. Verify pidfile ownership before manually running `colima stop -p effigy --force`; Effigy did not run it."
+            "colima status failed (no exit code: the command ended on a signal)\nstdout:\n[check] resetting Colima profile `effigy` to a fully stopped state\n[ok] stopped Colima profile `effigy`\nstderr:\ncolima status failed (exit code 1)\nstderr:\nColima stop status is unproven: status unavailable\n; refusing profile recovery. Colima profile `effigy` is shared across checkouts. Automated runs must not stop or restart it; report the degraded profile to the host operator. Effigy did not run it."
         );
 
         // Phase 2: a registry failure never stops or restarts the shared profile.
@@ -1806,15 +1946,19 @@ esac
         fixture.state("running");
         fixture.state("release-profile");
         fixture.state("runtime-empty");
-        let error = ensure_colima_running_report(&fixture.release_policy(), &fixture.root)
-            .expect_err("runtime record loss must stop before starting or waiting");
+        let error = ensure_colima_running_report_with_advice_mode(
+            &fixture.release_policy(),
+            &fixture.root,
+            ColimaAdviceMode::Automated,
+        )
+        .expect_err("runtime record loss must stop before starting or waiting");
         let message = error.to_string();
+        assert!(message.contains("shared across checkouts"), "{message}");
         assert!(
-            message.contains(
-                "colima stop --profile effigy-release && colima start --profile effigy-release"
-            ),
+            message.contains("report the degraded profile to the host operator"),
             "{message}"
         );
+        assert!(!message.contains("colima stop"), "{message}");
         let calls = fixture.calls();
         assert_eq!(
             calls,
@@ -1834,14 +1978,18 @@ esac
         let policy = fixture.release_policy();
         fixture.write_colima_profile_config("effigy-release", "memory: 8\nforwardAgent: true\n");
 
-        ensure_running_managed_profile_ready(&policy, &fixture.root)
+        ensure_running_managed_profile_ready(&policy, &fixture.root, ColimaAdviceMode::Automated)
             .expect("running release profile meets the 8 GiB floor");
 
         std::fs::remove_file(fixture.root.join("small")).expect("set below-floor memory");
         fixture.state("under-floor");
         fixture.write_colima_profile_config("effigy-release", "memory: 2\nforwardAgent: true\n");
-        let error = ensure_running_managed_profile_ready(&policy, &fixture.root)
-            .expect_err("running release profile below the floor refuses");
+        let error = ensure_running_managed_profile_ready(
+            &policy,
+            &fixture.root,
+            ColimaAdviceMode::Automated,
+        )
+        .expect_err("running release profile below the floor refuses");
         let message = error.to_string();
         assert!(message.contains("running with 2GiB RAM"), "{message}");
         assert!(message.contains("requires 8GiB"), "{message}");
@@ -1866,13 +2014,17 @@ esac
             plan.memory_gib
         ));
 
-        ensure_running_managed_profile_ready(&policy, &fixture.root)
+        ensure_running_managed_profile_ready(&policy, &fixture.root, ColimaAdviceMode::Automated)
             .expect("running default profile meets its host-derived memory plan");
 
         fixture.state("under-floor");
         fixture.write_colima_config("memory: 2\nforwardAgent: true\n");
-        let error = ensure_running_managed_profile_ready(&policy, &fixture.root)
-            .expect_err("running default profile below its plan refuses");
+        let error = ensure_running_managed_profile_ready(
+            &policy,
+            &fixture.root,
+            ColimaAdviceMode::Automated,
+        )
+        .expect_err("running default profile below its plan refuses");
         let message = error.to_string();
         assert!(message.contains("running with 2GiB RAM"), "{message}");
         assert!(

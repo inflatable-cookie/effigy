@@ -3,13 +3,14 @@ use effigy_containers::exec::ContainerLifecycle;
 #[cfg(test)]
 use effigy_containers::exec::PublishedPort;
 use std::ffi::{OsStr, OsString};
-use std::io::{self, IsTerminal, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant};
 
 use effigy_containers::exec::{
+    colima_advice_mode, colima_profile_recovery_advice,
     list_compose_containers_for_policy_including_stopped_with_timeout,
     list_running_compose_containers_for_policy,
     list_running_compose_containers_for_policy_with_deadline, RunningComposeContainer,
@@ -358,7 +359,7 @@ fn finish_gateway_route_registration_with_tls(
     let mut routes = match observe_gateway_routes(repo_root, policy, rows)? {
         GatewayRoutes::Published(routes) => routes,
         GatewayRoutes::Unpublished { route, .. } => {
-            return Err(unpublished_route_error(policy, route))
+            return Err(unpublished_route_error(policy, route));
         }
     };
     let project_alias_routes =
@@ -804,6 +805,20 @@ pub(in crate::runner) fn list_running_rows_with_colima_repair(
     policy: &EffectiveContainerPolicy,
     deadline: Option<std::time::Instant>,
 ) -> Result<Vec<RunningComposeContainer>, RunnerError> {
+    list_running_rows_with_colima_repair_and_advice_mode(
+        repo_root,
+        policy,
+        deadline,
+        colima_advice_mode(),
+    )
+}
+
+fn list_running_rows_with_colima_repair_and_advice_mode(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    deadline: Option<std::time::Instant>,
+    advice_mode: effigy_containers::exec::ColimaAdviceMode,
+) -> Result<Vec<RunningComposeContainer>, RunnerError> {
     match list_running_compose_containers_for_policy_with_deadline(repo_root, policy, deadline) {
         Ok(rows) => Ok(rows),
         Err(_error) if colima_profile_is_running_but_unreachable(repo_root, policy) => {
@@ -812,15 +827,16 @@ pub(in crate::runner) fn list_running_rows_with_colima_repair(
                 policy.profile, policy.profile
             );
             let detail = format!(
-                "Colima profile `{}` is running but unreachable, often after a host sleep or crash. Fix: `{command}`. This stops every container on that profile.",
-                policy.profile
+                "Colima profile `{}` is running but unreachable, often after a host sleep or crash. {}",
+                policy.profile,
+                colima_profile_recovery_advice(&policy.profile, advice_mode)
             );
             run_colima_restart_if_confirmed(
                 &detail,
-                io::stdin().is_terminal(),
-                io::stdout().is_terminal(),
-                effigy_ui::steps::json_output() || std::env::args_os().any(|arg| arg == "--json"),
-                effigy_ui::steps::in_managed_pane(),
+                advice_mode == effigy_containers::exec::ColimaAdviceMode::Interactive,
+                advice_mode == effigy_containers::exec::ColimaAdviceMode::Interactive,
+                advice_mode == effigy_containers::exec::ColimaAdviceMode::Automated,
+                advice_mode == effigy_containers::exec::ColimaAdviceMode::Automated,
                 || {
                     use std::io::BufRead as _;
                     effigy_ui::steps::prompt_terminal_stderr(|stdin, stderr| {
@@ -1531,8 +1547,7 @@ fn validate_gateway_tcp_alias_bindings_in_table(
                 if existing_target != tcp_target {
                     return Err(gateway_runtime_target_error(format!(
                         "gateway TCP alias bind {bind_ip}:{bind_port} is ambiguous: `{}` targets `{existing_target}` but `{}` targets `{tcp_target}`; raw TCP listeners cannot dispatch by hostname",
-                        existing_domain,
-                        route.domain,
+                        existing_domain, route.domain,
                     )));
                 }
             }

@@ -1,6 +1,75 @@
 use super::*;
 
 #[test]
+fn unreachable_profile_advice_is_safe_for_automated_callers_and_actionable_for_people() {
+    let interactive = effigy_containers::exec::colima_profile_recovery_advice(
+        "fixture",
+        effigy_containers::exec::ColimaAdviceMode::Interactive,
+    );
+    assert!(interactive.contains("colima stop --profile fixture"));
+    assert!(interactive.contains("stops every container on that profile"));
+
+    let automated = effigy_containers::exec::colima_profile_recovery_advice(
+        "fixture",
+        effigy_containers::exec::ColimaAdviceMode::Automated,
+    );
+    assert!(automated.contains("shared across checkouts"));
+    assert!(automated.contains("must not stop or restart it"));
+    assert!(automated.contains("report the degraded profile to the host operator"));
+    assert!(!automated.contains("colima stop"));
+    assert!(!automated.contains("effigy container profile repair"));
+    assert!(!automated.contains("effigy container profile reset-runtime"));
+}
+
+#[test]
+fn gateway_unreachable_profile_failure_uses_injected_automated_advice() {
+    let _lock = crate::contract_test_support::lock_test();
+    let fixture = tempfile::tempdir().expect("fixture tempdir");
+    let bin = fixture.path().join("bin");
+    std::fs::create_dir_all(&bin).expect("fixture bin");
+    let colima = bin.join("colima");
+    std::fs::write(
+        &colima,
+        "#!/bin/sh\ncase \"$1\" in\n  list) printf '%s\\n' '{\"name\":\"effigy\",\"status\":\"Running\"}' ;;\n  status) exit 0 ;;\n  ssh) exit 255 ;;\n  *) exit 99 ;;\nesac\n",
+    )
+    .expect("fake Colima");
+    let nerdctl = bin.join("nerdctl");
+    std::fs::write(&nerdctl, "#!/bin/sh\nexit 1\n").expect("fake nerdctl");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for executable in [&colima, &nerdctl] {
+            let mut permissions = std::fs::metadata(executable)
+                .expect("fake executable metadata")
+                .permissions();
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(executable, permissions).expect("make executable");
+        }
+    }
+    let path = std::env::var("PATH").unwrap_or_default();
+    let _env = crate::contract_test_support::EnvGuard::set_many(&[
+        ("PATH", Some(format!("{}:{path}", bin.display()))),
+        ("EFFIGY_COMPOSE_BACKEND", Some("colima".to_owned())),
+    ]);
+    let mut policy = test_policy();
+    policy.repo_root = fixture.path().to_owned();
+
+    let error = list_running_rows_with_colima_repair_and_advice_mode(
+        fixture.path(),
+        &policy,
+        None,
+        effigy_containers::exec::ColimaAdviceMode::Automated,
+    )
+    .expect_err("unreachable shared profile is reported without restart advice");
+    let message = error.to_string();
+    assert!(message.contains("shared across checkouts"), "{message}");
+    assert!(message.contains("report the degraded profile to the host operator"));
+    assert!(!message.contains("colima stop"));
+    assert!(!message.contains("effigy container profile repair"));
+    assert!(!message.contains("effigy container profile reset-runtime"));
+}
+
+#[test]
 fn unreachable_profile_wrapper_never_restarts_without_interactive_non_json_yes() {
     let detail = "profile is running but unreachable; repair command; stops every container";
     for (stdin_tty, stdout_tty, json, managed_pane) in [
@@ -710,7 +779,9 @@ fn resolves_multiple_gateway_routes_from_their_own_published_ports() {
 fn validates_gateway_route_against_matching_runtime_port() {
     let policy = test_policy();
     let repo_root = PathBuf::from("/tmp/repo");
-    let rows = vec![runtime_row("demo-web-dev-app-1\tUp 10 seconds\t0.0.0.0:8080->80/tcp, :::8080->80/tcp\tdemo-web-dev\t\tapp\tfalse")];
+    let rows = vec![runtime_row(
+        "demo-web-dev-app-1\tUp 10 seconds\t0.0.0.0:8080->80/tcp, :::8080->80/tcp\tdemo-web-dev\t\tapp\tfalse",
+    )];
     let routes = resolve_gateway_routes_against_rows(&repo_root, &policy, &rows)
         .expect("routes")
         .expect("published");
@@ -732,8 +803,12 @@ fn gateway_readiness_waits_for_declared_service_ports_before_returning_rows() {
     let delayed_rows = [
         Vec::new(),
         vec![
-            runtime_row("demo-web-dev-app-1\tUp 10 seconds\t0.0.0.0:8080->80/tcp\tdemo-web-dev\t/tmp\tapp\tfalse"),
-            runtime_row("demo-web-dev-db-1\tUp 10 seconds\t127.0.0.1:15432->5432/tcp\tdemo-web-dev\t/tmp\tdb\tfalse"),
+            runtime_row(
+                "demo-web-dev-app-1\tUp 10 seconds\t0.0.0.0:8080->80/tcp\tdemo-web-dev\t/tmp\tapp\tfalse",
+            ),
+            runtime_row(
+                "demo-web-dev-db-1\tUp 10 seconds\t127.0.0.1:15432->5432/tcp\tdemo-web-dev\t/tmp\tdb\tfalse",
+            ),
         ],
     ];
     let mut calls = 0;
@@ -789,8 +864,12 @@ fn gateway_readiness_reports_a_blocked_poll_then_the_ready_one() {
         oneoff: false,
     }];
     let ready = vec![
-        runtime_row("demo-web-dev-app-1\tUp 10 seconds\t0.0.0.0:8080->80/tcp\tdemo-web-dev\t/tmp\tapp\tfalse"),
-        runtime_row("demo-web-dev-db-1\tUp 10 seconds\t127.0.0.1:15432->5432/tcp\tdemo-web-dev\t/tmp\tdb\tfalse"),
+        runtime_row(
+            "demo-web-dev-app-1\tUp 10 seconds\t0.0.0.0:8080->80/tcp\tdemo-web-dev\t/tmp\tapp\tfalse",
+        ),
+        runtime_row(
+            "demo-web-dev-db-1\tUp 10 seconds\t127.0.0.1:15432->5432/tcp\tdemo-web-dev\t/tmp\tdb\tfalse",
+        ),
     ];
     let mut observed = Vec::new();
     let mut calls = 0;
@@ -850,8 +929,12 @@ fn route_registration_reports_its_post_poll_stages() {
         let mut policy = test_policy();
         policy.repo_root = PathBuf::from(&project_path);
         let rows = vec![
-            runtime_row(&format!("demo-web-dev-app-1\tUp 10 seconds\t0.0.0.0:8080->80/tcp\tdemo-web-dev\t{project_path}\tapp\tfalse")),
-            runtime_row(&format!("demo-web-dev-db-1\tUp 10 seconds\t127.0.0.1:15432->5432/tcp\tdemo-web-dev\t{project_path}\tdb\tfalse")),
+            runtime_row(&format!(
+                "demo-web-dev-app-1\tUp 10 seconds\t0.0.0.0:8080->80/tcp\tdemo-web-dev\t{project_path}\tapp\tfalse"
+            )),
+            runtime_row(&format!(
+                "demo-web-dev-db-1\tUp 10 seconds\t127.0.0.1:15432->5432/tcp\tdemo-web-dev\t{project_path}\tdb\tfalse"
+            )),
         ];
         let mut observed = Vec::new();
         let mut certificates = Vec::new();
