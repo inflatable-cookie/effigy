@@ -10,6 +10,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use effigy_containers::exec::{
+    colima_advice_mode, colima_profile_recovery_advice,
     list_compose_containers_for_policy_including_stopped_with_timeout,
     list_running_compose_containers_for_policy,
     list_running_compose_containers_for_policy_with_deadline, RunningComposeContainer,
@@ -812,8 +813,9 @@ pub(in crate::runner) fn list_running_rows_with_colima_repair(
                 policy.profile, policy.profile
             );
             let detail = format!(
-                "Colima profile `{}` is running but unreachable, often after a host sleep or crash. Fix: `{command}`. This stops every container on that profile.",
-                policy.profile
+                "Colima profile `{}` is running but unreachable, often after a host sleep or crash. {}",
+                policy.profile,
+                colima_profile_recovery_advice(&policy.profile, colima_advice_mode())
             );
             run_colima_restart_if_confirmed(
                 &detail,

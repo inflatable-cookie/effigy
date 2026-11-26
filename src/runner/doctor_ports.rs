@@ -16,7 +16,10 @@ use effigy_cli::TaskInvocation;
 use effigy_containers::{
     colima::parse_colima_running,
     compose::{resolve_compose_backend_for_repo, ComposeBackend},
-    exec::{inspect_colima_ssh_agent_socket_for_profile_with_deadline, SshAgentSocketHealth},
+    exec::{
+        colima_advice_mode, colima_profile_recovery_advice,
+        inspect_colima_ssh_agent_socket_for_profile_with_deadline, SshAgentSocketHealth,
+    },
     load_all_container_policies, user_global_backend_preference, user_global_colima_profile,
     ContainerAction,
 };
@@ -244,7 +247,8 @@ fn collect_runtime_diagnostics(
                     ));
                     if listed_running {
                         diagnostics.warnings.push(format!(
-                            "Colima profile `{profile}` is running but unreachable, often after a host sleep or crash. Fix: `colima stop --profile {profile} && colima start --profile {profile}`. This stops every container on that profile."
+                            "Colima profile `{profile}` is running but unreachable, often after a host sleep or crash. {}",
+                            colima_profile_recovery_advice(profile, colima_advice_mode())
                         ));
                     }
                     if reachable {
@@ -367,7 +371,8 @@ fn append_managed_swap_warning(
             .is_ok_and(|output| output.status.success());
     if !active {
         diagnostics.warnings.push(format!(
-            "Colima profile `{profile}` does not have Effigy's managed `/swapfile` active; its swap provision may have failed. Fix: `colima stop --profile {profile} && colima start --profile {profile}`. This stops every container on that profile."
+            "Colima profile `{profile}` does not have Effigy's managed `/swapfile` active; its swap provision may have failed. {}",
+            colima_profile_recovery_advice(profile, colima_advice_mode())
         ));
     }
 }
@@ -849,10 +854,36 @@ mod tests {
         let mut diagnostics = DoctorRuntimeDiagnostics::default();
         let profile = "fixture";
         diagnostics.warnings.push(format!(
-            "Colima profile `{profile}` is running but unreachable, often after a host sleep or crash. Fix: `colima stop --profile {profile} && colima start --profile {profile}`. This stops every container on that profile."
+            "Colima profile `{profile}` is running but unreachable, often after a host sleep or crash. {}",
+            effigy_containers::exec::colima_profile_recovery_advice(
+                profile,
+                effigy_containers::exec::ColimaAdviceMode::Automated,
+            )
         ));
         assert!(diagnostics.warnings[0].contains("running but unreachable"));
-        assert!(diagnostics.warnings[0].contains("This stops every container"));
+        assert!(diagnostics.warnings[0].contains("shared across checkouts"));
+        assert!(!diagnostics.warnings[0].contains("colima stop"));
+    }
+
+    #[test]
+    fn doctor_colima_recovery_advice_covers_interactive_and_automated_callers() {
+        let interactive = effigy_containers::exec::colima_profile_recovery_advice(
+            "fixture",
+            effigy_containers::exec::ColimaAdviceMode::Interactive,
+        );
+        assert!(interactive.contains("colima stop --profile fixture"));
+        assert!(interactive.contains("stops every container on that profile"));
+
+        let automated = effigy_containers::exec::colima_profile_recovery_advice(
+            "fixture",
+            effigy_containers::exec::ColimaAdviceMode::Automated,
+        );
+        assert!(automated.contains("shared across checkouts"));
+        assert!(automated.contains("must not stop or restart it"));
+        assert!(automated.contains("report the degraded profile to the host operator"));
+        assert!(!automated.contains("colima stop"));
+        assert!(!automated.contains("effigy container profile repair"));
+        assert!(!automated.contains("effigy container profile reset-runtime"));
     }
 
     /// Prepend the fixture bin to PATH and pin the Colima backend. Holds the

@@ -1,6 +1,27 @@
 use super::*;
 
 #[test]
+fn unreachable_profile_advice_is_safe_for_automated_callers_and_actionable_for_people() {
+    let interactive = effigy_containers::exec::colima_profile_recovery_advice(
+        "fixture",
+        effigy_containers::exec::ColimaAdviceMode::Interactive,
+    );
+    assert!(interactive.contains("colima stop --profile fixture"));
+    assert!(interactive.contains("stops every container on that profile"));
+
+    let automated = effigy_containers::exec::colima_profile_recovery_advice(
+        "fixture",
+        effigy_containers::exec::ColimaAdviceMode::Automated,
+    );
+    assert!(automated.contains("shared across checkouts"));
+    assert!(automated.contains("must not stop or restart it"));
+    assert!(automated.contains("report the degraded profile to the host operator"));
+    assert!(!automated.contains("colima stop"));
+    assert!(!automated.contains("effigy container profile repair"));
+    assert!(!automated.contains("effigy container profile reset-runtime"));
+}
+
+#[test]
 fn unreachable_profile_wrapper_never_restarts_without_interactive_non_json_yes() {
     let detail = "profile is running but unreachable; repair command; stops every container";
     for (stdin_tty, stdout_tty, json, managed_pane) in [

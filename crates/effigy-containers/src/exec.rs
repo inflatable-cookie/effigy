@@ -37,7 +37,8 @@ pub use colima_cache_drop::{
     drop_colima_virtiofs_dentry_caches, release_colima_virtiofs_references_after_teardown,
 };
 pub use colima_runtime::{
-    colima_is_running, colima_is_running_with_deadline, colima_profile_warnings,
+    colima_advice_mode, colima_is_running, colima_is_running_with_deadline,
+    colima_profile_recovery_advice, colima_profile_warnings, ColimaAdviceMode,
     ensure_colima_running, ensure_colima_running_report, ensure_runtime_backend_running,
     ensure_runtime_backend_running_report, observe_runtime_backend, recover_colima_runtime,
     recover_colima_runtime_with_progress, reset_colima_runtime, reset_colima_runtime_with_progress,
