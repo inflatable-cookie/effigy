@@ -1453,6 +1453,10 @@ if [ "$cmd" = "workflow" ] && [ "$sub" = "run" ]; then
   printf '0\n' > "$state_dir/view_count"
   printf 'in_progress\n' > "$state_dir/run_401_status"
   printf '\n' > "$state_dir/run_401_conclusion"
+  dispatch_url="$(cat "$state_dir/dispatch_url" 2>/dev/null || true)"
+  if [ -n "$dispatch_url" ]; then
+    printf '%s\n' "$dispatch_url"
+  fi
   exit 0
 fi
 
@@ -1495,6 +1499,15 @@ if [ "$cmd" = "run" ] && [ "$sub" = "list" ]; then
   list_mode="$(cat "$state_dir/list_mode" 2>/dev/null || printf 'normal')"
   if [ "$list_mode" = "concurrent_same_tag" ]; then
     printf '[{{"databaseId":403,"displayTitle":"release: %s","url":"https://github.com/inflatable-cookie/effigy/actions/runs/403"}},{{"databaseId":401,"displayTitle":"release: %s","url":"https://github.com/inflatable-cookie/effigy/actions/runs/401"}},{{"databaseId":400,"displayTitle":"%s","url":"https://github.com/inflatable-cookie/effigy/actions/runs/400"}}]\n' "$tag" "$tag" "$pre_title"
+    exit 0
+  fi
+  if [ "$list_mode" = "staggered_same_tag" ]; then
+    stagger_at="$(cat "$state_dir/stagger_at" 2>/dev/null || printf '2')"
+    if [ "$count" -lt "$stagger_at" ]; then
+      printf '[{{"databaseId":401,"displayTitle":"release: %s","url":"https://github.com/inflatable-cookie/effigy/actions/runs/401"}},{{"databaseId":400,"displayTitle":"%s","url":"https://github.com/inflatable-cookie/effigy/actions/runs/400"}}]\n' "$tag" "$pre_title"
+    else
+      printf '[{{"databaseId":403,"displayTitle":"release: %s","url":"https://github.com/inflatable-cookie/effigy/actions/runs/403"}},{{"databaseId":401,"displayTitle":"release: %s","url":"https://github.com/inflatable-cookie/effigy/actions/runs/401"}},{{"databaseId":400,"displayTitle":"%s","url":"https://github.com/inflatable-cookie/effigy/actions/runs/400"}}]\n' "$tag" "$tag" "$pre_title"
+    fi
     exit 0
   fi
   printf '[{{"databaseId":401,"displayTitle":"release: %s","url":"https://github.com/inflatable-cookie/effigy/actions/runs/401"}},{{"databaseId":402,"displayTitle":"release: v0.2.3","url":"https://github.com/inflatable-cookie/effigy/actions/runs/402"}},{{"databaseId":400,"displayTitle":"%s","url":"https://github.com/inflatable-cookie/effigy/actions/runs/400"}}]\n' "$tag" "$pre_title"
@@ -1866,5 +1879,100 @@ fn publish_binaries_fails_closed_on_inventory_errors_and_concurrent_same_tag_dis
     assert!(
         !calls.contains("run watch"),
         "must not watch ambiguous concurrent dispatches: {calls}"
+    );
+
+    // 4. Staggered visibility during confirmation polls (first post-dispatch
+    //    listing shows only concurrent #401, second poll reveals #403): must
+    //    fail closed without watching #401 or writing `committed: true`.
+    fs::remove_file(state_dir.join("calls.log")).expect("clear calls log");
+    fs::remove_file(state_dir.join("dispatched_tag")).expect("clear dispatched tag");
+    fs::write(state_dir.join("delay_lists"), "0").expect("delay_lists");
+    fs::write(state_dir.join("list_mode"), "staggered_same_tag").expect("list_mode");
+    fs::write(state_dir.join("stagger_at"), "2").expect("stagger_at");
+    let staggered_output_path = workspace.join("release-output-staggered.json");
+    let staggered = run_publish_binaries_script(
+        repo_root,
+        &bin_dir,
+        &input_path,
+        &staggered_output_path,
+        &[],
+        None,
+    );
+    assert!(
+        !staggered.status.success(),
+        "staggered concurrent same-tag dispatch must fail closed"
+    );
+    let stderr = String::from_utf8_lossy(&staggered.stderr);
+    assert!(
+        stderr.contains("multiple release-binaries.yml runs matched v0.2.5"),
+        "expected ambiguity diagnostic on staggered stderr, got: {stderr}"
+    );
+    assert!(
+        !staggered_output_path.exists(),
+        "must not write committed output on staggered concurrent dispatches"
+    );
+    let calls = fs::read_to_string(state_dir.join("calls.log")).expect("calls log");
+    assert!(
+        !calls.contains("run watch"),
+        "must not watch concurrent #401 when staggered #403 appears: {calls}"
+    );
+
+    // 5. Staggered visibility appearing after watch starts (fourth list, during
+    //    post-watch verification): must still fail closed before writing output.
+    fs::remove_file(state_dir.join("calls.log")).expect("clear calls log");
+    fs::remove_file(state_dir.join("dispatched_tag")).expect("clear dispatched tag");
+    fs::write(state_dir.join("stagger_at"), "4").expect("stagger_at");
+    let post_stagger_output_path = workspace.join("release-output-post-stagger.json");
+    let post_stagger = run_publish_binaries_script(
+        repo_root,
+        &bin_dir,
+        &input_path,
+        &post_stagger_output_path,
+        &[],
+        None,
+    );
+    assert!(
+        !post_stagger.status.success(),
+        "post-watch staggered concurrent same-tag dispatch must fail closed"
+    );
+    assert!(
+        !post_stagger_output_path.exists(),
+        "must not write committed output when post-watch inventory shows #403"
+    );
+
+    // 6. Dispatch-specific correlation: when `gh workflow run` returns the
+    //    created run URL directly, concurrent same-tag runs in `gh run list`
+    //    do not prevent watching and attributing the exact dispatched run.
+    fs::remove_file(state_dir.join("calls.log")).expect("clear calls log");
+    fs::remove_file(state_dir.join("dispatched_tag")).expect("clear dispatched tag");
+    fs::write(state_dir.join("list_mode"), "concurrent_same_tag").expect("list_mode");
+    fs::write(
+        state_dir.join("dispatch_url"),
+        "https://github.com/inflatable-cookie/effigy/actions/runs/401\n",
+    )
+    .expect("dispatch_url");
+    let correlated_output_path = workspace.join("release-output-correlated.json");
+    let correlated = run_publish_binaries_script(
+        repo_root,
+        &bin_dir,
+        &input_path,
+        &correlated_output_path,
+        &[],
+        None,
+    );
+    assert!(
+        correlated.status.success(),
+        "dispatch-correlated run failed: stdout={}, stderr={}",
+        String::from_utf8_lossy(&correlated.stdout),
+        String::from_utf8_lossy(&correlated.stderr)
+    );
+    let parsed: Value = serde_json::from_str(
+        &fs::read_to_string(&correlated_output_path).expect("read correlated output"),
+    )
+    .expect("parse correlated output");
+    assert_eq!(parsed["committed"], true);
+    assert_eq!(
+        parsed["destinations"][0],
+        "workflow:https://github.com/inflatable-cookie/effigy/actions/runs/401"
     );
 }
