@@ -1668,3 +1668,322 @@ fn a_parked_foreground_holder_names_the_release_command() {
     let warnings = memory.close(effigy_kernel::outcome::WorkloadOutcome::Interrupted);
     assert!(warnings.is_empty(), "{warnings:?}");
 }
+
+fn acknowledge(checkout: &Path, run: &str, json: bool) -> Result<String, RunnerError> {
+    run_runs(RunsArgs {
+        repo_override: Some(checkout.to_path_buf()),
+        output_json: json,
+        action: RunsAction::Acknowledge {
+            run: run.to_owned(),
+        },
+    })
+}
+
+/// `effigy run acknowledge <RUN_ID>` refuses while any recorded process PID is
+/// alive (without signalling it), surfaces the hint on `run status`, and then
+/// sets `runs.residue_ack` via the kernel store once dead so subsequent runs admit.
+#[test]
+fn run_acknowledge_refuses_live_pid_then_clears_residue_and_reports_json_and_text() {
+    let directory = tempfile::tempdir().expect("checkout");
+    let target = target(directory.path(), "ack-control");
+    let request = || TaskRunRequest {
+        target: &target,
+        lock_wait_ms: 0,
+        custody: true,
+        scratch: false,
+        managed_run_token: None,
+        args: &[],
+        key: None,
+        admission: None,
+        cwd: None,
+    };
+    let run = TaskRun::begin(request()).expect("initial run admitted");
+    let id = run.id();
+    let warnings = run.close(effigy_kernel::outcome::WorkloadOutcome::Succeeded);
+    assert!(warnings.is_empty(), "{warnings:?}");
+
+    let mut live_child = std::process::Command::new("/bin/sleep")
+        .arg("30")
+        .spawn()
+        .expect("spawn sleep");
+    let live_pid = live_child.id();
+    let live_identity = effigy_kernel::ident::process_identity(live_pid)
+        .verified()
+        .cloned()
+        .expect("live child identity");
+    let live_json = serde_json::to_string(&live_identity).expect("serialize live identity");
+
+    let state_root = checkout_effects_root(directory.path()).expect("effects root");
+    {
+        let conn =
+            rusqlite::Connection::open(state_root.path().join(effigy_kernel::store::DB_NAME))
+                .expect("open db");
+        conn.execute(
+            "UPDATE runs SET phase='closed', cleanup_outcome='incomplete', residue_ack=NULL, \
+             owner_identity=NULL, supervisor_identity=NULL, sentinel_identity=?2 WHERE run_id=?1",
+            rusqlite::params![id.to_string(), live_json],
+        )
+        .expect("stage closed incomplete run");
+    }
+
+    let status_text = run_runs(RunsArgs {
+        repo_override: Some(directory.path().to_path_buf()),
+        output_json: false,
+        action: RunsAction::Status {
+            run: id.to_string(),
+        },
+    })
+    .expect("run status");
+    assert!(
+        status_text.contains(&format!("effigy run acknowledge {id}")),
+        "{status_text}"
+    );
+
+    let refused =
+        acknowledge(directory.path(), &id.to_string(), false).expect_err("live pid must refuse");
+    let detail = refused.to_string();
+    assert!(detail.contains(&live_pid.to_string()), "{detail}");
+    assert!(detail.contains("signals nothing"), "{detail}");
+
+    let _ = live_child.kill();
+    let _ = live_child.wait();
+
+    let json_text =
+        acknowledge(directory.path(), &id.to_string(), true).expect("acknowledge json succeeds");
+    let payload: serde_json::Value = serde_json::from_str(&json_text).expect("valid json");
+    assert_eq!(payload["schema"], "effigy.run.v1");
+    assert_eq!(payload["schema_version"], 1);
+    assert_eq!(payload["acknowledged"], true);
+    assert_eq!(payload["run"], id.to_string());
+    assert!(payload["acknowledged_at_epoch_ms"].as_i64().is_some());
+    assert_eq!(
+        payload["removed_interpolation_files"],
+        serde_json::json!([])
+    );
+    assert_eq!(
+        payload["skipped_interpolation_files"],
+        serde_json::json!([])
+    );
+
+    let again =
+        acknowledge(directory.path(), &id.to_string(), false).expect_err("second ack must refuse");
+    assert!(
+        again.to_string().contains("already acknowledged"),
+        "{again}"
+    );
+
+    let successor = TaskRun::begin(request()).expect("acknowledged run unblocks successor");
+    let warnings = successor.close(effigy_kernel::outcome::WorkloadOutcome::Succeeded);
+    assert!(warnings.is_empty(), "{warnings:?}");
+}
+
+#[test]
+fn run_acknowledge_reports_skipped_pending_interpolation_and_distinguishes_terminal_records() {
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+    let _lock = crate::contract_test_support::lock_test();
+    let home = tempfile::tempdir().expect("effigy home");
+    let effigy_home = home.path().join(".effigy");
+    let env_dir = effigy_home.join("compose-env");
+    std::fs::create_dir_all(&env_dir).unwrap();
+    std::fs::set_permissions(&env_dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let unbound_file = env_dir.join("compose-pending.env");
+    {
+        let _f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&unbound_file)
+            .unwrap();
+    }
+    let _env = crate::contract_test_support::EnvGuard::set_many(&[(
+        "EFFIGY_TEST_CONTAINERS_HOME",
+        Some(effigy_home.display().to_string()),
+    )]);
+
+    let mut dead_child = std::process::Command::new("/bin/sleep")
+        .arg("30")
+        .spawn()
+        .expect("spawn sleep");
+    let dead_id = effigy_kernel::ident::process_identity(dead_child.id())
+        .verified()
+        .cloned()
+        .expect("dead child identity");
+    let _ = dead_child.kill();
+    let _ = dead_child.wait();
+
+    let directory = tempfile::tempdir().expect("checkout");
+    let stage_pending_run = |task_name: &str| {
+        let tgt = target(directory.path(), task_name);
+        let run = TaskRun::begin(TaskRunRequest {
+            target: &tgt,
+            lock_wait_ms: 0,
+            custody: true,
+            scratch: false,
+            managed_run_token: None,
+            args: &[],
+            key: None,
+            admission: None,
+            cwd: None,
+        })
+        .expect("run admitted");
+        let id = run.id();
+        let warnings = run.close(effigy_kernel::outcome::WorkloadOutcome::Succeeded);
+        assert!(warnings.is_empty(), "{warnings:?}");
+
+        let state_root = checkout_effects_root(directory.path()).expect("effects root");
+        let conn =
+            rusqlite::Connection::open(state_root.path().join(effigy_kernel::store::DB_NAME))
+                .expect("open db");
+        let resource = effigy_kernel::id::ResourceId::environment(
+            effigy_kernel::id::CheckoutId::new(effigy_kernel::id::CheckoutKind::Primary, [1; 16]),
+            "pending",
+        )
+        .unwrap();
+        let spec = effigy_kernel::run::EffectSpec {
+            target: effigy_kernel::run::Fence {
+                resource,
+                generation: effigy_kernel::id::Generation::new(1),
+            },
+            kind: "kernel:process".to_owned(),
+            payload: serde_json::Value::Null,
+            settlement: effigy_kernel::run::Settlement::Release(serde_json::Value::Null),
+            required: true,
+        };
+        let receipt = serde_json::json!({
+            "interpolation_v1": {
+                "identity": dead_id,
+                "pgid": 0,
+                "nonce": "pending-nonce",
+                "grace_millis": 100,
+            },
+            "binding": { "pending": true },
+        });
+        conn.execute(
+            "UPDATE runs SET phase='closed', cleanup_outcome='incomplete', residue_ack=NULL, \
+             owner_identity=NULL, supervisor_identity=NULL WHERE run_id=?1",
+            [id.to_string()],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO events(run_id, seq, effect_id, kind, target, settlement, state, receipt, error, wall_time) \
+             VALUES (?1, 1, '1', 'kernel:process', ?2, ?3, 'residue', ?4, 'retained interpolation requires its live descriptor owner', 1)",
+            rusqlite::params![
+                id.to_string(),
+                serde_json::to_string(&spec).unwrap(),
+                serde_json::to_string(&spec.settlement).unwrap(),
+                receipt.to_string()
+            ],
+        )
+        .unwrap();
+        id
+    };
+
+    let human_id = stage_pending_run("ack-pending-human");
+    let human_text =
+        acknowledge(directory.path(), &human_id.to_string(), false).expect("human acknowledge");
+    assert!(human_text.contains("residue acknowledged"), "{human_text}");
+    assert!(
+        human_text.contains("warning: skipped interpolation cleanup for"),
+        "{human_text}"
+    );
+    assert!(human_text.contains("compose-env"), "{human_text}");
+    assert!(human_text.contains("pending"), "{human_text}");
+    assert!(unbound_file.exists());
+
+    let json_id = stage_pending_run("ack-pending-json");
+    let json_text =
+        acknowledge(directory.path(), &json_id.to_string(), true).expect("json acknowledge");
+    let payload: serde_json::Value = serde_json::from_str(&json_text).expect("valid json");
+    let skipped = payload["skipped_interpolation_files"]
+        .as_array()
+        .expect("skipped array");
+    assert_eq!(skipped.len(), 1, "{payload:?}");
+    assert!(
+        skipped[0]["path"]
+            .as_str()
+            .is_some_and(|p| p.ends_with("compose-env")),
+        "{payload:?}"
+    );
+    assert!(
+        skipped[0]["reason"]
+            .as_str()
+            .is_some_and(|r| r.contains("pending")),
+        "{payload:?}"
+    );
+
+    // Finding 3: foreground vs terminal-marker refusal wording.
+    let fg_target = target(directory.path(), "ack-fg-vs-terminal");
+    let fg = TaskRun::begin_foreground(TaskRunRequest {
+        target: &fg_target,
+        lock_wait_ms: 0,
+        custody: false,
+        scratch: false,
+        managed_run_token: None,
+        args: &[],
+        key: None,
+        admission: None,
+        cwd: None,
+    })
+    .expect("foreground admitted");
+    let fg_id = fg.id();
+    let fg_err = acknowledge(directory.path(), &fg_id.to_string(), false).unwrap_err();
+    assert!(fg_err.to_string().contains("foreground run"), "{fg_err}");
+
+    let checkout_id = std::fs::read_dir(directory.path().join(".effigy/state/gates"))
+        .expect("gate scopes")
+        .flatten()
+        .filter(|entry| entry.path().is_dir())
+        .flat_map(|scope| {
+            std::fs::read_dir(scope.path())
+                .into_iter()
+                .flatten()
+                .flatten()
+        })
+        .find_map(|gate| {
+            let body = std::fs::read_to_string(gate.path()).ok()?;
+            let value: serde_json::Value = serde_json::from_str(&body).ok()?;
+            (value["run"] == fg_id.to_string())
+                .then(|| {
+                    serde_json::from_value::<effigy_kernel::id::CheckoutId>(
+                        value["foreground"]["owner"]["scope"]["Checkout"].clone(),
+                    )
+                    .ok()
+                })
+                .flatten()
+        })
+        .expect("checkout id on foreground gate")
+        .text();
+    let warnings = fg.close(effigy_kernel::outcome::WorkloadOutcome::Interrupted);
+    assert!(warnings.is_empty(), "{warnings:?}");
+    effigy_kernel::run::record_terminal(
+        &effect_context(OpenReason::Shell),
+        checkout_effects_root(directory.path()).expect("checkout journal"),
+        &effigy_kernel::run::TerminalRecord {
+            run_id: fg_id.to_string(),
+            checkout: checkout_id,
+            boot: effigy_kernel::ident::boot_identity()
+                .verified()
+                .cloned()
+                .expect("boot identity")
+                .as_str()
+                .to_owned(),
+            task: "ack-fg-vs-terminal".into(),
+            outcome: "interrupted".into(),
+            exit_code: None,
+            signal: None,
+            cleanup: "complete".into(),
+            closed_at_ms: 1,
+        },
+    )
+    .expect("record terminal");
+    let terminal_err = acknowledge(directory.path(), &fg_id.to_string(), false).unwrap_err();
+    assert!(
+        terminal_err.to_string().contains("terminal marker"),
+        "{terminal_err}"
+    );
+    assert!(
+        !terminal_err.to_string().contains("is a foreground run"),
+        "{terminal_err}"
+    );
+}

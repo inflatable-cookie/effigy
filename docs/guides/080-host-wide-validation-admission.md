@@ -99,6 +99,7 @@ effigy run status ci-1234                 # by key or run id
 effigy run logs ci-1234 --follow          # output until it settles, then its exit code
 effigy run stop ci-1234                   # stop it and its whole process group
 effigy run release ci-1234                # drop a parked sentinel after proving its group is empty
+effigy run acknowledge ci-1234            # verify recorded PIDs are dead, clean orphaned compose-env files, and set residue_ack
 ```
 
 A parked sentinel is a foreground memory guard whose owner is gone and whose
@@ -108,6 +109,18 @@ and print `effigy run release <run>` when a parked snapshot exists. Release
 re-inventories the same membership the sentinel uses; live PIDs are named and
 nothing is signalled. An older sentinel that never wrote a parked snapshot
 cannot handle the request.
+
+A `closed` run with `incomplete` cleanup and unacknowledged residue blocks later
+admissions for the same owner (`PredecessorUnsettled`). `effigy run acknowledge
+<run>` verifies the run is `closed`, `incomplete`, and unacknowledged, re-checks
+that every recorded owner, supervisor, sentinel, and residue effect process or
+process group is dead (refusing by PID and signalling nothing if any process is
+alive), removes any verified-unheld orphaned `compose-env` interpolation file,
+and records `residue_ack` through the kernel store so later runs admit again.
+When an interpolation binding is still `pending` or its directory or file stamp
+does not match on disk, `run acknowledge` preserves the unverified path and
+reports it with its reason in both human warnings and `--json` output
+(`skipped_interpolation_files`).
 
 A repeat of `--run-id ci-1234` never starts a second run: it attaches to the
 first and exits with that run's result, even when the run already finished.

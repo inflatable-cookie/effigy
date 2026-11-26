@@ -333,7 +333,15 @@ fn with_owner(
         &cleanup,
         &mut adapter,
     )
-    .map_err(error)?;
+    .map_err(|err| match err {
+        effigy_kernel::run::RunError::PredecessorUnsettled { run, effects } => {
+            ContainerPolicyError::PredecessorUnsettled {
+                run: run.to_string(),
+                effects: effects.len(),
+            }
+        }
+        other => error(other),
+    })?;
     let result = effect(&mut run).map_err(error);
     let outcome = run.settle(&cleanup, &mut adapter).map_err(error)?;
     if outcome.cleanup() != CleanupOutcome::Complete {
@@ -405,4 +413,24 @@ pub fn verify(policy: &EffectiveContainerPolicy) -> Result<(), ContainerPolicyEr
         return Err(error("desired environment generation changed"));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn container_render_predecessor_unsettled_names_acknowledge_hint() {
+        let run_id = "01JABCDEF1234567890ABCDEF";
+        let err = ContainerPolicyError::PredecessorUnsettled {
+            run: run_id.to_owned(),
+            effects: 1,
+        };
+        let msg = err.to_string();
+        assert!(
+            msg.contains(&format!("effigy run acknowledge {run_id}")),
+            "{msg}"
+        );
+        assert!(!msg.contains("stop what holds it"), "{msg}");
+    }
 }

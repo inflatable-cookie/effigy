@@ -1083,8 +1083,14 @@ bounded observations. History never stands in for current state.
 - A stale stop request against a successor generation is refused.
 - A non-closed predecessor and a `Closed` predecessor with `Incomplete`
   cleanup both get a settle attempt from the next `begin`. With residue left,
-  `begin` refuses `PredecessorUnsettled`; with an acknowledgement it admits,
-  touches nothing, and the residue stays listed and retried.
+  `begin` refuses `PredecessorUnsettled` and directs the operator to
+  `effigy run acknowledge <RUN_ID>`. `effigy run acknowledge <RUN_ID>` verifies
+  the run is `closed`, `incomplete`, and unacknowledged, re-checks that every
+  recorded owner, supervisor, sentinel, and residue effect PID/group is dead
+  (refusing by PID and signalling nothing if anything is alive), cleans any
+  orphaned interpolation file once verified unheld, and records `runs.residue_ack`
+  through the kernel store. With an acknowledgement `begin` admits, touches
+  nothing, and the residue stays listed and retried.
 
 ### 5.7 `OwnedProcess` and `SignalRouter`
 

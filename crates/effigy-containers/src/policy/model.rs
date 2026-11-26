@@ -256,6 +256,10 @@ pub enum ContainerPolicyError {
     Manifest(ManifestError),
     Catalog(CatalogError),
     TaskInvocation(String),
+    PredecessorUnsettled {
+        run: String,
+        effects: usize,
+    },
     Read {
         path: PathBuf,
         error: std::io::Error,
@@ -268,6 +272,10 @@ impl std::fmt::Display for ContainerPolicyError {
             Self::Manifest(error) => write!(f, "{error}"),
             Self::Catalog(error) => write!(f, "{error}"),
             Self::TaskInvocation(message) => write!(f, "{message}"),
+            Self::PredecessorUnsettled { run, effects } => write!(
+                f,
+                "container render: run {run} has {effects} unsettled effect(s) from incomplete cleanup; inspect with `effigy run status {run}` and acknowledge dead residue with `effigy run acknowledge {run}`"
+            ),
             Self::Read { path, error } => {
                 write!(f, "failed to read {}: {error}", path.display())
             }

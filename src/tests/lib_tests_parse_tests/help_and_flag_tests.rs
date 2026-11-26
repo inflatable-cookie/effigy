@@ -289,6 +289,17 @@ fn parse_command_parses_run_control() {
             },
         })
     );
+    assert_eq!(
+        parse_command(["run", "acknowledge", "ci-1234", "--json"].map(str::to_owned))
+            .expect("run acknowledge"),
+        Command::Runs(RunsArgs {
+            repo_override: None,
+            output_json: true,
+            action: RunsAction::Acknowledge {
+                run: "ci-1234".to_owned(),
+            },
+        })
+    );
     assert!(parse_command(["run".to_owned(), "status".to_owned()]).is_err());
     assert_eq!(
         parse_command(["run".to_owned()]).expect("bare run"),

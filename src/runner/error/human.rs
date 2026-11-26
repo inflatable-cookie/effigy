@@ -112,6 +112,11 @@ pub(super) fn mapped(error: &RunnerError) -> Option<HumanError> {
             gateway_runtime_target(phase, detail)
         }
         RunnerError::GatewayEndpointStore { kind, reason } => gateway_endpoint_store(*kind, reason),
+        RunnerError::PredecessorUnsettled {
+            run,
+            effects,
+            context,
+        } => predecessor_unsettled(run, *effects, *context),
         _ => return None,
     };
     Some(human)
@@ -526,6 +531,20 @@ fn detached_activation_failed(container: Option<&str>, cause: &RunnerError) -> H
         None => "Container did not finish starting".to_owned(),
     };
     let child = cause.human_error();
+    if let RunnerError::PredecessorUnsettled { run, .. } = cause.detached_activation_cause() {
+        let mut human = HumanError::new(headline)
+            .explain(child.what_failed())
+            .next_action(format!(
+                "Inspect with `effigy run status {run}`, verify its processes are gone, then run `effigy run acknowledge {run}`"
+            ));
+        for line in child.explanation_lines() {
+            human = human.explain(line);
+        }
+        for (label, value) in child.detail_entries() {
+            human = human.detail(label, value);
+        }
+        return human;
+    }
     let mut human = HumanError::new(headline)
         .explain(
             "Compose left the stack as it was: nothing was torn down, but readiness and gateway routes are unverified.",
@@ -732,6 +751,22 @@ fn environment_unavailable(capability: &str, detail: &str) -> HumanError {
     ))
     .explain(detail)
     .detail("capability", capability)
+}
+
+fn predecessor_unsettled(run: &str, effects: usize, context: Option<&str>) -> HumanError {
+    let headline = match context {
+        Some(context) => format!("{context}: run {run} left unsettled residue"),
+        None => format!("Run {run} left unsettled residue"),
+    };
+    HumanError::new(headline)
+        .explain(format!(
+            "Run {run} closed with incomplete cleanup ({effects} unresolved effect(s))."
+        ))
+        .next_action(format!(
+            "Inspect with `effigy run status {run}`, verify its processes are gone, then run `effigy run acknowledge {run}`"
+        ))
+        .detail("run", run)
+        .detail("unresolved_effects", effects.to_string())
 }
 
 // ----------------------------------------------------------------- gateway

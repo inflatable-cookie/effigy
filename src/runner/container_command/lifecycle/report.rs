@@ -126,6 +126,43 @@ pub(super) fn detached_activation_failure(
         }
         return RunnerError::task_invocation(message);
     }
+    if let RunnerError::PredecessorUnsettled { run, .. } = inner {
+        let ack_command = format!("effigy run acknowledge {run}");
+        let message = format!(
+            "Detached activation was blocked before Compose ran by unsettled residue from run {run}."
+        );
+        if output_json {
+            let rendered = serde_json::json!({
+                "state": "unavailable",
+                "phase": "detached_activation",
+                "activation_stage": operation.stage.unwrap_or("preparation"),
+                "preparation_step": operation.preparation_step.filter(|_| operation.stage == Some("preparation")),
+                "identity": operation.identity,
+                "failure_kind": "predecessor_unsettled",
+                "cause": sanitized_failure_cause(inner),
+                "blocking_run": run,
+                "readiness": "unverified",
+                "exposure": "unverified",
+                "recovery": ack_command,
+                "stop": "effigy container down",
+                "retirement_removes_mutable_data": true,
+                "message": message,
+            });
+            let human = effigy_ui::HumanError::new(sanitized_failure_cause(inner))
+                .evidence(&message)
+                .evidence("failure_kind: predecessor_unsettled")
+                .next_action(format!(
+                    "Inspect with `effigy run status {run}`, verify its processes are gone, then run `{ack_command}`"
+                ));
+            return RunnerError::structured_json(
+                rendered,
+                false,
+                human,
+                Some(error.workload_outcome()),
+            );
+        }
+        return RunnerError::wrap_detached_activation(operation.container.clone(), error);
+    }
     let message = match inner {
         RunnerError::ManagedHostReadiness { diagnostic, .. } => {
             format!("Detached activation did not complete: {diagnostic}")
@@ -369,5 +406,42 @@ pub(super) fn annotate_managed_host_listeners(
             "[host listener] {} ready at {} -> {}",
             listener.name, listener.address, listener.public_url
         ));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detached_predecessor_unsettled_json_and_text_name_acknowledge() {
+        let state = DetachedOperationState {
+            active: true,
+            stage: Some("preparation"),
+            preparation_step: Some("render"),
+            identity: Some("environment `web` at /repo".to_owned()),
+            container: Some("web".to_owned()),
+        };
+        let err = detached_activation_failure(
+            &state,
+            true,
+            RunnerError::PredecessorUnsettled {
+                run: "01JABCDEF1234567890ABCDEF".to_owned(),
+                effects: 1,
+                context: Some("container environment"),
+            },
+        );
+        let value = err.json_error_value().expect("json payload");
+        assert_eq!(value["failure_kind"], "predecessor_unsettled");
+        assert_eq!(value["blocking_run"], "01JABCDEF1234567890ABCDEF");
+        assert_eq!(
+            value["recovery"],
+            "effigy run acknowledge 01JABCDEF1234567890ABCDEF"
+        );
+        let rendered = err.human_error().render_text();
+        assert!(
+            rendered.contains("effigy run acknowledge 01JABCDEF1234567890ABCDEF"),
+            "{rendered}"
+        );
     }
 }

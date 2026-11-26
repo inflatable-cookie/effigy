@@ -136,6 +136,12 @@ pub enum RunnerError {
         detail: String,
         details_json: String,
     },
+    /// A closed predecessor run left unacknowledged cleanup residue (K5).
+    PredecessorUnsettled {
+        run: String,
+        effects: usize,
+        context: Option<&'static str>,
+    },
     GatewayRouteTable {
         phase: &'static str,
         path: PathBuf,
@@ -504,6 +510,7 @@ impl RunnerError {
             | RunnerError::RunSettled { .. }
             | RunnerError::RunSettledJson { .. }
             | RunnerError::RunKeyExists { .. }
+            | RunnerError::PredecessorUnsettled { .. }
             | RunnerError::AdmissionRefused { .. }
             | RunnerError::RunDeadline { .. }
             | RunnerError::TaskLockConflict(_)
@@ -1352,6 +1359,13 @@ impl From<effigy_containers::ContainerPolicyError> for RunnerError {
             }
             effigy_containers::ContainerPolicyError::TaskInvocation(message) => {
                 Self::task_invocation(message)
+            }
+            effigy_containers::ContainerPolicyError::PredecessorUnsettled { run, effects } => {
+                Self::PredecessorUnsettled {
+                    run,
+                    effects,
+                    context: Some("container render"),
+                }
             }
             effigy_containers::ContainerPolicyError::Read { path, error } => {
                 Self::task_invocation_failed_read(&path, error)

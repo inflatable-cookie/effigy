@@ -883,6 +883,9 @@ pub enum RunsAction {
     /// `effigy run release <run> [--wait-ms N]`: drop a parked sentinel after
     /// proving its process group is empty. Never signals task processes.
     Release { run: String, wait_ms: Option<u64> },
+    /// `effigy run acknowledge <run>`: acknowledge verified-dead `closed` +
+    /// `incomplete` residue so subsequent runs on that owner can proceed.
+    Acknowledge { run: String },
 }
 
 /// Bounded QA-group surfaces under `effigy tasks` (contract 051).
