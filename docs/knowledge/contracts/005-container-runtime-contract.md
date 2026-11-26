@@ -2826,9 +2826,16 @@ data-service stop is not a teardown.
 
 **Sweep.** Only crashes and ended owners wait for the sweep
 (`HoldReleased` keeps volumes, `OwnerEnded` removes them), run before and during
-acquisition and by `effigy container prune`. A release builder whose previous
-lease was returned may be recreated even though its environment record is still
-active.
+acquisition and by `effigy container prune`. Pre-acquisition and subsequent wait
+slices run an ended-only sweep that inspects Barge state first and makes zero
+Colima calls when no lease on the profile has ended; only the first full-pool
+wait slice and `effigy container prune` run an orphan `list_containers` scan.
+Per-profile sweeps serialize across processes on an advisory file lock under
+`<barge-state>/.effigy-sweep-locks` (non-blocking during acquisition wait slices,
+blocking in `effigy container prune`) and re-read Barge status after acquiring
+the lock so concurrent waiters skip already-returned leases. A release builder
+whose previous lease was returned may be recreated even though its environment
+record is still active.
 
 **Renewal.** When the owner of a `HoldReleased` lease acquires it again, the
 lease is returned and a new one taken, without a teardown. Barge never revives
