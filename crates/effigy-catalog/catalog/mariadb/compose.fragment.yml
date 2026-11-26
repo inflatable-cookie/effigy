@@ -1,8 +1,8 @@
 services:
   {{ service_name }}:
     image: mariadb:{{ version }}
-    # Run under an init process so the children its periodic health check
-    # leaves behind are reaped, not kept as zombies under mariadbd (effigy#1130).
+    # Run under an init process, which reaps orphaned children such as those a
+    # periodic health check can leave under mariadbd (effigy#1130).
     init: true
     environment:
       MYSQL_ROOT_PASSWORD: "{{ password }}"

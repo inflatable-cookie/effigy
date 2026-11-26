@@ -597,10 +597,11 @@ A catalog service whose periodic health check leaves children behind declares
 accept the key. Docker Compose 5.5.1 keeps it in `docker compose config` and
 runs `docker-init` as PID 1. `nerdctl compose` maps it to `--init`, which runs
 `tini`: the containerd `effigy` profile's VM ships `tini`, and `nerdctl run
---init` is present in its nerdctl 2.4.2. A disposable containerd profile
-showed `nerdctl compose` 2.3.1 translating `init: true` to `--init`, with
-`tini` as PID 1, healthy checks and a clean SIGTERM stop. The `effigy` profile's
-2.4.2 is not covered by that run (see the MariaDB section in
+--init` is present in its nerdctl 2.4.2. On a disposable profile with that
+nerdctl 2.4.2 and the same containerd and runc, `nerdctl compose` translated
+`init: true` to `--init`, with `tini` as PID 1, healthy checks and a clean
+SIGTERM stop. That run did not reproduce the zombie condition, so the init
+change is not evidence of zombie reaping (see the MariaDB section in
 `005-container-runtime-contract.md`).
 
 ## Validation direction
