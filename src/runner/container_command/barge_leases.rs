@@ -138,6 +138,17 @@ pub(in crate::runner) struct SweptOrphan {
     pub removed_count: usize,
 }
 
+/// One orphaned `barge.lease`-labelled stack skipped because a lease holds `(profile, project)`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(in crate::runner) struct SkippedOrphan {
+    pub lease_id: String,
+    pub held_by_lease_id: String,
+    pub profile: String,
+    pub project: String,
+    pub containers: Vec<String>,
+    pub reason: String,
+}
+
 /// One lease or orphan whose teardown failed or whose profile was stopped.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(in crate::runner) struct SweepFailure {
@@ -156,6 +167,7 @@ pub(in crate::runner) struct SweepReport {
     pub stopped_profiles: Vec<String>,
     pub returned_leases: Vec<SweptLease>,
     pub orphans_torn_down: Vec<SweptOrphan>,
+    pub skipped_orphans: Vec<SkippedOrphan>,
     pub retained_failures: Vec<SweepFailure>,
 }
 
@@ -166,19 +178,19 @@ impl SweepReport {
 }
 
 /// Open the host Barge account, returning `Ok(None)` when Barge is unconfigured
-/// or unavailable on this machine.
+/// or unavailable on this machine (`NotFound` or `Unsupported`). Unreadable or
+/// corrupt state (`UnknownState`, `Io`) surfaces as an error so an orphan sweep
+/// never runs against an empty fallback lease list.
 pub(in crate::runner) fn open_host_barge() -> Result<Option<Barge>, RunnerError> {
-    match Barge::open() {
+    classify_open_barge_result(Barge::open())
+}
+
+fn classify_open_barge_result(
+    result: std::result::Result<Barge, barge::Error>,
+) -> Result<Option<Barge>, RunnerError> {
+    match result {
         Ok(barge) => Ok(Some(barge)),
-        Err(error)
-            if matches!(
-                error.kind(),
-                ErrorKind::NotFound
-                    | ErrorKind::UnknownState
-                    | ErrorKind::Unsupported
-                    | ErrorKind::Io
-            ) =>
-        {
+        Err(error) if matches!(error.kind(), ErrorKind::NotFound | ErrorKind::Unsupported) => {
             Ok(None)
         }
         Err(error) => Err(barge_error(error)),
@@ -255,10 +267,13 @@ pub(in crate::runner) fn sweep_profile_leases_with(
     runtime: &dyn LeaseRuntime,
     profile: &str,
 ) -> Result<SweepReport, RunnerError> {
-    let statuses = read_container_statuses(barge)?;
+    let Some(barge) = barge else {
+        return Ok(SweepReport::default());
+    };
+    let statuses = barge.container_status().map_err(barge_error)?;
     let running: BTreeSet<String> = runtime.running_profiles()?.into_iter().collect();
     let mut report = SweepReport {
-        barge_managed: barge.is_some(),
+        barge_managed: true,
         ..SweepReport::default()
     };
 
@@ -294,10 +309,13 @@ pub(in crate::runner) fn sweep_all_running_profiles_with(
     barge: Option<&Barge>,
     runtime: &dyn LeaseRuntime,
 ) -> Result<SweepReport, RunnerError> {
-    let statuses = read_container_statuses(barge)?;
+    let Some(barge) = barge else {
+        return Ok(SweepReport::default());
+    };
+    let statuses = barge.container_status().map_err(barge_error)?;
     let running: BTreeSet<String> = runtime.running_profiles()?.into_iter().collect();
     let mut report = SweepReport {
-        barge_managed: barge.is_some(),
+        barge_managed: true,
         ..SweepReport::default()
     };
     let mut known_ids: HashSet<String> = statuses.iter().map(|lease| lease.id.clone()).collect();
@@ -326,15 +344,6 @@ pub(in crate::runner) fn sweep_all_running_profiles_with(
     Ok(report)
 }
 
-fn read_container_statuses(
-    barge: Option<&Barge>,
-) -> Result<Vec<ContainerLeaseStatus>, RunnerError> {
-    let Some(barge) = barge else {
-        return Ok(Vec::new());
-    };
-    barge.container_status().map_err(barge_error)
-}
-
 fn record_stopped_profile_leases(
     statuses: &[ContainerLeaseStatus],
     profile: &str,
@@ -361,62 +370,60 @@ fn record_stopped_lease(lease: &ContainerLeaseStatus, report: &mut SweepReport) 
 }
 
 fn sweep_running_profile(
-    barge: Option<&Barge>,
+    barge: &Barge,
     runtime: &dyn LeaseRuntime,
     profile: &str,
     statuses: &[ContainerLeaseStatus],
     known_ids: &mut HashSet<String>,
     report: &mut SweepReport,
 ) -> Result<(), RunnerError> {
-    if let Some(barge) = barge {
-        for lease in statuses {
-            if lease.profile != profile {
-                continue;
+    for lease in statuses {
+        if lease.profile != profile {
+            continue;
+        }
+        let Some(ending) = lease.ended else {
+            continue;
+        };
+        match runtime.teardown_project(&lease.profile, &lease.project, ending.remove_volumes) {
+            Ok(outcome) if outcome.ok() => {
+                if let Err(error) = barge.container_return(&lease.id) {
+                    report.retained_failures.push(SweepFailure {
+                        lease_id: lease.id.clone(),
+                        profile: lease.profile.clone(),
+                        project: lease.project.clone(),
+                        kind: "ended_lease".to_owned(),
+                        error: format!(
+                            "stack was torn down, but returning lease to Barge failed: {error}"
+                        ),
+                    });
+                } else {
+                    report.returned_leases.push(SweptLease {
+                        id: lease.id.clone(),
+                        profile: lease.profile.clone(),
+                        project: lease.project.clone(),
+                        reason: end_reason_label(ending).to_owned(),
+                        remove_volumes: ending.remove_volumes,
+                        removed_count: outcome.removed.len(),
+                    });
+                }
             }
-            let Some(ending) = lease.ended else {
-                continue;
-            };
-            match runtime.teardown_project(&lease.profile, &lease.project, ending.remove_volumes) {
-                Ok(outcome) if outcome.ok() => {
-                    if let Err(error) = barge.container_return(&lease.id) {
-                        report.retained_failures.push(SweepFailure {
-                            lease_id: lease.id.clone(),
-                            profile: lease.profile.clone(),
-                            project: lease.project.clone(),
-                            kind: "ended_lease".to_owned(),
-                            error: format!(
-                                "stack was torn down, but returning lease to Barge failed: {error}"
-                            ),
-                        });
-                    } else {
-                        report.returned_leases.push(SweptLease {
-                            id: lease.id.clone(),
-                            profile: lease.profile.clone(),
-                            project: lease.project.clone(),
-                            reason: end_reason_label(ending).to_owned(),
-                            remove_volumes: ending.remove_volumes,
-                            removed_count: outcome.removed.len(),
-                        });
-                    }
-                }
-                Ok(outcome) => {
-                    report.retained_failures.push(SweepFailure {
-                        lease_id: lease.id.clone(),
-                        profile: lease.profile.clone(),
-                        project: lease.project.clone(),
-                        kind: "ended_lease".to_owned(),
-                        error: summarize_retire_failures(&outcome),
-                    });
-                }
-                Err(error) => {
-                    report.retained_failures.push(SweepFailure {
-                        lease_id: lease.id.clone(),
-                        profile: lease.profile.clone(),
-                        project: lease.project.clone(),
-                        kind: "ended_lease".to_owned(),
-                        error: error.to_string(),
-                    });
-                }
+            Ok(outcome) => {
+                report.retained_failures.push(SweepFailure {
+                    lease_id: lease.id.clone(),
+                    profile: lease.profile.clone(),
+                    project: lease.project.clone(),
+                    kind: "ended_lease".to_owned(),
+                    error: summarize_retire_failures(&outcome),
+                });
+            }
+            Err(error) => {
+                report.retained_failures.push(SweepFailure {
+                    lease_id: lease.id.clone(),
+                    profile: lease.profile.clone(),
+                    project: lease.project.clone(),
+                    kind: "ended_lease".to_owned(),
+                    error: error.to_string(),
+                });
             }
         }
     }
@@ -451,13 +458,16 @@ fn sweep_running_profile(
     }
 
     // Re-read Barge status once before tearing down candidates so a lease
-    // minted concurrently between step 1 and step 3 is never treated as orphan.
-    if let Some(barge) = barge {
-        for fresh in barge.container_status().map_err(barge_error)? {
-            known_ids.insert(fresh.id);
+    // minted concurrently between step 1 and step 3 is never treated as orphan,
+    // and collect every (profile, project) held by a live or retained lease.
+    let mut held_projects: BTreeMap<String, String> = BTreeMap::new();
+    for fresh in barge.container_status().map_err(barge_error)? {
+        known_ids.insert(fresh.id.clone());
+        if fresh.profile == profile {
+            held_projects.insert(fresh.project, fresh.id);
         }
-        candidate_orphans.retain(|(lease_id, _)| !known_ids.contains(lease_id));
     }
+    candidate_orphans.retain(|(lease_id, _)| !known_ids.contains(lease_id));
 
     let mut by_project: BTreeMap<String, Vec<(String, ContainerRow)>> = BTreeMap::new();
     for (lease_id, row) in candidate_orphans {
@@ -482,6 +492,19 @@ fn sweep_running_profile(
             .unwrap_or_default();
         let container_names: Vec<String> =
             entries.iter().map(|(_, row)| row.name.clone()).collect();
+        if let Some(holding_lease_id) = held_projects.get(&project) {
+            report.skipped_orphans.push(SkippedOrphan {
+                lease_id,
+                held_by_lease_id: holding_lease_id.clone(),
+                profile: profile.to_owned(),
+                project: project.clone(),
+                containers: container_names,
+                reason: format!(
+                    "project `{project}` on profile `{profile}` is currently held by Barge lease `{holding_lease_id}`; skipped orphan teardown"
+                ),
+            });
+            continue;
+        }
         let remove_volumes = group_checkout_confirmed_gone(&entries);
         match runtime.teardown_project(profile, &project, remove_volumes) {
             Ok(outcome) if outcome.ok() => {
@@ -542,6 +565,24 @@ fn is_checkout_confirmed_gone(owner_path: Option<&str>) -> bool {
             .components()
             .all(|part| matches!(part, Component::RootDir | Component::Normal(_)))
     {
+        return false;
+    }
+    let Some(parent) = path.parent() else {
+        return false;
+    };
+    // Never treat an unmounted volume root (e.g. `/Volumes/Stash` or `/mnt/drive`)
+    // as a deleted checkout merely because `/Volumes` or `/mnt` exists.
+    if parent == Path::new("/")
+        || parent == Path::new("/Volumes")
+        || parent == Path::new("/mnt")
+        || parent == Path::new("/media")
+    {
+        return false;
+    }
+    // Only confirm absence when the owning parent directory is present; if a
+    // removable drive is unplugged, the parent path itself is absent.
+    let parent_present = std::fs::metadata(parent).is_ok_and(|meta| meta.is_dir());
+    if !parent_present {
         return false;
     }
     matches!(
@@ -620,7 +661,11 @@ pub(in crate::runner) fn acquire_container_lease_with(
         return Ok(LeaseAcquireOutcome::NotManaged);
     }
 
-    let _ = sweep_profile_leases_with(Some(barge), runtime, &request.profile);
+    let mut last_sweep_notes = Vec::new();
+    collect_sweep_notes(
+        sweep_profile_leases_with(Some(barge), runtime, &request.profile),
+        &mut last_sweep_notes,
+    );
 
     let started = Instant::now();
     loop {
@@ -641,11 +686,37 @@ pub(in crate::runner) fn acquire_container_lease_with(
                 active,
             } => {
                 if started.elapsed() >= wait_budget {
-                    return Err(lease_pool_full_error(&profile, active, max, wait_budget));
+                    return Err(lease_pool_full_error(
+                        &profile,
+                        active,
+                        max,
+                        wait_budget,
+                        &last_sweep_notes,
+                    ));
                 }
-                let _ = sweep_profile_leases_with(Some(barge), runtime, &request.profile);
+                collect_sweep_notes(
+                    sweep_profile_leases_with(Some(barge), runtime, &request.profile),
+                    &mut last_sweep_notes,
+                );
             }
         }
+    }
+}
+
+fn collect_sweep_notes(result: Result<SweepReport, RunnerError>, last_notes: &mut Vec<String>) {
+    last_notes.clear();
+    match result {
+        Ok(report) => {
+            for failure in report.retained_failures {
+                let target = if failure.project.is_empty() {
+                    failure.profile
+                } else {
+                    format!("{}/{}", failure.profile, failure.project)
+                };
+                last_notes.push(format!("{target}: {}", failure.error));
+            }
+        }
+        Err(error) => last_notes.push(error.to_string()),
     }
 }
 
@@ -654,11 +725,22 @@ fn lease_pool_full_error(
     active: u32,
     max: u32,
     wait_budget: Duration,
+    sweep_notes: &[String],
 ) -> RunnerError {
-    RunnerError::task_invocation(format!(
-        "container lease pool for profile `{profile}` is full ({active}/{max} active worker slots) after waiting {}s\nnext: wait for an active worker stack to finish, or run `effigy container prune --profile {profile}` to reclaim ended stacks",
+    let mut message = format!(
+        "container lease pool for profile `{profile}` is full ({active}/{max} active worker slots) after waiting {}s",
         wait_budget.as_secs(),
-    ))
+    );
+    if !sweep_notes.is_empty() {
+        message.push_str(&format!(
+            "\nsweep failures during wait: {}",
+            sweep_notes.join("; ")
+        ));
+    }
+    message.push_str(&format!(
+        "\nnext: wait for an active worker stack to finish, or run `effigy container prune --profile {profile}` to reclaim ended stacks"
+    ));
+    RunnerError::task_invocation(message)
 }
 
 /// Immediately return a known Barge container lease ID (idempotent no-op when
@@ -747,6 +829,7 @@ pub(in crate::runner) fn run_container_prune_command_with(
         "stopped_profiles": report.stopped_profiles,
         "returned_leases": report.returned_leases,
         "orphans_torn_down": report.orphans_torn_down,
+        "skipped_orphans": report.skipped_orphans,
         "retained_failures": report.retained_failures,
     });
 
@@ -808,6 +891,16 @@ fn render_prune_human(report: &SweepReport, profile: Option<&str>) -> String {
             orphan.project,
             orphan.containers.join(","),
             orphan.remove_volumes
+        ));
+    }
+    for skipped in &report.skipped_orphans {
+        lines.push(format!(
+            "  skipped orphan {} ({} / {}, containers={}): {}",
+            skipped.lease_id,
+            skipped.profile,
+            skipped.project,
+            skipped.containers.join(","),
+            skipped.reason
         ));
     }
     for failure in &report.retained_failures {
@@ -1510,5 +1603,232 @@ mod tests {
             plain_owner,
             ContainerOwner::Checkout(std::fs::canonicalize(&plain_checkout).expect("canonical"))
         );
+    }
+
+    #[test]
+    fn sweep_skips_orphan_when_live_lease_holds_same_profile_and_project() {
+        let fixture = BargeFixture::new();
+        fixture.declare_profiles(&[("effigy", 4)]);
+        let checkout = fixture._temp.path().join("shared-checkout");
+        std::fs::create_dir_all(&checkout).expect("mkdir checkout");
+
+        let live_req = worker_request("effigy", "proj-shared", &checkout, true);
+        let live_lease = match fixture
+            .barge
+            .container_lease(&live_req)
+            .expect("lease live")
+        {
+            ContainerLeaseOutcome::Leased(lease) => lease,
+            _ => panic!("expected live lease"),
+        };
+        let live_id = live_lease.id().to_owned();
+
+        let runtime = FakeLeaseRuntime::new(&["effigy"]);
+        runtime.set_containers(
+            "effigy",
+            vec![
+                ContainerRow {
+                    name: "proj-shared-stale-1".to_owned(),
+                    project: Some("proj-shared".to_owned()),
+                    effigy_project: Some("proj-shared".to_owned()),
+                    checkout: Some(checkout.display().to_string()),
+                    repo_root: None,
+                    scope: None,
+                    managed: true,
+                    barge_lease: Some("stale-returned-lease".to_owned()),
+                },
+                ContainerRow {
+                    name: "proj-shared-live-1".to_owned(),
+                    project: Some("proj-shared".to_owned()),
+                    effigy_project: Some("proj-shared".to_owned()),
+                    checkout: Some(checkout.display().to_string()),
+                    repo_root: None,
+                    scope: None,
+                    managed: true,
+                    barge_lease: Some(live_id.clone()),
+                },
+            ],
+        );
+
+        let report =
+            sweep_profile_leases_with(Some(&fixture.barge), &runtime, "effigy").expect("sweep");
+        assert!(report.ok());
+        assert!(runtime.teardown_calls().is_empty());
+        assert!(report.orphans_torn_down.is_empty());
+        assert_eq!(report.skipped_orphans.len(), 1);
+        assert_eq!(report.skipped_orphans[0].lease_id, "stale-returned-lease");
+        assert_eq!(report.skipped_orphans[0].held_by_lease_id, live_id);
+        assert_eq!(report.skipped_orphans[0].project, "proj-shared");
+
+        let human = render_prune_human(&report, Some("effigy"));
+        assert!(human.contains("skipped orphan"), "{human}");
+        assert!(human.contains("proj-shared"), "{human}");
+
+        drop(live_lease);
+    }
+
+    #[test]
+    fn sweep_is_a_no_op_without_barge_and_does_not_tear_down_orphans() {
+        let runtime = FakeLeaseRuntime::new(&["effigy"]);
+        runtime.set_containers(
+            "effigy",
+            vec![ContainerRow {
+                name: "some-app-1".to_owned(),
+                project: Some("some-proj".to_owned()),
+                effigy_project: Some("some-proj".to_owned()),
+                checkout: Some("/tmp/nonexistent-owner".to_owned()),
+                repo_root: None,
+                scope: None,
+                managed: true,
+                barge_lease: Some("foreign-lease-id".to_owned()),
+            }],
+        );
+
+        let profile_report =
+            sweep_profile_leases_with(None, &runtime, "effigy").expect("profile sweep");
+        assert!(!profile_report.barge_managed);
+        assert!(profile_report.ok());
+        assert!(profile_report.orphans_torn_down.is_empty());
+        assert!(runtime.teardown_calls().is_empty());
+
+        let global_report = sweep_all_running_profiles_with(None, &runtime).expect("global sweep");
+        assert!(!global_report.barge_managed);
+        assert!(global_report.ok());
+        assert!(global_report.orphans_torn_down.is_empty());
+        assert!(runtime.teardown_calls().is_empty());
+    }
+
+    #[test]
+    fn open_host_barge_and_sweep_surface_unknown_state_and_io_errors() {
+        assert!(
+            classify_open_barge_result(Err(barge::Error::not_found("missing")))
+                .expect("not_found is unmanaged")
+                .is_none()
+        );
+        assert!(
+            classify_open_barge_result(Err(barge::Error::unsupported("unsupported")))
+                .expect("unsupported is unmanaged")
+                .is_none()
+        );
+        assert!(
+            classify_open_barge_result(Err(barge::Error::unknown_state("corrupt state"))).is_err()
+        );
+        assert!(
+            classify_open_barge_result(Err(barge::Error::io_message("permission denied"))).is_err()
+        );
+
+        let fixture = BargeFixture::new();
+        let leases_dir = fixture.state_dir.join("container-leases");
+        std::fs::create_dir_all(&leases_dir).expect("mkdir leases");
+        std::fs::write(leases_dir.join("corrupt.json"), "{not valid json").expect("write corrupt");
+
+        let runtime = FakeLeaseRuntime::new(&["effigy"]);
+        runtime.set_containers(
+            "effigy",
+            vec![ContainerRow {
+                name: "orphan-app-1".to_owned(),
+                project: Some("orphan-proj".to_owned()),
+                effigy_project: Some("orphan-proj".to_owned()),
+                checkout: Some("/tmp/some-checkout".to_owned()),
+                repo_root: None,
+                scope: None,
+                managed: true,
+                barge_lease: Some("any-lease".to_owned()),
+            }],
+        );
+
+        let err = sweep_profile_leases_with(Some(&fixture.barge), &runtime, "effigy")
+            .expect_err("corrupt barge state must error");
+        assert!(!err.to_string().is_empty());
+        assert!(
+            runtime.teardown_calls().is_empty(),
+            "unreadable barge state must never trigger orphan teardown"
+        );
+    }
+
+    #[test]
+    fn missing_parent_or_unmounted_volume_keeps_volumes_on_orphan_teardown() {
+        let fixture = BargeFixture::new();
+        fixture.declare_profiles(&[("effigy", 4)]);
+
+        let missing_parent_checkout = fixture
+            ._temp
+            .path()
+            .join("missing-parent")
+            .join("wt-1")
+            .join("checkout");
+        let unmounted_vol_checkout = Path::new("/Volumes/UnmountedDrive/worktrees/wt-1/checkout");
+        let mount_root = Path::new("/Volumes/UnmountedDrive");
+
+        assert!(!is_checkout_confirmed_gone(Some(
+            &missing_parent_checkout.display().to_string()
+        )));
+        assert!(!is_checkout_confirmed_gone(Some(
+            &unmounted_vol_checkout.display().to_string()
+        )));
+        assert!(!is_checkout_confirmed_gone(Some(
+            &mount_root.display().to_string()
+        )));
+
+        let runtime = FakeLeaseRuntime::new(&["effigy"]);
+        runtime.set_containers(
+            "effigy",
+            vec![ContainerRow {
+                name: "unmounted-app-1".to_owned(),
+                project: Some("unmounted-proj".to_owned()),
+                effigy_project: Some("unmounted-proj".to_owned()),
+                checkout: Some(missing_parent_checkout.display().to_string()),
+                repo_root: None,
+                scope: None,
+                managed: true,
+                barge_lease: Some("dead-lease-missing-parent".to_owned()),
+            }],
+        );
+
+        let report =
+            sweep_profile_leases_with(Some(&fixture.barge), &runtime, "effigy").expect("sweep");
+        assert!(report.ok());
+        assert_eq!(report.orphans_torn_down.len(), 1);
+        let calls = runtime.teardown_calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].project, "unmounted-proj");
+        assert!(!calls[0].remove_volumes, "missing parent must keep volumes");
+    }
+
+    #[test]
+    fn acquire_timeout_refusal_surfaces_sweep_failures() {
+        let fixture = BargeFixture::new();
+        fixture.declare_profiles(&[("effigy", 1)]);
+        let checkout = fixture._temp.path().join("wt-sweep-fail");
+        std::fs::create_dir_all(&checkout).expect("mkdir");
+
+        // Occupy slot 1 with an ended lease whose teardown fails.
+        let ended_req = worker_request("effigy", "proj-stuck", &checkout, true);
+        let ended_lease = match fixture.barge.container_lease(&ended_req).expect("lease") {
+            ContainerLeaseOutcome::Leased(lease) => lease,
+            _ => panic!("expected lease"),
+        };
+        drop(ended_lease);
+
+        let runtime = FakeLeaseRuntime::new(&["effigy"]);
+        runtime.set_teardown_result(
+            "effigy",
+            "proj-stuck",
+            Err("colima nerdctl rm timed out".to_owned()),
+        );
+
+        let second_req = worker_request("effigy", "proj-next", &checkout, false);
+        let err = acquire_container_lease_with(
+            Some(&fixture.barge),
+            &runtime,
+            &second_req,
+            Duration::from_millis(40),
+            Duration::from_millis(20),
+        )
+        .expect_err("full pool times out");
+        let msg = err.to_string();
+        assert!(msg.contains("effigy/proj-stuck"), "{msg}");
+        assert!(msg.contains("colima nerdctl rm timed out"), "{msg}");
+        assert!(msg.contains("effigy container prune"), "{msg}");
     }
 }
