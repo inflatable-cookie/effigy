@@ -42,6 +42,25 @@ fn no_symlinks(path: &Path) -> bool {
     true
 }
 impl RelayTarget {
+    /// Normalize only the mount boundary; descendants remain subject to symlink checks.
+    pub(super) fn canonicalize_root(&mut self) -> std::io::Result<()> {
+        if !self.host.is_absolute() || !safe_path(&self.host) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "invalid relay mount",
+            ));
+        }
+        let root = self.host.canonicalize()?;
+        if !safe_path(&root) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "invalid canonical relay mount",
+            ));
+        }
+        self.host = root;
+        Ok(())
+    }
+
     pub fn guest_path(&self, path: &Path) -> Option<PathBuf> {
         if !safe_path(path) || !no_symlinks(path) {
             return None;
@@ -75,7 +94,14 @@ pub fn resolve_targets(
             crate::policy_support::parse_media_mount(&policy.repo_root, &policy.name, spec)?;
         allowed.push((source, PathBuf::from(dest)));
     }
+    // Resolve a watched subpath against a declared mount boundary, never by
+    // canonicalizing the subpath itself (which would follow in-tree symlinks).
+    let repo_root = policy
+        .repo_root
+        .canonicalize()
+        .map_err(|e| invalid(format!("invalid workspace root: {e}")))?;
     let mut candidates = Vec::new();
+    let mut matched_paths = vec![false; policy.fs_events.paths.len()];
     for m in observed.iter().filter(|m| {
         m.writable
             && (policy.fs_events.services.is_empty()
@@ -85,37 +111,62 @@ pub fn resolve_targets(
             || !safe_path(&m.guest)
             || !m.host.is_absolute()
             || !m.guest.is_absolute()
-            || !no_symlinks(&m.host)
         {
-            return Err(invalid("invalid or symlinked relay mount"));
+            return Err(invalid("invalid relay mount"));
         }
-        if !allowed.iter().any(|(h, g)| h == &m.host && g == &m.guest) {
+        let host = m
+            .host
+            .canonicalize()
+            .map_err(|e| invalid(format!("invalid relay mount: {e}")))?;
+        if !safe_path(&host) {
+            return Err(invalid("invalid canonical relay mount"));
+        }
+        if !allowed
+            .iter()
+            .any(|(h, g)| g == &m.guest && h.canonicalize().ok().as_ref() == Some(&host))
+        {
             continue;
         }
-        let roots: Vec<PathBuf> = if policy.fs_events.paths.is_empty() {
-            vec![m.host.clone()]
+        let roots: Vec<(PathBuf, Option<usize>)> = if policy.fs_events.paths.is_empty() {
+            vec![(host.clone(), None)]
         } else {
             policy
                 .fs_events
                 .paths
                 .iter()
-                .filter_map(|p| {
+                .enumerate()
+                .filter_map(|(index, p)| {
                     let p = Path::new(p);
+                    if !safe_path(p) {
+                        return None;
+                    }
                     let p = if p.is_absolute() {
                         p.to_path_buf()
                     } else {
                         policy.repo_root.join(p)
                     };
-                    p.starts_with(&m.host).then_some(p)
+                    let p = if let Ok(rel) = p.strip_prefix(&m.host) {
+                        host.join(rel)
+                    } else if let Ok(rel) = p.strip_prefix(&policy.repo_root) {
+                        repo_root.join(rel)
+                    } else {
+                        p
+                    };
+                    p.starts_with(&host).then_some((p, Some(index)))
                 })
                 .collect()
         };
-        for root in roots {
+        for (root, index) in roots {
             if !safe_path(&root) || !no_symlinks(&root) {
-                return Err(invalid(format!("invalid relay path: {}", root.display())));
+                // A nested explicit mount can supply a safe mapping for this
+                // path even when the enclosing workspace sees a symlink.
+                continue;
+            }
+            if let Some(index) = index {
+                matched_paths[index] = true;
             }
             let guest = m.guest.join(
-                root.strip_prefix(&m.host)
+                root.strip_prefix(&host)
                     .map_err(|_| invalid("relay path outside mount"))?,
             );
             candidates.push(RelayTarget {
@@ -126,17 +177,10 @@ pub fn resolve_targets(
             });
         }
     }
-    for path in &policy.fs_events.paths {
-        let path = Path::new(path);
-        let path = if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            policy.repo_root.join(path)
-        };
-        if !candidates.iter().any(|t| t.host == path) {
+    for (path, matched) in policy.fs_events.paths.iter().zip(matched_paths) {
+        if !matched {
             return Err(invalid(format!(
-                "relay path outside running writable mounts: {}",
-                path.display()
+                "relay path outside running writable mounts: {path}"
             )));
         }
     }
@@ -238,5 +282,95 @@ mod tests {
                 .expect("readonly")
                 .is_empty()
         );
+    }
+    #[cfg(unix)]
+    #[test]
+    fn resolves_symlinked_mount_boundary_without_following_descendant_symlinks() {
+        let dir = tempfile::tempdir().expect("fixture");
+        let real = dir.path().join("real");
+        std::fs::create_dir(&real).expect("real root");
+        let real = real.canonicalize().expect("canonical root");
+        let alias = dir.path().join("alias");
+        std::os::unix::fs::symlink(&real, &alias).expect("alias");
+        std::fs::create_dir(real.join("src")).expect("source");
+        std::os::unix::fs::symlink(real.join("src"), real.join("link")).expect("nested link");
+        let mut policy = crate::policy::model::test_policy(&alias);
+        policy.primary_service = "app".into();
+        let mount = ServiceMount {
+            service: "app".into(),
+            container: "one".into(),
+            host: real.clone(),
+            guest: "/workspace".into(),
+            writable: true,
+        };
+        let targets = resolve_targets(
+            &policy,
+            Path::new("/workspace"),
+            std::slice::from_ref(&mount),
+            true,
+        )
+        .expect("resolve alias");
+        assert_eq!(targets[0].host, real);
+        assert_eq!(
+            targets[0].guest_path(&real.join("src/deleted")),
+            Some(PathBuf::from("/workspace/src/deleted"))
+        );
+        assert_eq!(targets[0].guest_path(&real.join("link/file")), None);
+        policy.fs_events.paths = vec!["src".into()];
+        let targets = resolve_targets(
+            &policy,
+            Path::new("/workspace"),
+            std::slice::from_ref(&mount),
+            true,
+        )
+        .expect("relative subpath");
+        assert_eq!(targets[0].host, real.join("src"));
+        policy.fs_events.paths = vec![alias.join("src").to_str().expect("utf8").into()];
+        assert_eq!(
+            resolve_targets(
+                &policy,
+                Path::new("/workspace"),
+                std::slice::from_ref(&mount),
+                true
+            )
+            .expect("absolute subpath")[0]
+                .host,
+            real.join("src")
+        );
+        policy.fs_events.paths = vec!["link/file".into()];
+        assert!(resolve_targets(&policy, Path::new("/workspace"), &[mount], true).is_err());
+    }
+    #[cfg(unix)]
+    #[test]
+    fn relative_path_can_use_an_explicit_symlinked_mount_boundary() {
+        let fixture = tempfile::tempdir().expect("fixture");
+        let repo = fixture.path().canonicalize().expect("root");
+        let real = repo.join("real");
+        std::fs::create_dir_all(real.join("src")).expect("source");
+        let alias = repo.join("alias");
+        std::os::unix::fs::symlink(&real, &alias).expect("mount alias");
+        let mut policy = crate::policy::model::test_policy(&repo);
+        policy.declared_mounts = vec![format!("{}:/data", alias.display())];
+        policy.fs_events.paths = vec!["alias/src".into()];
+        let mounts = [
+            ServiceMount {
+                service: "app".into(),
+                container: "one".into(),
+                host: repo,
+                guest: "/workspace".into(),
+                writable: true,
+            },
+            ServiceMount {
+                service: "app".into(),
+                container: "one".into(),
+                host: alias,
+                guest: "/data".into(),
+                writable: true,
+            },
+        ];
+        let targets = resolve_targets(&policy, Path::new("/workspace"), &mounts, true)
+            .expect("resolve mount alias");
+        assert_eq!(targets[0].host, real.join("src"));
+        assert_eq!(targets[0].guest, PathBuf::from("/data/src"));
     }
 }

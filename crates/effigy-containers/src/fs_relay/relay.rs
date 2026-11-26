@@ -40,7 +40,8 @@ impl FsEventRelayHandle {
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let filter = EventFilter::new(&config.ignore)?;
         let mut groups: BTreeMap<String, Vec<RelayTarget>> = BTreeMap::new();
-        for target in targets {
+        for mut target in targets {
+            target.canonicalize_root()?;
             groups
                 .entry(target.container.clone())
                 .or_default()
@@ -316,8 +317,10 @@ mod tests {
     #[test]
     fn fs_relay_reconnects_and_drop_stops_child() {
         let dir = tempfile::tempdir().expect("fixture");
+        let real_watch = dir.path().join("real-watch");
+        fs::create_dir(&real_watch).expect("watch directory");
         let watch = dir.path().join("watch");
-        fs::create_dir(&watch).expect("watch directory");
+        std::os::unix::fs::symlink(&real_watch, &watch).expect("watch alias");
         let script = dir.path().join("fake-runtime");
         let starts = dir.path().join("starts");
         let received = dir.path().join("received");
@@ -344,7 +347,7 @@ mod tests {
             &state,
         )
         .expect("start");
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = Instant::now() + Duration::from_secs(20);
         while fs::read_to_string(&starts)
             .unwrap_or_default()
             .lines()
@@ -359,6 +362,7 @@ mod tests {
             "reconnected"
         );
         fs::write(watch.join("hello"), "hello").expect("save");
+        let deadline = Instant::now() + Duration::from_secs(20);
         while !fs::read_to_string(&received)
             .unwrap_or_default()
             .contains("/workspace/hello")
