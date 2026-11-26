@@ -1250,9 +1250,7 @@ fn effigy_release_run_certifies_and_then_publishes_through_the_fake_dispatch() {
 /// shell stubs on PATH that record their arguments and answer from fixtures.
 fn write_executable(path: &Path, contents: &str) {
     fs::write(path, contents).expect("write stub");
-    let mut permissions = fs::metadata(path)
-        .expect("stub metadata")
-        .permissions();
+    let mut permissions = fs::metadata(path).expect("stub metadata").permissions();
     std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
     fs::set_permissions(path, permissions).expect("stub executable");
 }
@@ -1320,8 +1318,7 @@ fn release_checks_verify_binaries_queries_the_tap_formula() {
     // The script under test re-enters itself as `$root/scripts/release/checks.sh`
     // for the trailing `verify-install` probe, so stage the fixed file there.
     fs::create_dir_all(root.join("scripts/release")).expect("scripts dir");
-    fs::copy(checks_script(), root.join("scripts/release/checks.sh"))
-        .expect("stage checks.sh");
+    fs::copy(checks_script(), root.join("scripts/release/checks.sh")).expect("stage checks.sh");
     let log_dir = root.join("logs");
     fs::create_dir_all(&log_dir).expect("log dir");
     let bin = root.join("stub-bin");
@@ -1362,8 +1359,7 @@ printf '{"formulae":[{"versions":{"stable":"0.9.1"}}]}'
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let brew_args =
-        fs::read_to_string(log_dir.join("brew-args")).expect("brew was invoked");
+    let brew_args = fs::read_to_string(log_dir.join("brew-args")).expect("brew was invoked");
     assert!(
         brew_args.contains("inflatable-cookie/tap/effigy"),
         "brew must be queried for the tap formula, got: {brew_args}"
@@ -1390,11 +1386,7 @@ fn release_checks_verify_install_normalizes_scp_git_urls() {
             "https://github.com/inflatable-cookie/effigy.git",
             "https://github.com/inflatable-cookie/effigy.git",
         ),
-        (
-            "local",
-            "/tmp/dev@host:repo",
-            "/tmp/dev@host:repo",
-        ),
+        ("local", "/tmp/dev@host:repo", "/tmp/dev@host:repo"),
     ] {
         let root = temp_workspace(&format!("release-checks-verify-install-{label}"));
         super::support::write_effigy_release_root_marker(&root);
@@ -1421,8 +1413,7 @@ fn release_checks_verify_install_normalizes_scp_git_urls() {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        let git_urls =
-            fs::read_to_string(log_dir.join("git-urls")).expect("cargo was invoked");
+        let git_urls = fs::read_to_string(log_dir.join("git-urls")).expect("cargo was invoked");
         assert!(
             git_urls.trim() == expected,
             "{label}: cargo --git must receive `{expected}`, got: {git_urls}"
