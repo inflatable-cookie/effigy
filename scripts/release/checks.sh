@@ -489,13 +489,17 @@ case "$verb" in
     command -v gh >/dev/null 2>&1 || fail "gh is required to dispatch release-binaries.yml"
     poll_interval=${EFFIGY_RELEASE_POLL_INTERVAL:-3}
 
-    previous_runs=$(gh run list --workflow release-binaries.yml --event workflow_dispatch --limit 20 --json databaseId 2>/dev/null || true)
-    previous_id=0
-    if [ -n "$previous_runs" ]; then
-      previous_id=$(printf '%s\n' "$previous_runs" | jq -r '[.[].databaseId // 0 | tonumber] | max // 0' 2>/dev/null || printf '0')
-    fi
+    previous_runs=$(gh run list --workflow release-binaries.yml --event workflow_dispatch --limit 20 --json databaseId) \
+      || fail "failed to inspect existing release-binaries.yml runs before dispatching $tag"
+    [ -n "$previous_runs" ] \
+      || fail "pre-dispatch release-binaries.yml run inventory was empty"
+    previous_id=$(printf '%s\n' "$previous_runs" | jq -er '
+      if type != "array" then error("expected array") else . end
+      | if all(((.databaseId // null) | (type == "number" or (type == "string" and test("^[0-9]+$"))))) then . else error("invalid databaseId") end
+      | [.[].databaseId | tonumber] | max // 0
+    ') || fail "pre-dispatch release-binaries.yml run inventory returned invalid JSON"
     case "$previous_id" in
-      ''|*[!0-9]*) previous_id=0 ;;
+      ''|*[!0-9]*) fail "pre-dispatch release-binaries.yml run inventory returned non-numeric run ID: $previous_id" ;;
     esac
 
     gh workflow run release-binaries.yml -f "tag=$tag" \
@@ -512,28 +516,33 @@ case "$verb" in
       attempts=$((attempts + 1))
       runs_json=$(gh run list --workflow release-binaries.yml --event workflow_dispatch --limit 20 --json databaseId,displayTitle,url 2>/dev/null || true)
       if [ -n "$runs_json" ]; then
-        run_info=$(printf '%s\n' "$runs_json" | jq -r --arg prev "$previous_id" --arg tag "$tag" '
-          [ .[]
-            | select(((.databaseId // 0) | tonumber) > ($prev | tonumber))
-            | select(
-                ((.displayTitle // "") == "")
-                or (((.displayTitle // "") | startswith("release: ")) | not)
-                or ((.displayTitle // "") == ("release: " + $tag))
-              )
-          ]
-          | sort_by((.databaseId // 0) | tonumber)
-          | reverse
-          | .[0] // empty
-          | "\(.databaseId) \(.url // "")"
+        candidates_json=$(printf '%s\n' "$runs_json" | jq -c --arg prev "$previous_id" --arg tag "$tag" '
+          if type != "array" then empty else
+            [ .[]
+              | select(((.databaseId // null) | (type == "number" or (type == "string" and test("^[0-9]+$")))))
+              | select((.databaseId | tonumber) > ($prev | tonumber))
+              | select(
+                  ((.displayTitle // "") == "")
+                  or (((.displayTitle // "") | startswith("release: ")) | not)
+                  or ((.displayTitle // "") == ("release: " + $tag))
+                )
+            ]
+            | sort_by(.databaseId | tonumber)
+            | reverse
+          end
         ' 2>/dev/null || true)
-        if [ -n "$run_info" ]; then
-          run_id=${run_info%% *}
-          if [ "$run_info" != "$run_id" ]; then
-            run_url=${run_info#* }
+        if [ -n "$candidates_json" ]; then
+          match_count=$(printf '%s\n' "$candidates_json" | jq -r 'length' 2>/dev/null || printf '0')
+          if [ "$match_count" -gt 1 ]; then
+            candidate_summary=$(printf '%s\n' "$candidates_json" | jq -r '[.[] | "#\(.databaseId)\(if (.url // "") != "" then " (\(.url))" else "" end)"] | join(", ")' 2>/dev/null || printf '%s' "$match_count")
+            fail "multiple release-binaries.yml runs matched $tag after dispatch ($candidate_summary); cannot distinguish concurrent same-tag dispatches"
+          elif [ "$match_count" -eq 1 ]; then
+            run_id=$(printf '%s\n' "$candidates_json" | jq -r '.[0].databaseId // ""' 2>/dev/null || true)
+            run_url=$(printf '%s\n' "$candidates_json" | jq -r '.[0].url // ""' 2>/dev/null || true)
+            case "$run_id" in
+              ''|*[!0-9]*) run_id=""; run_url="" ;;
+            esac
           fi
-          case "$run_id" in
-            ''|*[!0-9]*) run_id=""; run_url="" ;;
-          esac
         fi
       fi
       if [ -z "$run_id" ] && [ "$attempts" -lt "$max_discovery" ]; then

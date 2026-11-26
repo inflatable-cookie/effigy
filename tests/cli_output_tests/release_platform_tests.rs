@@ -1457,21 +1457,47 @@ if [ "$cmd" = "workflow" ] && [ "$sub" = "run" ]; then
 fi
 
 if [ "$cmd" = "run" ] && [ "$sub" = "list" ]; then
+  pre_mode="$(cat "$state_dir/pre_list_mode" 2>/dev/null || printf 'other_tag')"
   if [ ! -f "$state_dir/dispatched_tag" ]; then
-    printf '[{{"databaseId":400,"displayTitle":"release: v0.2.4","url":"https://github.com/inflatable-cookie/effigy/actions/runs/400"}}]\n'
-    exit 0
+    case "$pre_mode" in
+      fail)
+        echo "gh: simulated run list failure" >&2
+        exit 1
+        ;;
+      malformed)
+        printf '{{not-json\n'
+        exit 0
+        ;;
+      same_tag)
+        printf '[{{"databaseId":400,"displayTitle":"release: v0.2.5","url":"https://github.com/inflatable-cookie/effigy/actions/runs/400"}}]\n'
+        exit 0
+        ;;
+      *)
+        printf '[{{"databaseId":400,"displayTitle":"release: v0.2.4","url":"https://github.com/inflatable-cookie/effigy/actions/runs/400"}}]\n'
+        exit 0
+        ;;
+    esac
   fi
   tag="$(cat "$state_dir/dispatched_tag")"
   count="$(cat "$state_dir/list_after_dispatch")"
   count=$((count + 1))
   printf '%s\n' "$count" > "$state_dir/list_after_dispatch"
   delay="$(cat "$state_dir/delay_lists" 2>/dev/null || printf '0')"
+  pre_title="release: v0.2.4"
+  if [ "$pre_mode" = "same_tag" ]; then
+    pre_title="release: $tag"
+  fi
   if [ "$count" -le "$delay" ]; then
-    # Before the new run is visible, an older run and an unrelated tag run exist.
-    printf '[{{"databaseId":402,"displayTitle":"release: v0.2.3","url":"https://github.com/inflatable-cookie/effigy/actions/runs/402"}},{{"databaseId":400,"displayTitle":"release: v0.2.4","url":"https://github.com/inflatable-cookie/effigy/actions/runs/400"}}]\n'
+    # Before the new run is visible, an older run (possibly same tag) and an unrelated tag run exist.
+    printf '[{{"databaseId":402,"displayTitle":"release: v0.2.3","url":"https://github.com/inflatable-cookie/effigy/actions/runs/402"}},{{"databaseId":400,"displayTitle":"%s","url":"https://github.com/inflatable-cookie/effigy/actions/runs/400"}}]\n' "$pre_title"
     exit 0
   fi
-  printf '[{{"databaseId":401,"displayTitle":"release: %s","url":"https://github.com/inflatable-cookie/effigy/actions/runs/401"}},{{"databaseId":402,"displayTitle":"release: v0.2.3","url":"https://github.com/inflatable-cookie/effigy/actions/runs/402"}},{{"databaseId":400,"displayTitle":"release: v0.2.4","url":"https://github.com/inflatable-cookie/effigy/actions/runs/400"}}]\n' "$tag"
+  list_mode="$(cat "$state_dir/list_mode" 2>/dev/null || printf 'normal')"
+  if [ "$list_mode" = "concurrent_same_tag" ]; then
+    printf '[{{"databaseId":403,"displayTitle":"release: %s","url":"https://github.com/inflatable-cookie/effigy/actions/runs/403"}},{{"databaseId":401,"displayTitle":"release: %s","url":"https://github.com/inflatable-cookie/effigy/actions/runs/401"}},{{"databaseId":400,"displayTitle":"%s","url":"https://github.com/inflatable-cookie/effigy/actions/runs/400"}}]\n' "$tag" "$tag" "$pre_title"
+    exit 0
+  fi
+  printf '[{{"databaseId":401,"displayTitle":"release: %s","url":"https://github.com/inflatable-cookie/effigy/actions/runs/401"}},{{"databaseId":402,"displayTitle":"release: v0.2.3","url":"https://github.com/inflatable-cookie/effigy/actions/runs/402"}},{{"databaseId":400,"displayTitle":"%s","url":"https://github.com/inflatable-cookie/effigy/actions/runs/400"}}]\n' "$tag" "$pre_title"
   exit 0
 fi
 
@@ -1729,5 +1755,116 @@ fn publish_binaries_fails_when_watched_workflow_run_fails_before_verify() {
     assert!(
         !root.join("verified.txt").exists(),
         "verify must not run after watched publish-binaries failure"
+    );
+}
+
+#[test]
+fn publish_binaries_fails_closed_on_inventory_errors_and_concurrent_same_tag_dispatches() {
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace = temp_workspace("publish-binaries-fail-closed");
+    let bin_dir = workspace.join("bin");
+    let state_dir = workspace.join("state");
+    install_stub_gh(&bin_dir, &state_dir);
+
+    let input_path = workspace.join("release-input.json");
+    fs::write(
+        &input_path,
+        r#"{"identities":[{"tag":"v0.2.5","identity":"0.2.5"}]}"#,
+    )
+    .expect("write release input");
+
+    // 1. Pre-dispatch listing failure and malformed JSON must fail closed BEFORE
+    //    dispatching `workflow run` (must not fall back to `previous_id=0` and
+    //    mistake an older run #400 for the new dispatch).
+    for mode in ["fail", "malformed"] {
+        let _ = fs::remove_file(state_dir.join("calls.log"));
+        let _ = fs::remove_file(state_dir.join("dispatched_tag"));
+        fs::write(state_dir.join("pre_list_mode"), mode).expect("pre_list_mode");
+        let output_path = workspace.join(format!("release-output-{mode}.json"));
+        let output =
+            run_publish_binaries_script(repo_root, &bin_dir, &input_path, &output_path, &[], None);
+        assert!(
+            !output.status.success(),
+            "publish-binaries must fail closed on pre-dispatch inventory {mode}"
+        );
+        assert!(
+            !output_path.exists(),
+            "must not write release output when pre-dispatch inventory {mode}"
+        );
+        let calls = fs::read_to_string(state_dir.join("calls.log")).expect("calls log");
+        assert!(
+            !calls.contains("workflow run"),
+            "must not dispatch workflow when pre-dispatch inventory {mode}: {calls}"
+        );
+        assert!(
+            !calls.contains("run watch"),
+            "must not watch any run when pre-dispatch inventory {mode}: {calls}"
+        );
+    }
+
+    // 2. Prior completed run #400 for the SAME tag `v0.2.5` + delayed new run #401:
+    //    must ignore #400 during discovery polls and wait for #401.
+    fs::remove_file(state_dir.join("calls.log")).expect("clear calls log");
+    fs::write(state_dir.join("pre_list_mode"), "same_tag").expect("pre_list_mode");
+    fs::write(state_dir.join("delay_lists"), "2").expect("delay_lists");
+    fs::write(state_dir.join("list_mode"), "normal").expect("list_mode");
+    fs::write(state_dir.join("watch_mode"), "success").expect("watch_mode");
+    let delayed_output_path = workspace.join("release-output-delayed-same-tag.json");
+    let delayed = run_publish_binaries_script(
+        repo_root,
+        &bin_dir,
+        &input_path,
+        &delayed_output_path,
+        &[],
+        None,
+    );
+    assert!(
+        delayed.status.success(),
+        "delayed same-tag dispatch failed: stdout={}, stderr={}",
+        String::from_utf8_lossy(&delayed.stdout),
+        String::from_utf8_lossy(&delayed.stderr)
+    );
+    let calls = fs::read_to_string(state_dir.join("calls.log")).expect("calls log");
+    assert!(
+        calls.contains("run watch 401 --exit-status"),
+        "expected watch on newly dispatched run 401: {calls}"
+    );
+    assert!(
+        !calls.contains("watch 400"),
+        "must not watch pre-existing same-tag run 400: {calls}"
+    );
+
+    // 3. Concurrent same-tag dispatches (#401 and #403 both for `v0.2.5` after #400):
+    //    must fail closed and refuse to guess which run belongs to this dispatch.
+    fs::remove_file(state_dir.join("calls.log")).expect("clear calls log");
+    fs::remove_file(state_dir.join("dispatched_tag")).expect("clear dispatched tag");
+    fs::write(state_dir.join("delay_lists"), "0").expect("delay_lists");
+    fs::write(state_dir.join("list_mode"), "concurrent_same_tag").expect("list_mode");
+    let concurrent_output_path = workspace.join("release-output-concurrent.json");
+    let concurrent = run_publish_binaries_script(
+        repo_root,
+        &bin_dir,
+        &input_path,
+        &concurrent_output_path,
+        &[],
+        None,
+    );
+    assert!(
+        !concurrent.status.success(),
+        "concurrent same-tag dispatches must fail closed"
+    );
+    let stderr = String::from_utf8_lossy(&concurrent.stderr);
+    assert!(
+        stderr.contains("multiple release-binaries.yml runs matched v0.2.5"),
+        "expected ambiguity diagnostic on stderr, got: {stderr}"
+    );
+    assert!(
+        !concurrent_output_path.exists(),
+        "must not write committed output on ambiguous concurrent dispatches"
+    );
+    let calls = fs::read_to_string(state_dir.join("calls.log")).expect("calls log");
+    assert!(
+        !calls.contains("run watch"),
+        "must not watch ambiguous concurrent dispatches: {calls}"
     );
 }
