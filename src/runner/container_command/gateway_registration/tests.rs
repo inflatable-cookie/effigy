@@ -638,10 +638,12 @@ fn registered_gateway_routes_match_project_requires_exact_project_owned_routes()
         managed_listener: None,
         registered: chrono::Utc::now(),
     });
-    assert!(
-        registered_gateway_routes_match_project(&table, &repo_root, std::slice::from_ref(&desired))
-            .expect("registered routes should match")
-    );
+    assert!(registered_gateway_routes_match_project(
+        &table,
+        &repo_root,
+        std::slice::from_ref(&desired)
+    )
+    .expect("registered routes should match"));
 
     let original = table.lookup(&desired.domain).unwrap().clone();
     for field in [
@@ -936,14 +938,12 @@ fn route_registration_reports_its_post_poll_stages() {
             &mut |_, _| Ok(()),
         )
         .expect("published ports register their declared routes");
-        assert!(
-            registered_gateway_routes_match_project(
-                &RouteTable::load(&route_table_path).expect("persisted routes"),
-                &policy.repo_root,
-                &routes
-            )
-            .expect("owned exact routes")
-        );
+        assert!(registered_gateway_routes_match_project(
+            &RouteTable::load(&route_table_path).expect("persisted routes"),
+            &policy.repo_root,
+            &routes
+        )
+        .expect("owned exact routes"));
         assert!(routes.iter().any(|route| route.domain == "clientname.test"
             && route.target.as_deref() == Some("127.0.0.1:8080")));
         assert_eq!(certificates, ["clientname.test"]);
@@ -1749,11 +1749,9 @@ fn foreign_teardown_preserves_tls_material_and_tcp_alias() {
 
         let mut policy = test_policy();
         policy.repo_root = paths[1].clone();
-        assert!(
-            deregister_gateway_routes_for_container(&policy)
-                .unwrap()
-                .is_empty()
-        );
+        assert!(deregister_gateway_routes_for_container(&policy)
+            .unwrap()
+            .is_empty());
         let table = RouteTable::load(&route_table_path).unwrap();
         assert_eq!(table.len(), 2);
         assert!(cert.exists() && key.exists());
@@ -2010,11 +2008,9 @@ fn rejects_tcp_alias_bind_tuple_collision_with_different_upstream() {
             result.expect(label);
         } else {
             let error = result.expect_err(label);
-            assert!(
-                error
-                    .to_string()
-                    .contains("raw TCP listeners cannot dispatch by hostname")
-            );
+            assert!(error
+                .to_string()
+                .contains("raw TCP listeners cannot dispatch by hostname"));
         }
     }
 }

@@ -436,11 +436,9 @@ mod tests {
         fake.arguments.clear();
         assert!(cleanup(&mut fake, dir.path(), false).is_err());
         fake.unknown.push(40);
-        assert!(
-            cleanup(&mut fake, dir.path(), false)
-                .unwrap_err()
-                .contains("identity unavailable")
-        );
+        assert!(cleanup(&mut fake, dir.path(), false)
+            .unwrap_err()
+            .contains("identity unavailable"));
         assert!(fake.signalled.is_empty());
     }
 

@@ -37,31 +37,29 @@ pub use colima_cache_drop::{
     drop_colima_virtiofs_dentry_caches, release_colima_virtiofs_references_after_teardown,
 };
 pub use colima_runtime::{
-    ColimaAdviceMode, ColimaEnsureReport, ColimaRecoveryPhase, ColimaRecoveryReport,
-    RuntimeObservation, colima_advice_mode, colima_is_running, colima_is_running_with_deadline,
+    colima_advice_mode, colima_is_running, colima_is_running_with_deadline,
     colima_profile_force_stop_advice, colima_profile_recovery_advice, colima_profile_warnings,
     ensure_colima_running, ensure_colima_running_report, ensure_runtime_backend_running,
     ensure_runtime_backend_running_report, observe_runtime_backend, recover_colima_runtime,
     recover_colima_runtime_with_progress, reset_colima_runtime, reset_colima_runtime_with_progress,
     run_runtime_command_capture_for_policy_with_timeout, running_colima_profiles,
     runtime_backend_is_running, runtime_backend_is_running_with_deadline, selected_backend_label,
-    verify_runtime_backend_no_change,
+    verify_runtime_backend_no_change, ColimaAdviceMode, ColimaEnsureReport, ColimaRecoveryPhase,
+    ColimaRecoveryReport, RuntimeObservation,
 };
 pub use compose_progress::{
-    ComposeStepEvent, parse_compose_step_event, service_from_container_name,
+    parse_compose_step_event, service_from_container_name, ComposeStepEvent,
 };
-pub use compose_steps::{ComposeSteps, TimedStep, runtime_wait};
+pub use compose_steps::{runtime_wait, ComposeSteps, TimedStep};
 pub use engine::EngineAbsence;
 pub use healthcheck_pidfiles::{
+    parse_health_check_pidfile_prune, prune_stale_health_check_pidfiles, HealthCheckPidFilePrune,
     HEALTHCHECK_PIDFILE_PATTERN, HEALTHCHECK_PIDFILE_STALE_MINUTES, HEALTHCHECK_TASK_ROOT,
-    HealthCheckPidFilePrune, parse_health_check_pidfile_prune, prune_stale_health_check_pidfiles,
 };
 pub use implementation::{
-    ContainerExecError, ObservedWorkspaceArtifactBuilder, OwnershipContext,
-    RunningComposeContainerInventory, RuntimeInventoryFailure, SharedProjectContainer,
-    VerifiedComposeContainer, WorkspaceBuilderPreparation, capture_compose_ps,
-    capture_running_container_stats, capture_running_container_stats_for_profile,
-    compose_stack_is_running, container_last_log_line_for_policy, decision_project_inventory,
+    capture_compose_ps, capture_running_container_stats,
+    capture_running_container_stats_for_profile, compose_stack_is_running,
+    container_last_log_line_for_policy, decision_project_inventory,
     discover_compose_containers_all_states, discover_running_compose_containers,
     expected_workspace_source, infer_host_working_dir_for_container, inspect_containers_for_policy,
     inspect_image_for_policy, list_compose_containers_for_policy_including_stopped,
@@ -83,21 +81,23 @@ pub use implementation::{
     verify_owned_running_compose_identities, verify_owned_running_compose_rows,
     verify_shared_render_container, verify_workspace_artifact_builder,
     verify_workspace_artifact_builder_declaration, workspace_artifact_builder_preparation,
+    ContainerExecError, ObservedWorkspaceArtifactBuilder, OwnershipContext,
+    RunningComposeContainerInventory, RuntimeInventoryFailure, SharedProjectContainer,
+    VerifiedComposeContainer, WorkspaceBuilderPreparation,
 };
 pub use managed_stop::{end_owned_container_process_group, verify_owned_stack_for_shutdown};
 pub use mounts::ensure_isolated_mount_host_points;
 pub use parse::{
+    compose_status_is_created, compose_status_is_running, parse_running_compose_containers,
     ContainerHealth, ContainerLifecycle, ContainerStatus, PortBinding, PublishedPort,
     RunningComposeContainer, RunningComposeContainerProfiled, RunningContainerStats,
-    RunningContainerStatsCapture, compose_status_is_created, compose_status_is_running,
-    parse_running_compose_containers,
+    RunningContainerStatsCapture,
 };
 pub use process::{
     no_containers_diagnostic, retained_backend_log_path, run_command_capture,
     run_command_capture_allow_failure, run_input_capture_until,
 };
 pub use ssh_agent_preflight::{
-    SshAgentSocketHealth, inspect_colima_ssh_agent_socket,
-    inspect_colima_ssh_agent_socket_for_profile,
-    inspect_colima_ssh_agent_socket_for_profile_with_deadline,
+    inspect_colima_ssh_agent_socket, inspect_colima_ssh_agent_socket_for_profile,
+    inspect_colima_ssh_agent_socket_for_profile_with_deadline, SshAgentSocketHealth,
 };

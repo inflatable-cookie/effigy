@@ -14,18 +14,18 @@ use std::time::{Duration, Instant};
 
 use effigy_cli::TaskInvocation;
 use effigy_containers::{
-    ContainerAction,
     colima::parse_colima_running,
-    compose::{ComposeBackend, resolve_compose_backend_for_repo},
+    compose::{resolve_compose_backend_for_repo, ComposeBackend},
     exec::{
-        SshAgentSocketHealth, colima_advice_mode, colima_profile_recovery_advice,
-        inspect_colima_ssh_agent_socket_for_profile_with_deadline,
+        colima_advice_mode, colima_profile_recovery_advice,
+        inspect_colima_ssh_agent_socket_for_profile_with_deadline, SshAgentSocketHealth,
     },
     load_all_container_policies, user_global_backend_preference, user_global_colima_profile,
+    ContainerAction,
 };
 use effigy_doctor::{
-    DoctorError, DoctorFinding, DoctorRuntimeDiagnostics, DoctorRuntimePorts, DoctorSeverity,
-    check_id,
+    check_id, DoctorError, DoctorFinding, DoctorRuntimeDiagnostics, DoctorRuntimePorts,
+    DoctorSeverity,
 };
 use effigy_execution::ExecutionSurface;
 use effigy_manifest::{DeferredCommand, LoadedCatalog, ManifestContainerDriver};
@@ -37,11 +37,11 @@ use crate::runner::container_command::is_primary_service_running_with_deadline;
 use crate::runner::deferral;
 use crate::runner::error::RunnerError;
 #[cfg(not(test))]
-use crate::runner::exec_command::{CommandCaptureError, capture_command_until};
+use crate::runner::exec_command::{capture_command_until, CommandCaptureError};
 use crate::runner::exec_command::{run_command_capture_until, run_compose_exec_plan_with_deadline};
 use crate::runner::execute::api;
 use crate::runner::workspace_command::permissions::{
-    WorkspaceOwnershipProbeStatus, compose_backend_with_deadline, diagnose_workspace_ownership,
+    compose_backend_with_deadline, diagnose_workspace_ownership, WorkspaceOwnershipProbeStatus,
 };
 
 #[derive(Debug, Default)]
@@ -720,24 +720,24 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use effigy_containers::{
-        BackendId, EffectiveContainerPolicy, WorkspaceMountKind, WorkspaceRepairAuthority,
-        load_workspace_ownership_plan,
+        load_workspace_ownership_plan, BackendId, EffectiveContainerPolicy, WorkspaceMountKind,
+        WorkspaceRepairAuthority,
     };
-    use effigy_doctor::{DoctorRuntimeDiagnostics, DoctorSeverity, check_id};
+    use effigy_doctor::{check_id, DoctorRuntimeDiagnostics, DoctorSeverity};
 
     use super::{
         append_workspace_ownership_diagnostics, colima_list_reports_running,
         docker_context_mismatch_warning, is_primary_service_running_with_deadline,
         workspace_ownership_finding,
     };
-    use crate::contract_test_support::{EnvGuard, lock_test};
+    use crate::contract_test_support::{lock_test, EnvGuard};
     use crate::runner::scripted_doctor::{
-        self, OwnershipFixture, SCRIPTED_OPERATION_COST, ScriptedPhase, ScriptedStatus,
+        self, OwnershipFixture, ScriptedPhase, ScriptedStatus, SCRIPTED_OPERATION_COST,
     };
     use crate::runner::test_support::effective_container_policy;
     use crate::runner::workspace_command::permissions::{
-        WorkspaceOwnershipProbeStatus, compose_backend_with_deadline, diagnose_workspace_ownership,
-        rust_nested_probe_paths,
+        compose_backend_with_deadline, diagnose_workspace_ownership, rust_nested_probe_paths,
+        WorkspaceOwnershipProbeStatus,
     };
 
     #[test]
@@ -819,11 +819,9 @@ mod tests {
             finding.evidence.contains("sentinel pid 44839"),
             "{finding:?}"
         );
-        assert!(
-            finding
-                .remediation
-                .contains("effigy run release parkedfixture000000000001")
-        );
+        assert!(finding
+            .remediation
+            .contains("effigy run release parkedfixture000000000001"));
         assert!(!finding.fixable);
     }
 
@@ -1386,7 +1384,7 @@ esac
         pgfile: &Path,
         ready: &Path,
     ) {
-        use effigy_containers::exec::capture_test_clock::{Guard, control};
+        use effigy_containers::exec::capture_test_clock::{control, Guard};
 
         struct CaptureGuard {
             thread:

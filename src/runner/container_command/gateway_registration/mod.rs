@@ -10,19 +10,19 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use effigy_containers::exec::{
-    RunningComposeContainer, colima_advice_mode, colima_profile_recovery_advice,
+    colima_advice_mode, colima_profile_recovery_advice,
     list_compose_containers_for_policy_including_stopped_with_timeout,
     list_running_compose_containers_for_policy,
-    list_running_compose_containers_for_policy_with_deadline,
+    list_running_compose_containers_for_policy_with_deadline, RunningComposeContainer,
 };
 use effigy_containers::{EffectiveContainerPolicy, EffectiveDnsRoute};
 use effigy_gateway::endpoint_store::EndpointStore;
 use effigy_gateway::loopback;
-#[cfg(test)]
-use effigy_gateway::registration::{RouteRegistration, register_route};
 use effigy_gateway::registration::{
-    TARGET_PROBE_TIMEOUT, dead_claim_reason, owned_by, withdraw_owned_routes,
+    dead_claim_reason, owned_by, withdraw_owned_routes, TARGET_PROBE_TIMEOUT,
 };
+#[cfg(test)]
+use effigy_gateway::registration::{register_route, RouteRegistration};
 use effigy_gateway::routes::{Route, RouteSource, RouteTable};
 
 use crate::runner::error::RunnerError;
