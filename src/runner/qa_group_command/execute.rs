@@ -654,6 +654,69 @@ mod tests {
     use effigy_tasks::QaGroupPlanMember;
     use std::path::PathBuf;
 
+    #[test]
+    fn qa_group_manifest_covers_shorthand_is_canonicalized_for_runner_payloads() {
+        let cases = [
+            (
+                "covers = \"targets\"",
+                serde_json::json!(["workspace:root"]),
+            ),
+            (
+                "covers = [\"path:README.md\"]",
+                serde_json::json!(["path:README.md"]),
+            ),
+            ("", serde_json::json!([])),
+        ];
+
+        for (covers, expected) in cases {
+            let manifest = format!(
+                r#"
+[groups.example]
+lifecycle = "maintained"
+purpose = "Check"
+scope_policy = "required"
+proof_limits = ["No broader claim"]
+
+[[groups.example.members]]
+id = "check"
+kind = "test"
+task = "test"
+targets = ["workspace:root"]
+{covers}
+limits = ["Only this check"]
+"#
+            );
+            let parsed: effigy_manifest::ManifestQaSection =
+                toml::from_str(&manifest).expect("valid coverage form");
+            let payload: Vec<String> = parsed.groups["example"].members[0]
+                .covers
+                .iter()
+                .map(|token| token.as_token())
+                .collect();
+            let payload = serde_json::to_value(payload).expect("serialize canonical coverage");
+            assert_eq!(payload, expected);
+        }
+
+        let invalid = r#"
+[groups.example]
+lifecycle = "maintained"
+purpose = "Check"
+scope_policy = "required"
+proof_limits = ["No broader claim"]
+
+[[groups.example.members]]
+id = "check"
+kind = "test"
+task = "test"
+targets = ["workspace:root"]
+covers = "all"
+limits = ["Only this check"]
+"#;
+        let error = toml::from_str::<effigy_manifest::ManifestQaSection>(invalid)
+            .expect_err("invalid shorthand must be refused");
+        assert!(error.to_string().contains("string `targets`"), "{error}");
+    }
+
     fn published_member() -> QaGroupPlanMember {
         QaGroupPlanMember {
             id: "t1".to_owned(),
