@@ -37,6 +37,12 @@ pub enum RunnerError {
     Task(TaskError),
     Ui(String),
     TaskInvocation(String),
+    /// A managed host process was refused because the installed JavaScript
+    /// dependencies disagree with the checkout lockfile.
+    HostDependencyDrift {
+        detail: String,
+        remediation: String,
+    },
     /// Diagnostic contains only closed-vocabulary observations, never raw stdio.
     /// `observed_status` is the HTTP status a listener actually answered when
     /// its readiness declared another one, so a refusal names the exact
@@ -497,6 +503,7 @@ impl RunnerError {
             | RunnerError::Task(_)
             | RunnerError::Ui(_)
             | RunnerError::TaskInvocation(_)
+            | RunnerError::HostDependencyDrift { .. }
             | RunnerError::ContainerWaitRefused { .. }
             | RunnerError::DetachedActivationFailure { .. }
             | RunnerError::ContainerSurfaceRegistryMissing
@@ -681,6 +688,16 @@ impl RunnerError {
 
     pub(in crate::runner) fn task_invocation(message: impl Into<String>) -> Self {
         Self::TaskInvocation(message.into())
+    }
+
+    pub(in crate::runner) fn host_dependency_drift(
+        detail: impl Into<String>,
+        remediation: impl Into<String>,
+    ) -> Self {
+        Self::HostDependencyDrift {
+            detail: detail.into(),
+            remediation: remediation.into(),
+        }
     }
 
     /// A container wait that ended unfinished: its human `diagnostic`, and the

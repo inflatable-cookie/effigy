@@ -1514,6 +1514,44 @@ fn detached_container_timeout_renders_one_clean_error() {
     }
 }
 
+/// Dependency drift keeps its own headline and remediation through the
+/// detached activation wrapper instead of inheriting Compose's generic advice.
+#[test]
+fn detached_activation_host_dependency_drift_renders_its_remediation_directly() {
+    let error = RunnerError::wrap_detached_activation(
+        Some("web".to_owned()),
+        RunnerError::HostDependencyDrift {
+            detail: "JavaScript dependencies for `apps/web` disagree with `bun.lock`: `praxis` is installed at 0.6.0 but the lock resolves 0.7.1. Effigy refused to launch this environment's managed host processes because a stale install can fail after launch.".to_owned(),
+            remediation: "Run `bun install --frozen-lockfile` or `effigy bootstrap`, then rerun the container start.".to_owned(),
+        },
+    );
+    let human = error.human_error();
+    assert_eq!(
+        human.what_failed(),
+        "Host JavaScript dependencies have drifted"
+    );
+    assert_eq!(
+        human.next_action_text(),
+        Some("Run `bun install --frozen-lockfile` or `effigy bootstrap`, then rerun the container start.")
+    );
+    let rendered = human.render_text();
+    assert!(rendered.contains("`praxis`"), "{rendered}");
+    assert!(rendered.contains("`bun.lock`"), "{rendered}");
+    assert!(
+        !rendered.contains("Backing containers were started and left running."),
+        "a wrapper without lifecycle-stage context must not claim a stack was started: {rendered}"
+    );
+    assert!(
+        !rendered.contains("Container `web` did not finish starting"),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("Compose left the stack"), "{rendered}");
+    assert!(
+        !rendered.contains("Run `effigy container up --detach` to finish setup"),
+        "{rendered}"
+    );
+}
+
 /// A timeout the command produced output before is still a timeout. The
 /// output stays as bounded evidence, and only the marker line goes.
 #[test]

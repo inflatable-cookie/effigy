@@ -46,14 +46,26 @@ pub(super) fn detached_activation_identity(policy: &EffectiveContainerPolicy) ->
 /// through the one redactor and the one head-plus-tail bound in
 /// `effigy_ui::human`, so a backend's last line survives (effigy#364).
 pub(super) fn sanitized_failure_cause(error: &RunnerError) -> String {
-    let cause = error
-        .to_string()
+    sanitized_failure_text(&error.to_string())
+}
+
+fn sanitized_failure_text(text: &str) -> String {
+    let cause = text
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>()
         .join("; ");
     effigy_ui::human::bound_text(&cause, MAX_CAUSE_BYTES)
+}
+
+/// Backing containers are known to have started after readiness begins. A
+/// refusal during preparation has no stack from this activation to leave behind.
+fn backing_containers_started(operation: &DetachedOperationState) -> bool {
+    matches!(
+        operation.stage,
+        Some("readiness" | "runtime_integrations" | "persistent_owner")
+    )
 }
 
 /// Bytes of a refusal detail the detached JSON envelope keeps.
@@ -126,6 +138,55 @@ pub(super) fn detached_activation_failure(
         }
         return RunnerError::task_invocation(message);
     }
+
+    if let RunnerError::HostDependencyDrift {
+        detail,
+        remediation,
+    } = inner
+    {
+        let detail = if backing_containers_started(operation) {
+            format!("{detail} Backing containers were started and left running.")
+        } else {
+            detail.clone()
+        };
+        let safe_detail = sanitized_failure_text(&detail);
+        let safe_remediation = sanitized_failure_text(remediation);
+        let headline = "Host JavaScript dependencies have drifted";
+        if output_json {
+            let cause =
+                sanitized_failure_text(&format!("{safe_detail} Remediation: {safe_remediation}"));
+            let message = sanitized_failure_text(&format!(
+                "{headline}: {safe_detail} Next: {safe_remediation}"
+            ));
+            let human = effigy_ui::HumanError::new(headline)
+                .explain(&safe_detail)
+                .evidence("failure_kind: invocation_refusal")
+                .next_action(&safe_remediation);
+            return RunnerError::structured_json(
+                serde_json::json!({
+                    "state": "unavailable",
+                    "phase": "detached_activation",
+                    "activation_stage": operation.stage.unwrap_or("preparation"),
+                    "preparation_step": operation.preparation_step.filter(|_| operation.stage == Some("preparation")),
+                    "identity": operation.identity,
+                    "failure_kind": "invocation_refusal",
+                    "cause": cause,
+                    "remediation": safe_remediation,
+                    "readiness": "unverified",
+                    "exposure": "unverified",
+                    "recovery": safe_remediation,
+                    "stop": "effigy container down",
+                    "retirement_removes_mutable_data": true,
+                    "message": message,
+                }),
+                false,
+                human,
+                Some(error.workload_outcome()),
+            );
+        }
+        return RunnerError::host_dependency_drift(detail, remediation.clone());
+    }
+
     if let RunnerError::PredecessorUnsettled { run, .. } = inner {
         let ack_command = format!("effigy run acknowledge {run}");
         let message = format!(
