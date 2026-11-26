@@ -1,5 +1,9 @@
 use super::status::annotate_host_process_status;
 use crate::runner::container_command::gateway_registration::deregister_gateway_routes_for_container;
+use crate::runner::container_command::profile_inventory::{
+    list_containers, list_networks, list_volumes,
+};
+use crate::runner::container_command::retire::{finish, release_gateway, retire_owned, same_path};
 use crate::runner::container_command::support::{
     resolve_repo_root_or_invocation_cwd_scope, ContainerRepoScope,
 };
@@ -7,11 +11,121 @@ use crate::runner::container_command::{closeout, deregister_runtime_gateway_rout
 use crate::runner::environment;
 use effigy_containers::environment::Operation;
 use effigy_containers::exec::shutdown_container as shutdown_container_via_exec;
-use effigy_containers::{load_container_policy, EffectiveContainerPolicy};
+use effigy_containers::{
+    load_container_policy, named_volume_belongs_to, EffectiveContainerPolicy, OwnedResource,
+    ResourceKind, RetireOutcome,
+};
 use effigy_runtime::write::{
     run_container_down, run_container_down_all_with_hook, run_container_down_under_path_with_hook,
 };
+use std::collections::BTreeSet;
 use std::path::Path;
+
+/// `container down --project <PROJECT> --profile <PROFILE>`: tear one project's
+/// stack down on one profile, from any directory.
+pub(in crate::runner::container_command) fn run_container_down_project_command(
+    profile: &str,
+    project: &str,
+    remove_volumes: bool,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    let outcome = teardown_project_on_profile(profile, project, remove_volumes)?;
+    finish(outcome, None, output_json)
+}
+
+/// Remove the Effigy-owned stack of `project` on `profile`, without a checkout
+/// or a manifest. It reads only that profile and never starts a stopped one.
+///
+/// Selects, in removal order, the project's Effigy-labelled containers (their
+/// Compose project or `com.effigy.project` names `project`), its Compose
+/// networks, and, only when `remove_volumes` is set, its volumes, including
+/// persistent ones. Unlabelled and other projects' resources are never
+/// touched. Gateway routes are withdrawn for each checkout a removed container
+/// named, once no container on this profile still belongs to that checkout.
+///
+/// `Err` means the profile could not be read or a listing failed, so a caller
+/// (Barge's lease sweep) keeps its lease and retries. A returned outcome that is
+/// not `ok()` names the resources that remain.
+pub(in crate::runner) fn teardown_project_on_profile(
+    profile: &str,
+    project: &str,
+    remove_volumes: bool,
+) -> Result<RetireOutcome, RunnerError> {
+    let cwd = std::env::temp_dir();
+    require_running_profile(&cwd, profile)?;
+
+    let mut checkouts = BTreeSet::new();
+    let mut selected = Vec::new();
+    for row in list_containers(&cwd, profile)? {
+        let belongs = row.project.as_deref() == Some(project)
+            || row.effigy_project.as_deref() == Some(project);
+        if !belongs || !row.carries_effigy_ownership() {
+            continue;
+        }
+        if let Some(path) = row.owner_path() {
+            checkouts.insert(path);
+        }
+        selected.push(row.resource(ResourceKind::Container, profile));
+    }
+    for name in list_networks(&cwd, profile, &[project.to_owned()])? {
+        selected.push(OwnedResource {
+            kind: ResourceKind::Network,
+            name,
+            profile: profile.to_owned(),
+            persist: false,
+        });
+    }
+    if remove_volumes {
+        for row in list_volumes(&cwd, profile)? {
+            if row.project.as_deref() != Some(project) {
+                continue;
+            }
+            let owned = row.owner_path().is_some()
+                || row.managed
+                || named_volume_belongs_to(&row.name, project);
+            if owned {
+                selected.push(row.resource(profile));
+            }
+        }
+    }
+
+    let mut outcome = if selected.is_empty() {
+        RetireOutcome::default()
+    } else {
+        retire_owned(&cwd, &selected, false)?
+    };
+
+    if checkouts.is_empty() {
+        return Ok(outcome);
+    }
+    let remaining = list_containers(&cwd, profile)?;
+    for checkout in &checkouts {
+        let still_in_use = remaining.iter().any(|row| {
+            row.owner_path()
+                .is_some_and(|path| same_path(&path, checkout))
+        });
+        if !still_in_use {
+            outcome
+                .gateway
+                .routes
+                .extend(release_gateway(checkout)?.routes);
+        }
+    }
+    Ok(outcome)
+}
+
+/// A profile that is not running publishes nothing and cannot be read without
+/// starting it, which a project teardown never does.
+fn require_running_profile(cwd: &Path, profile: &str) -> Result<(), RunnerError> {
+    let running =
+        effigy_containers::exec::running_colima_profiles(cwd).map_err(RunnerError::from)?;
+    if running.iter().any(|name| name == profile) {
+        return Ok(());
+    }
+    Err(RunnerError::task_invocation(format!(
+        "Colima profile `{profile}` is not running, so its containers cannot be read without starting it; start the profile and retry"
+    )))
+}
 
 pub(in crate::runner::container_command) fn run_container_down_command(
     repo_override: Option<std::path::PathBuf>,

@@ -526,6 +526,13 @@ pub enum ContainerSubcommand {
         name: Option<String>,
         system: Option<String>,
         global: bool,
+        /// `--project` with `--profile`: tear one project's stack down on one
+        /// profile, from any directory, without a checkout or manifest.
+        project: Option<String>,
+        profile: Option<String>,
+        /// `--volumes`, valid only with `--project` and `--profile`: also remove
+        /// the project's volumes, including persistent ones.
+        volumes: bool,
     },
     Status {
         name: Option<String>,

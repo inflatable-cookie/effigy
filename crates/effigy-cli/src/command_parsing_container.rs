@@ -106,11 +106,31 @@ where
     let mut common = CommonArgs::default();
     let mut global = false;
     let mut system: Option<String> = None;
+    let mut project: Option<String> = None;
+    let mut profile: Option<String> = None;
+    let mut volumes = false;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--global" => global = true,
             "--system" => system = Some(parse_system_selector(&mut args, name.as_deref())?),
+            "--project" => {
+                project = Some(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--project".to_owned(),
+                    },
+                )?)
+            }
+            "--profile" => {
+                profile = Some(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--profile".to_owned(),
+                    },
+                )?)
+            }
+            "--volumes" => volumes = true,
             other => shared_flag_arm!(other, &mut args, common, HelpTopic::Container),
         }
     }
@@ -126,15 +146,113 @@ where
         ));
     }
 
+    let project = non_blank_down_flag("--project", project)?;
+    let profile = non_blank_down_flag("--profile", profile)?;
+    if project.is_some() || profile.is_some() || volumes {
+        validate_down_project_selection(DownProjectSelection {
+            name: name.as_deref(),
+            system: system.as_deref(),
+            global,
+            project: project.as_deref(),
+            profile: profile.as_deref(),
+            volumes,
+            repo_override: common.repo_override.is_some(),
+        })?;
+        return Ok(Command::Container(ContainerArgs {
+            subcommand: ContainerSubcommand::Down {
+                name: None,
+                system: None,
+                global: false,
+                project,
+                profile,
+                volumes,
+            },
+            repo_override: common.repo_override,
+            output_json: common.output_json,
+        }));
+    }
+
     Ok(Command::Container(ContainerArgs {
         subcommand: ContainerSubcommand::Down {
             name,
             system,
             global,
+            project: None,
+            profile: None,
+            volumes: false,
         },
         repo_override: common.repo_override,
         output_json: common.output_json,
     }))
+}
+
+/// The `container down --project` selection as the parser read it.
+struct DownProjectSelection<'a> {
+    name: Option<&'a str>,
+    system: Option<&'a str>,
+    global: bool,
+    project: Option<&'a str>,
+    profile: Option<&'a str>,
+    volumes: bool,
+    repo_override: bool,
+}
+
+/// `--project` and `--profile` select one project's stack on one profile, from
+/// any directory. They must come together, take no name, system, global or
+/// repo selector, and `--volumes` needs both.
+fn validate_down_project_selection(
+    selection: DownProjectSelection<'_>,
+) -> Result<(), CliParseError> {
+    let invalid = |message: &str| Err(CliParseError::InvalidArguments(message.to_owned()));
+    match (selection.project, selection.profile) {
+        (Some(_), None) => {
+            return invalid(
+                "`effigy container down --project <PROJECT>` also needs `--profile <PROFILE>`",
+            )
+        }
+        (None, Some(_)) => {
+            return invalid(
+                "`effigy container down --profile <PROFILE>` also needs `--project <PROJECT>`",
+            )
+        }
+        (None, None) if selection.volumes => {
+            return invalid(
+                "`effigy container down --volumes` needs `--project <PROJECT>` and `--profile <PROFILE>`",
+            )
+        }
+        _ => {}
+    }
+    if selection.name.is_some() {
+        return invalid(
+            "`effigy container down --project` selects a stack by profile, so it does not take `<NAME>`",
+        );
+    }
+    if selection.system.is_some() {
+        return invalid(
+            "`effigy container down --project` selects a stack by profile, so it does not accept `--system`",
+        );
+    }
+    if selection.global {
+        return invalid(
+            "`effigy container down --project` selects one project, so it does not accept `--global`",
+        );
+    }
+    if selection.repo_override {
+        return invalid(
+            "`effigy container down --project` works from any directory, so it does not accept `--repo`",
+        );
+    }
+    Ok(())
+}
+
+fn non_blank_down_flag(flag: &str, value: Option<String>) -> Result<Option<String>, CliParseError> {
+    match value {
+        None => Ok(None),
+        Some(value) if value.trim().is_empty() => Err(CliParseError::InvalidArguments(format!(
+            "`{flag}` needs a non-empty value"
+        ))),
+        Some(value) => Ok(Some(value.trim().to_owned())),
+    }
 }
 
 fn parse_container_status<I>(name: Option<String>, args: I) -> Result<Command, CliParseError>
@@ -1315,5 +1433,129 @@ mod tests {
             } => assert_eq!(command, "true"),
             other => panic!("unexpected shell shape {other:?}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod down_project_tests {
+    use crate::{parse_command, Command, ContainerSubcommand};
+
+    fn down(args: &[&str]) -> Result<Command, crate::CliParseError> {
+        let mut argv = vec!["container", "down"];
+        argv.extend_from_slice(args);
+        parse_command(argv.into_iter().map(str::to_owned))
+    }
+
+    #[test]
+    fn container_down_project_parses_project_profile_and_volumes() {
+        let Command::Container(container) = down(&[
+            "--project",
+            "acme-web",
+            "--profile",
+            "work",
+            "--volumes",
+            "--json",
+        ])
+        .expect("project down parses") else {
+            panic!("expected a container command");
+        };
+        assert!(container.output_json);
+        assert_eq!(
+            container.subcommand,
+            ContainerSubcommand::Down {
+                name: None,
+                system: None,
+                global: false,
+                project: Some("acme-web".to_owned()),
+                profile: Some("work".to_owned()),
+                volumes: true,
+            }
+        );
+    }
+
+    #[test]
+    fn container_down_project_without_volumes_keeps_them() {
+        let Command::Container(container) =
+            down(&["--project", "acme-web", "--profile", "work"]).expect("parses")
+        else {
+            panic!("expected a container command");
+        };
+        assert!(matches!(
+            container.subcommand,
+            ContainerSubcommand::Down {
+                project: Some(_),
+                profile: Some(_),
+                volumes: false,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn container_down_project_and_profile_must_come_together() {
+        let project_only = down(&["--project", "acme-web"]).expect_err("profile is missing");
+        assert!(
+            project_only.to_string().contains("--profile"),
+            "{project_only}"
+        );
+        let profile_only = down(&["--profile", "work"]).expect_err("project is missing");
+        assert!(
+            profile_only.to_string().contains("--project"),
+            "{profile_only}"
+        );
+    }
+
+    #[test]
+    fn container_down_volumes_needs_project_and_profile() {
+        let error = down(&["--volumes"]).expect_err("volumes alone is refused");
+        assert!(error.to_string().contains("--volumes"), "{error}");
+        let partial = down(&["--project", "acme-web", "--volumes"]).expect_err("no profile");
+        assert!(partial.to_string().contains("--profile"), "{partial}");
+    }
+
+    #[test]
+    fn container_down_project_rejects_name_system_global_and_repo() {
+        let named = parse_command(
+            [
+                "container",
+                "web",
+                "down",
+                "--project",
+                "a",
+                "--profile",
+                "p",
+            ]
+            .into_iter()
+            .map(str::to_owned),
+        )
+        .expect_err("a name is refused");
+        assert!(named.to_string().contains("<NAME>"), "{named}");
+        for flag in [
+            vec!["--system", "web"],
+            vec!["--global"],
+            vec!["--repo", "."],
+        ] {
+            let mut args = vec!["--project", "a", "--profile", "p"];
+            args.extend(flag.iter().copied());
+            let error = down(&args).expect_err("selector refused");
+            assert!(
+                error.to_string().contains(flag[0]),
+                "unexpected refusal for {flag:?}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn container_down_project_rejects_blank_values() {
+        let blank_project = down(&["--project", "  ", "--profile", "work"]).expect_err("blank");
+        assert!(
+            blank_project.to_string().contains("--project"),
+            "{blank_project}"
+        );
+        let blank_profile = down(&["--project", "acme", "--profile", ""]).expect_err("blank");
+        assert!(
+            blank_profile.to_string().contains("--profile"),
+            "{blank_profile}"
+        );
     }
 }

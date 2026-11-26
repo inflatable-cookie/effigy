@@ -12,9 +12,9 @@ use super::error::RunnerError;
 use cache::run_container_cache_command;
 use data::run_container_data_command;
 use lifecycle::{
-    run_container_down_command, run_container_logs_command, run_container_reset_command,
-    run_container_shell, run_container_stats_command, run_container_status_command,
-    run_container_up,
+    run_container_down_command, run_container_down_project_command, run_container_logs_command,
+    run_container_reset_command, run_container_shell, run_container_stats_command,
+    run_container_status_command, run_container_up,
 };
 use profile::run_container_profile_command;
 use volume::run_container_volume_command;
@@ -56,6 +56,7 @@ mod liveness;
 mod migrate;
 pub(in crate::runner) mod policy;
 mod profile;
+mod profile_inventory;
 mod readiness;
 mod render;
 mod restart;
@@ -158,9 +159,20 @@ fn run_container_with(
             )
         }
         ContainerSubcommand::Down {
+            name: None,
+            system: None,
+            global: false,
+            project: Some(project),
+            profile: Some(profile),
+            volumes,
+        } => run_container_down_project_command(&profile, &project, volumes, args.output_json),
+        ContainerSubcommand::Down {
             name,
             system,
             global: false,
+            project: None,
+            profile: None,
+            volumes: false,
         } => {
             let name = resolve_selected_container_name(
                 &args.repo_override,
@@ -179,12 +191,18 @@ fn run_container_with(
             name,
             system: _,
             global: true,
+            project: None,
+            profile: None,
+            volumes: false,
         } => run_container_down_command(
             args.repo_override.clone(),
             name.as_deref(),
             true,
             args.output_json,
         ),
+        ContainerSubcommand::Down { .. } => Err(RunnerError::task_invocation(
+            "`effigy container down --project` needs `--profile` and no name, `--system`, `--global` or `--repo`; `--volumes` needs both",
+        )),
         ContainerSubcommand::Status {
             name,
             system,
@@ -429,6 +447,9 @@ mod tests {
                     name: None,
                     system: None,
                     global: true,
+                    project: None,
+                    profile: None,
+                    volumes: false,
                 },
             ),
             (
