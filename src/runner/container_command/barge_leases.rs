@@ -678,8 +678,11 @@ pub(in crate::runner) fn acquire_container_lease_with(
 }
 
 /// Return and retake `(profile, project)` when its own owner comes back after
-/// the hold ended, so the stack it left is reused instead of swept and rebuilt.
-/// `None` when there is no such lease, or the slot was taken in between.
+/// the hold ended, so the sweep does not tear the stack down first. Barge never
+/// revives an ended lease, so the new one has a new ID: the next Compose apply
+/// renders a changed label and recreates the services. An exec or a reused
+/// release builder applies nothing and keeps its containers. `None` when there
+/// is no such lease, or the slot was taken in between.
 fn renew_released_lease(
     barge: &Barge,
     request: &ContainerLeaseRequest,

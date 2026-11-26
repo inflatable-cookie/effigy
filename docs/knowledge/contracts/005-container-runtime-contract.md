@@ -2803,8 +2803,9 @@ waits, sweeps, then refuses before any apply.
 
 **Label.** The ID is recorded in
 `.effigy/runtime/barge-lease/<profile>.<project>`, and every render of that
-environment adds `barge.lease=<id>` to each generated service. Shared backing
-services are not leased.
+environment adds `barge.lease=<id>` to each generated service. Only generated
+stacks are leased. Shared backing services and inline workspace containers are
+not.
 
 **Hold.** Attached sessions, task-started stacks and builds hold the lease in
 their process. A managed run holds it until it settles; the idle reaper takes
@@ -2816,18 +2817,23 @@ leaves its stack running converts its lease to unheld.
 same step, only after it succeeds: every environment stop transition (`down`,
 `down --global`, handover, failed attached `up`, attached session and managed
 run stop), `reset`, the idle stop, `down --project`, and `retire` /
-`retire --dead` for a stack with no container left. A failed bring-up returns
+`retire --dead` for a stack with no container left. Deleting a profile's VM
+(`profile purge`, `profile recreate`, `uninstall`) returns every lease of that
+profile. A failed bring-up returns
 its lease when it never applied a newly acquired one, or when no container of
 the project is running. A failed teardown keeps the lease. A narrow peer
 data-service stop is not a teardown.
 
 **Sweep.** Only crashes and ended owners wait for the sweep
 (`HoldReleased` keeps volumes, `OwnerEnded` removes them), run before and during
-acquisition and by `effigy container prune`. A `HoldReleased` lease whose own
-owner returns is returned and retaken without teardown. A release builder whose
-previous lease was returned may be recreated even though its environment record
-is still active.
+acquisition and by `effigy container prune`. A release builder whose previous
+lease was returned may be recreated even though its environment record is still
+active.
 
-**Not covered.** An inline workspace environment that a managed run starts
-with its own raw Compose command takes no lease.
-
+**Renewal.** When the owner of a `HoldReleased` lease acquires it again, the
+lease is returned and a new one taken, without a teardown. Barge never revives
+an ended lease, so the ID changes. The next Compose apply renders the new label
+and recreates the services, keeping volumes. An exec and a reused release
+builder apply nothing: their containers stay, labelled with the returned ID,
+and the live `(profile, project)` lease keeps the orphan sweep off them. A live
+lease keeps its ID on every re-acquire.

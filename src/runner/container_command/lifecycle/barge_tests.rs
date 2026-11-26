@@ -16,6 +16,7 @@ use crate::contract_test_support::{
     clean_fixture_environment, lock_test, with_cwd, EnvGuard, ReentrantTestLockGuard,
 };
 use crate::runner::container_command::barge_lifecycle;
+use crate::runner::container_runtime_prep::activate_routed_container_runtime;
 use crate::runner::error::RunnerError;
 
 const FAKE_DOCKER: &str = r#"#!/bin/sh
@@ -36,6 +37,8 @@ case "$subcmd" in
       if [ "$previous" = -f ]; then cat "$arg" >> "$state/up-compose"; fi
       previous="$arg"
     done
+    label=$(grep -o 'barge.lease: .*' "$state/up-compose" | head -n 1)
+    printf '%s\n' "${label:-unlabelled}" >> "$state/applies"
     if [ -f "$state/fail-up" ]; then echo 'no such image' >&2; exit 1; fi
     : > "$state/running"
     ;;
@@ -57,6 +60,7 @@ struct LeaseFixture {
     _temp: effigy_test_support::Fixture,
     repo: PathBuf,
     state: PathBuf,
+    bin: PathBuf,
     barge: PathBuf,
     _env: EnvGuard,
     _ambient: EnvGuard,
@@ -124,6 +128,7 @@ impl LeaseFixture {
             _temp: temp,
             repo,
             state,
+            bin,
             barge,
             _env: env,
             _ambient: ambient,
@@ -152,15 +157,17 @@ impl LeaseFixture {
         .expect("container down");
     }
 
-    fn leases(&self) -> Vec<ContainerLeaseStatus> {
+    fn account(&self) -> Barge {
         Barge::open_with(
             &self.barge,
             std::sync::Arc::new(FakeOs::new()),
             std::sync::Arc::new(ManualClock::new(1_700_000_000_000)),
         )
         .expect("temporary Barge account")
-        .container_status()
-        .expect("lease status")
+    }
+
+    fn leases(&self) -> Vec<ContainerLeaseStatus> {
+        self.account().container_status().expect("lease status")
     }
 
     fn only_lease(&self) -> ContainerLeaseStatus {
@@ -182,9 +189,26 @@ impl LeaseFixture {
         fs::read_to_string(self.state.join("up-compose")).expect("applied compose")
     }
 
+    /// The lease label of each Compose apply, in order.
+    fn applies(&self) -> Vec<String> {
+        fs::read_to_string(self.state.join("applies"))
+            .expect("recorded applies")
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+
     fn fail_up(&self) {
         fs::write(self.state.join("fail-up"), "").expect("fail the next apply");
     }
+}
+
+/// Idle stops are armed but no reaper process is spawned from the test binary.
+fn no_reaper() -> EnvGuard {
+    EnvGuard::set_many(&[(
+        "EFFIGY_DISABLE_HOST_CONTAINER_LEASE_REAPER",
+        Some("1".to_owned()),
+    )])
 }
 
 fn write_executable(path: &Path, body: &str) {
@@ -267,8 +291,8 @@ fn held_stack_keeps_its_lease_through_idle_linger_and_the_reaper_returns_it() {
     assert_eq!(lease.ended, None, "this process holds it");
     let policy = fixture.policy();
 
-    // A crashed holder leaves the lease for a sweep; the next session of the
-    // same checkout takes it back without rebuilding the stack.
+    // A crashed holder leaves the lease for a sweep; a session of the same
+    // checkout that applies nothing takes it back and leaves the stack alone.
     barge_lifecycle::release_hold(&policy);
     assert_eq!(
         fixture.only_lease().ended.map(|ending| ending.reason),
@@ -336,14 +360,10 @@ fn a_returned_lease_is_not_reused_by_its_former_holder() {
     let fixture = LeaseFixture::managed("");
     fixture.up(false, Retention::Held).expect("task ensure");
     let first = fixture.only_lease();
-    Barge::open_with(
-        &fixture.barge,
-        std::sync::Arc::new(FakeOs::new()),
-        std::sync::Arc::new(ManualClock::new(1_700_000_000_000)),
-    )
-    .expect("temporary Barge account")
-    .container_return(&first.id)
-    .expect("return from elsewhere");
+    fixture
+        .account()
+        .container_return(&first.id)
+        .expect("return from elsewhere");
 
     fixture.up(false, Retention::Held).expect("next ensure");
 
@@ -353,6 +373,150 @@ fn a_returned_lease_is_not_reused_by_its_former_holder() {
         .applied_compose()
         .contains(&format!("barge.lease: {}", second.id)));
     fixture.down();
+}
+
+/// A task loads its policy before it has a lease. Its first apply must still
+/// carry the label, whether that apply is the `up` of a stopped stack or the
+/// task's own apply over a running one, and the next activation must render the
+/// same stack.
+#[test]
+fn every_task_activation_apply_is_labelled_from_the_first() {
+    for already_running in [false, true] {
+        let fixture = LeaseFixture::managed("");
+        if already_running {
+            fs::write(fixture.state.join("running"), "").expect("running stack");
+        }
+        let _reaper = no_reaper();
+        let activate = || {
+            with_cwd(&fixture.repo, || {
+                activate_routed_container_runtime(&fixture.repo, "dev")
+            })
+            .expect("task activation")
+        };
+
+        let first = activate();
+        let lease = fixture.only_lease();
+        let label = format!("barge.lease: {}", lease.id);
+        assert_eq!(
+            fixture.applies(),
+            std::slice::from_ref(&label),
+            "{already_running}"
+        );
+        let rendered = first.policy.compose_files.clone();
+        drop(first);
+
+        let second = activate();
+        assert_eq!(fixture.only_lease().id, lease.id);
+        assert_eq!(second.policy.compose_files, rendered, "one render digest");
+        assert!(fixture.applies().iter().all(|apply| apply == &label));
+        drop(second);
+        fixture.down();
+        assert_eq!(fixture.leases(), Vec::new());
+    }
+}
+
+/// An inline workspace stack cannot carry the label and has its own raw
+/// teardown, so it takes no slot that nothing would return.
+#[test]
+fn an_inline_workspace_stack_takes_no_lease() {
+    let fixture = LeaseFixture::managed("");
+    let policy = effigy_containers::load_inline_workspace_container_policy(
+        &fixture.repo,
+        "dev__app",
+        &effigy_manifest::ManifestInlineWorkspaceContainerConfig {
+            image: Some("node:22".to_owned()),
+            mount: Some("./:/workspace".to_owned()),
+            extra: Default::default(),
+        },
+        None,
+    )
+    .expect("inline policy");
+
+    let reservation = barge_lifecycle::reserve(
+        &policy,
+        barge_lifecycle::LeaseIntent {
+            retention: Retention::Persistent,
+            session: false,
+            explicit_detached: false,
+        },
+    )
+    .expect("pass through");
+
+    assert!(reservation.is_none());
+    assert_eq!(fixture.leases(), Vec::new());
+}
+
+/// A released hold is renewed under a new ID, which the next apply renders:
+/// Compose sees a changed label and recreates the services.
+#[test]
+fn a_renewed_lease_renders_its_new_id_on_the_next_apply() {
+    let fixture = LeaseFixture::managed("");
+    let _ci = EnvGuard::set_many(&[("CI", Some("true".to_owned()))]);
+    fixture.up(false, Retention::Held).expect("task ensure");
+    let first = fixture.only_lease();
+    barge_lifecycle::release_hold(&fixture.policy());
+
+    fixture.up(false, Retention::Held).expect("next ensure");
+
+    let second = fixture.only_lease();
+    assert_ne!(second.id, first.id);
+    assert_eq!(
+        fixture.applies(),
+        [
+            format!("barge.lease: {}", first.id),
+            format!("barge.lease: {}", second.id),
+        ]
+    );
+    fixture.down();
+}
+
+/// Deleting a profile's VM destroys every stack on it, so all of its leases go
+/// back at once.
+#[test]
+fn purging_a_profile_returns_all_of_its_leases_and_no_others() {
+    let fixture = LeaseFixture::new(
+        r#"{"profiles":[{"name":"effigy","max":2},{"name":"effigy-release","max":1}]}"#,
+        "",
+    );
+    fixture.up(false, Retention::Persistent).expect("up");
+    let account = fixture.account();
+    let lease = |profile: &str| barge::container::ContainerLeaseRequest {
+        profile: profile.to_owned(),
+        project: "another-stack".to_owned(),
+        owner: barge::container::ContainerOwner::Checkout(fixture.repo.clone()),
+        class: ContainerClass::Worker,
+        hold: false,
+        wait: None,
+    };
+    for profile in ["effigy", "effigy-release"] {
+        let _ = account.container_lease(&lease(profile)).expect("lease");
+    }
+    assert_eq!(fixture.leases().len(), 3);
+    // The profile exists until Colima deletes it.
+    write_executable(
+        &fixture.bin.join("colima"),
+        &format!(
+            "#!/bin/sh\nstate='{}'\ncase \"$1\" in\n  list) [ -f \"$state/deleted\" ] || echo '{{\"name\":\"effigy\",\"status\":\"Stopped\",\"cpus\":4,\"memory\":8589934592,\"disk\":107374182400}}' ;;\n  delete) : > \"$state/deleted\" ;;\nesac\nexit 0\n",
+            fixture.state.display()
+        ),
+    );
+
+    with_cwd(&fixture.repo, || {
+        crate::runner::container_command::run_container_command(effigy_cli::ContainerArgs {
+            subcommand: effigy_cli::ContainerSubcommand::Profile {
+                subcommand: effigy_cli::ContainerProfileSubcommand::Purge {
+                    profile: Some("effigy".to_owned()),
+                    yes: true,
+                },
+            },
+            repo_override: None,
+            output_json: true,
+        })
+    })
+    .expect("purge");
+
+    assert!(fixture.state.join("deleted").exists());
+    assert_eq!(fixture.only_lease().profile, "effigy-release");
 }
 
 #[test]

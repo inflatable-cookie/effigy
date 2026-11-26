@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 use barge::container::{ContainerLease, ContainerLeaseOutcome, ContainerLeaseRequest};
 use barge::Barge;
 use effigy_containers::environment::Retention;
-use effigy_containers::EffectiveContainerPolicy;
+use effigy_containers::{EffectiveComposeSource, EffectiveContainerPolicy};
 use effigy_core::worktree_scope::ScopeKind;
 
 use super::barge_leases::{self, ContainerClassContext, LeaseAcquireOutcome};
@@ -153,11 +153,15 @@ fn label_renders(policy: &EffectiveContainerPolicy, id: Option<&str>) -> Result<
 
 /// Reserve this stack's slot before Compose applies it, sweeping and waiting
 /// while the profile is full. `None` when the stack is not lease-managed.
+///
+/// Only a generated stack is leased: its render carries the `barge.lease`
+/// label a sweep finds it by. An inline workspace stack has neither the label
+/// nor a teardown that returns a lease.
 pub(in crate::runner) fn reserve(
     policy: &EffectiveContainerPolicy,
     intent: LeaseIntent,
 ) -> Result<Option<Reservation>, RunnerError> {
-    if inside_guest() {
+    if policy.compose_source != EffectiveComposeSource::Generated || inside_guest() {
         return Ok(None);
     }
     let Some(barge) = open_wired_barge()? else {
@@ -353,6 +357,29 @@ pub(in crate::runner) fn return_torn_down_stack(profile: &str, project: &str) {
     if let Err(error) = returned {
         eprintln!(
             "[warn] the Barge lease of project `{project}` on profile `{profile}` was not returned: {error}"
+        );
+    }
+}
+
+/// Return every lease of a profile whose VM Effigy just deleted, with all the
+/// stacks on it.
+pub(in crate::runner) fn return_destroyed_profile(profile: &str) {
+    held().retain(|(held_profile, _), _| held_profile != profile);
+    let returned = open_wired_barge().and_then(|barge| {
+        let Some(barge) = barge else {
+            return Ok(());
+        };
+        let leases = barge
+            .container_status()
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+        for lease in leases.iter().filter(|lease| lease.profile == profile) {
+            barge_leases::return_lease_by_id_with(Some(&barge), &lease.id)?;
+        }
+        Ok(())
+    });
+    if let Err(error) = returned {
+        eprintln!(
+            "[warn] the Barge leases of deleted profile `{profile}` were not all returned: {error}"
         );
     }
 }

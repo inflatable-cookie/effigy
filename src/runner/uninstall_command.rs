@@ -186,6 +186,9 @@ fn apply_colima_profile_target() -> UninstallTarget {
         "colima delete",
     ) {
         Ok(_) => {
+            crate::runner::container_command::barge_lifecycle::return_destroyed_profile(
+                MANAGED_COLIMA_PROFILE,
+            );
             target.status = "removed";
             target.removed = true;
         }

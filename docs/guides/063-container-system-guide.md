@@ -1319,12 +1319,16 @@ before starting anything.
 
 - **Immediate return.** `down` (all forms), `reset`, `retire`, the idle stop, a
   task's own stop and a failed bring-up that leaves nothing running return the
-  lease in the same step.
+  lease in the same step. `profile purge`, `profile recreate` and `uninstall`
+  return every lease of the profile they delete.
 - **Sweep.** A worker whose holder crashed, or any lease whose owner is gone, is
   reclaimed by the next `up` on that profile or by
   `effigy container prune [--profile <PROFILE>]`. A crashed holder keeps its
-  volumes; a gone owner's volumes are removed. The same checkout coming back
-  first takes its lease again and keeps the stack.
+  volumes; a gone owner's volumes are removed.
+- **Coming back.** If the same checkout returns before a sweep, it gets a new
+  lease ID without a teardown. The next `up` or task apply then recreates its
+  containers (the label changed) and keeps the volumes. Inline workspace
+  containers are never leased.
 - **Release builder.** The builder stays between builds with its hold released,
   so another checkout's build can reclaim the slot. The next build then
   recreates the builder.

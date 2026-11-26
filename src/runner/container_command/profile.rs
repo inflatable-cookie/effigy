@@ -17,6 +17,7 @@ use effigy_containers::exec::{
 use serde::Deserialize;
 use serde_json::json;
 
+use super::barge_lifecycle;
 use super::data::maybe_confirm_destructive_container_action;
 use super::RunnerError;
 use crate::runner::command_context::resolve_active_repo_root;
@@ -492,6 +493,7 @@ fn run_container_profile_recreate(
                 "colima delete",
             )?;
         }
+        barge_lifecycle::return_destroyed_profile(&profile);
         progress.awaiting(
             format!("preparing the managed configuration for Colima profile `{profile}`"),
             format!("the managed Colima configuration for profile `{profile}` to be written"),
@@ -568,6 +570,7 @@ fn run_container_profile_purge(
                 "colima delete",
             )?;
         }
+        barge_lifecycle::return_destroyed_profile(&profile);
 
         progress.reading_state(format!(
             "reading the state Colima reports for profile `{profile}`"
