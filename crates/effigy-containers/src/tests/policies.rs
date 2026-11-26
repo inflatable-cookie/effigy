@@ -1929,3 +1929,66 @@ catalog = "builder"
         "single inspection path must still reject invalid workspace_source values"
     );
 }
+
+/// `[containers.<name>.host].fs_events` loads in shorthand and table form,
+/// defaults when omitted, and refuses bad values at policy load.
+#[test]
+fn policy_fs_events_manifest_loads_defaults_and_refuses_bad_values() {
+    use crate::{EffectiveFsEventsConfig, EffectiveFsEventsMode};
+
+    let root = temp_repo("fs-events-manifest");
+    let manifest = |host: &str| {
+        format!(
+            r#"
+[containers.web]
+project_name = "app-dev"
+primary_service = "postgres"
+
+[containers.web.services.postgres]
+catalog = "postgres"
+
+[containers.web.host]
+{host}
+"#
+        )
+    };
+    let load = |host: &str| {
+        fs::write(root.join("effigy.toml"), manifest(host)).expect("write manifest");
+        crate::load_container_policy_for_inspection(&root, Some("web"))
+    };
+
+    let omitted = load("").expect("omitted fs_events loads");
+    assert_eq!(omitted.fs_events, EffectiveFsEventsConfig::default());
+
+    let shorthand = load(r#"fs_events = "off""#).expect("shorthand loads");
+    assert_eq!(shorthand.fs_events.mode, EffectiveFsEventsMode::Off);
+    assert_eq!(shorthand.fs_events.debounce_ms, 100);
+
+    let table = load(
+        r#"fs_events = { mode = "on", paths = [" src "], ignore = ["dist"], debounce_ms = 250, services = ["postgres"] }"#,
+    )
+    .expect("table loads");
+    assert_eq!(
+        table.fs_events,
+        EffectiveFsEventsConfig {
+            mode: EffectiveFsEventsMode::On,
+            paths: vec!["src".to_owned()],
+            ignore: vec!["dist".to_owned()],
+            debounce_ms: 250,
+            services: vec!["postgres".to_owned()],
+        }
+    );
+
+    let zero = load(r#"fs_events = { debounce_ms = 0 }"#).unwrap_err();
+    assert!(
+        zero.to_string()
+            .contains("`debounce_ms` must be greater than 0"),
+        "{zero}"
+    );
+
+    let unknown = load(r#"fs_events = { services = ["worker"] }"#).unwrap_err();
+    assert!(
+        unknown.to_string().contains("unknown service `worker`"),
+        "{unknown}"
+    );
+}

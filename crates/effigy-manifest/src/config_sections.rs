@@ -21,6 +21,7 @@ pub use container::{
     ManifestContainerConfig, ManifestContainerDataConfig, ManifestContainerDnsConfig,
     ManifestContainerDnsDomainDefaults, ManifestContainerDnsRouteConfig, ManifestContainerDriver,
     ManifestContainerExecAliasConfig, ManifestContainerExecAliasTableConfig,
+    ManifestContainerFsEventsConfig, ManifestContainerFsEventsMode, ManifestContainerFsEventsTable,
     ManifestContainerHealthConfig, ManifestContainerHostConfig, ManifestContainerHostMount,
     ManifestContainerHostMountTable, ManifestContainerHostProcess,
     ManifestContainerHostProcessRestart, ManifestContainerLifecycleConfig,
@@ -54,10 +55,10 @@ pub use secrets::{
 #[cfg(test)]
 mod tests {
     use super::{
-        ManifestContainerDnsConfig, ManifestContainerHostConfig, ManifestContainerHostMount,
-        ManifestContainerServiceConfig, ManifestContainersConfig,
-        ManifestInlineWorkspaceContainerConfig, ManifestIsolationConfig, ManifestJsPackageManager,
-        ManifestSystemsConfig, ManifestWorkspaceContainerRef,
+        ManifestContainerDnsConfig, ManifestContainerFsEventsConfig, ManifestContainerFsEventsMode,
+        ManifestContainerHostConfig, ManifestContainerHostMount, ManifestContainerServiceConfig,
+        ManifestContainersConfig, ManifestInlineWorkspaceContainerConfig, ManifestIsolationConfig,
+        ManifestJsPackageManager, ManifestSystemsConfig, ManifestWorkspaceContainerRef,
     };
 
     #[derive(Debug, serde::Deserialize)]
@@ -846,6 +847,85 @@ mounts = [
 mounts = [
   { host = "./", container = "/workspace", bogus = "value" },
 ]
+"#,
+        );
+        assert!(result.is_err(), "expected unknown-field rejection");
+    }
+
+    #[test]
+    fn container_host_fs_events_accepts_each_shorthand_mode() {
+        for (raw, expected) in [
+            ("auto", ManifestContainerFsEventsMode::Auto),
+            ("on", ManifestContainerFsEventsMode::On),
+            ("off", ManifestContainerFsEventsMode::Off),
+        ] {
+            let parsed: ManifestContainerHostConfig =
+                toml::from_str(&format!("fs_events = \"{raw}\"")).expect("parse shorthand");
+            match parsed.fs_events.expect("fs_events declared") {
+                ManifestContainerFsEventsConfig::Mode(mode) => assert_eq!(mode, expected, "{raw}"),
+                ManifestContainerFsEventsConfig::Table(_) => panic!("expected shorthand for {raw}"),
+            }
+        }
+
+        let unknown: Result<ManifestContainerHostConfig, _> =
+            toml::from_str("fs_events = \"always\"");
+        assert!(unknown.is_err(), "unknown shorthand mode is rejected");
+    }
+
+    #[test]
+    fn container_host_fs_events_table_reads_every_field() {
+        let parsed: ManifestContainerHostConfig = toml::from_str(
+            r#"
+[fs_events]
+mode = "on"
+paths = ["src", "assets"]
+ignore = ["dist", ".cache"]
+debounce_ms = 250
+services = ["app"]
+"#,
+        )
+        .expect("parse table form");
+
+        match parsed.fs_events.expect("fs_events declared") {
+            ManifestContainerFsEventsConfig::Table(table) => {
+                assert_eq!(table.mode, ManifestContainerFsEventsMode::On);
+                assert_eq!(table.paths, vec!["src".to_owned(), "assets".to_owned()]);
+                assert_eq!(table.ignore, vec!["dist".to_owned(), ".cache".to_owned()]);
+                assert_eq!(table.debounce_ms, Some(250));
+                assert_eq!(table.services, vec!["app".to_owned()]);
+            }
+            ManifestContainerFsEventsConfig::Mode(_) => panic!("expected table form"),
+        }
+    }
+
+    #[test]
+    fn container_host_fs_events_table_defaults_when_fields_are_omitted() {
+        let parsed: ManifestContainerHostConfig =
+            toml::from_str("[fs_events]\n").expect("parse empty table");
+
+        match parsed.fs_events.expect("fs_events declared") {
+            ManifestContainerFsEventsConfig::Table(table) => {
+                assert_eq!(table.mode, ManifestContainerFsEventsMode::Auto);
+                assert!(table.paths.is_empty());
+                assert!(table.ignore.is_empty());
+                assert_eq!(table.debounce_ms, None);
+                assert!(table.services.is_empty());
+            }
+            ManifestContainerFsEventsConfig::Mode(_) => panic!("expected table form"),
+        }
+
+        let omitted: ManifestContainerHostConfig =
+            toml::from_str(r#"mounts = ["./:/workspace"]"#).expect("parse without fs_events");
+        assert!(omitted.fs_events.is_none());
+    }
+
+    #[test]
+    fn container_host_fs_events_table_rejects_unknown_fields() {
+        let result: Result<ManifestContainerHostConfig, _> = toml::from_str(
+            r#"
+[fs_events]
+mode = "auto"
+bogus = true
 "#,
         );
         assert!(result.is_err(), "expected unknown-field rejection");

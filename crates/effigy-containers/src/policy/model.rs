@@ -71,6 +71,60 @@ pub struct EffectiveContainerPolicy {
     pub shutdown: ManifestContainerShutdownMode,
     pub detach_timeout_secs: u64,
     pub host_processes: Vec<EffectiveHostProcess>,
+    /// Host-to-guest file-event relay policy for this environment's bind
+    /// mounts. Defaults when `[containers.<name>.host].fs_events` is omitted.
+    pub fs_events: EffectiveFsEventsConfig,
+}
+
+/// Coalescing window, in milliseconds, applied when `debounce_ms` is omitted.
+pub const DEFAULT_FS_EVENTS_DEBOUNCE_MS: u64 = 100;
+
+/// Paths the file-event relay always skips. Manifest `ignore` entries are
+/// added to these rather than replacing them.
+pub const DEFAULT_FS_EVENTS_IGNORES: [&str; 5] = [
+    ".git",
+    "node_modules",
+    "vendor",
+    "target",
+    ".effigy/runtime",
+];
+
+/// Whether the file-event relay runs. See [`EffectiveFsEventsConfig`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum EffectiveFsEventsMode {
+    /// Runs when the environment has a writable bind mount to watch.
+    #[default]
+    Auto,
+    /// Requires the relay to run.
+    On,
+    /// Never runs the relay.
+    Off,
+}
+
+/// Resolved `[containers.<name>.host].fs_events`. `ignore` holds only the
+/// manifest additions; the built-in defaults are [`DEFAULT_FS_EVENTS_IGNORES`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EffectiveFsEventsConfig {
+    pub mode: EffectiveFsEventsMode,
+    /// Subpaths of the writable bind mounts to watch. Empty watches all.
+    pub paths: Vec<String>,
+    /// Additional ignored paths, on top of the built-in defaults.
+    pub ignore: Vec<String>,
+    pub debounce_ms: u64,
+    /// Explicit target services. Empty targets the primary service.
+    pub services: Vec<String>,
+}
+
+impl Default for EffectiveFsEventsConfig {
+    fn default() -> Self {
+        Self {
+            mode: EffectiveFsEventsMode::Auto,
+            paths: Vec::new(),
+            ignore: Vec::new(),
+            debounce_ms: DEFAULT_FS_EVENTS_DEBOUNCE_MS,
+            services: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -339,6 +393,7 @@ pub(crate) fn test_policy(repo_root: &std::path::Path) -> EffectiveContainerPoli
         shutdown: ManifestContainerShutdownMode::Graceful,
         detach_timeout_secs: 10,
         host_processes: Vec::new(),
+        fs_events: EffectiveFsEventsConfig::default(),
     }
 }
 

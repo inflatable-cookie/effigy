@@ -53,9 +53,10 @@ pub use policy::load::{
 };
 pub use policy::model::{
     ContainerPolicyError, EffectiveAttachMode, EffectiveComposeSource, EffectiveContainerPolicy,
-    EffectiveDataPeer, EffectiveDnsRoute, EffectiveHostProcess, EffectiveManagedHostListener,
-    EffectiveServiceAlias, HostProcessRestart, HostProcessSignal, SharedRender,
-    SharedServiceBinding,
+    EffectiveDataPeer, EffectiveDnsRoute, EffectiveFsEventsConfig, EffectiveFsEventsMode,
+    EffectiveHostProcess, EffectiveManagedHostListener, EffectiveServiceAlias, HostProcessRestart,
+    HostProcessSignal, SharedRender, SharedServiceBinding, DEFAULT_FS_EVENTS_DEBOUNCE_MS,
+    DEFAULT_FS_EVENTS_IGNORES,
 };
 pub use report::{
     annotate_workspace_extra_mount_decisions, cache_list_global_report, cache_list_report,

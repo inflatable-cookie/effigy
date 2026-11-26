@@ -6,7 +6,7 @@ use crate::compose;
 use crate::policy_support::validate_media_mounts;
 use crate::{driver_label, CONTAINERD_LABEL_MAX_BYTES, NERDCTL_MOUNTS_LABEL_BUDGET_BYTES};
 
-use super::model::{ContainerPolicyError, EffectiveContainerPolicy};
+use super::model::{ContainerPolicyError, EffectiveContainerPolicy, EffectiveFsEventsConfig};
 
 pub fn validate_container_policy(
     repo_root: &Path,
@@ -31,6 +31,52 @@ pub fn validate_container_policy(
     // Host mounts are resolved + validated at intake (see `mount_spec`).
     // `policy.declared_mounts` already contains canonical absolute paths.
     validate_media_mounts(repo_root, &policy.name, &policy.declared_media_mounts)?;
+    Ok(())
+}
+
+/// Checks a resolved `[containers.<name>.host].fs_events` against the rules the
+/// file-event relay depends on. Entries are checked as written, before any
+/// trimming, so an embedded newline or NUL is refused rather than stripped.
+///
+/// `inline_services` is the environment's inline or catalog service set. It is
+/// empty for an external `compose_file` without inline services, which accepts
+/// any non-empty service name because the set is not known at load.
+pub(crate) fn validate_fs_events(
+    container: &str,
+    fs_events: &EffectiveFsEventsConfig,
+    inline_services: &[&str],
+) -> Result<(), ContainerPolicyError> {
+    let invalid = |message: String| {
+        ContainerPolicyError::TaskInvocation(format!(
+            "container `{container}` has invalid `host.fs_events`: {message}"
+        ))
+    };
+    if fs_events.debounce_ms == 0 {
+        return Err(invalid("`debounce_ms` must be greater than 0".to_owned()));
+    }
+    for (field, entries) in [("paths", &fs_events.paths), ("ignore", &fs_events.ignore)] {
+        for entry in entries {
+            if entry.trim().is_empty() {
+                return Err(invalid(format!("`{field}` entries must not be empty")));
+            }
+            if entry.contains(['\n', '\r', '\0']) {
+                return Err(invalid(format!(
+                    "`{field}` entry {entry:?} must not contain a newline or NUL"
+                )));
+            }
+        }
+    }
+    for service in &fs_events.services {
+        if service.trim().is_empty() {
+            return Err(invalid("`services` entries must not be empty".to_owned()));
+        }
+        if !inline_services.is_empty() && !inline_services.contains(&service.as_str()) {
+            return Err(invalid(format!(
+                "`services` names unknown service `{service}`; declared services are: {}",
+                inline_services.join(", ")
+            )));
+        }
+    }
     Ok(())
 }
 
@@ -1372,5 +1418,102 @@ mod tests {
         assert!(nerdctl_mounts_label_fits(nerdctl_mounts_label_size(
             std::slice::from_ref(&below)
         )));
+    }
+}
+
+#[cfg(test)]
+mod fs_events_validation_tests {
+    use super::*;
+    use crate::policy::model::EffectiveFsEventsMode;
+
+    fn config() -> EffectiveFsEventsConfig {
+        EffectiveFsEventsConfig {
+            mode: EffectiveFsEventsMode::Auto,
+            paths: Vec::new(),
+            ignore: Vec::new(),
+            debounce_ms: 100,
+            services: Vec::new(),
+        }
+    }
+
+    fn rejection(config: &EffectiveFsEventsConfig, inline: &[&str]) -> String {
+        match validate_fs_events("web", config, inline) {
+            Err(ContainerPolicyError::TaskInvocation(message)) => message,
+            other => panic!("expected a refusal, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn default_fs_events_config_is_valid() {
+        validate_fs_events("web", &config(), &["app"]).expect("defaults validate");
+    }
+
+    #[test]
+    fn zero_debounce_is_refused_with_the_field_named() {
+        let mut fs_events = config();
+        fs_events.debounce_ms = 0;
+        let message = rejection(&fs_events, &[]);
+        assert!(message.contains("container `web`"), "{message}");
+        assert!(
+            message.contains("`debounce_ms` must be greater than 0"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn empty_or_whitespace_entries_are_refused_in_every_list() {
+        let mut paths = config();
+        paths.paths = vec!["  ".to_owned()];
+        let mut ignore = config();
+        ignore.ignore = vec![String::new()];
+        let mut services = config();
+        services.services = vec!["\t".to_owned()];
+
+        for (field, fs_events) in [("paths", paths), ("ignore", ignore), ("services", services)] {
+            let message = rejection(&fs_events, &[]);
+            assert!(
+                message.contains(&format!("`{field}` entries must not be empty")),
+                "{field}: {message}"
+            );
+        }
+    }
+
+    #[test]
+    fn newline_carriage_return_and_nul_are_refused_in_paths_and_ignore() {
+        for bad in ["src\nlib", "src\rlib", "src\0lib"] {
+            let mut in_paths = config();
+            in_paths.paths = vec![bad.to_owned()];
+            assert!(
+                rejection(&in_paths, &[]).contains("must not contain a newline or NUL"),
+                "paths {bad:?}"
+            );
+
+            let mut in_ignore = config();
+            in_ignore.ignore = vec![bad.to_owned()];
+            assert!(
+                rejection(&in_ignore, &[]).contains("must not contain a newline or NUL"),
+                "ignore {bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_service_is_refused_when_inline_services_are_declared() {
+        let mut fs_events = config();
+        fs_events.services = vec!["worker".to_owned()];
+        let message = rejection(&fs_events, &["app", "postgres"]);
+        assert!(message.contains("unknown service `worker`"), "{message}");
+        assert!(message.contains("app, postgres"), "{message}");
+
+        fs_events.services = vec!["postgres".to_owned()];
+        validate_fs_events("web", &fs_events, &["app", "postgres"])
+            .expect("declared service accepted");
+    }
+
+    #[test]
+    fn external_compose_without_inline_services_accepts_any_service_name() {
+        let mut fs_events = config();
+        fs_events.services = vec!["anything".to_owned()];
+        validate_fs_events("web", &fs_events, &[]).expect("external compose service accepted");
     }
 }

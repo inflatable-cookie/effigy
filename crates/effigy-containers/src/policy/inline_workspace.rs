@@ -114,6 +114,7 @@ pub fn load_inline_workspace_container_policy(
         shutdown: ManifestContainerShutdownMode::Graceful,
         detach_timeout_secs: DEFAULT_ATTACH_TIMEOUT_SECS,
         host_processes: Vec::new(),
+        fs_events: Default::default(),
     };
     // Render provenance, not a message: this string becomes the closure's
     // `inputs/manifest.toml`, and it must distinguish one inline config from
