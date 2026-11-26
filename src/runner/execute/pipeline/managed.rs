@@ -1493,6 +1493,10 @@ pub(in crate::runner) fn release_inline_managed_environment(
     let output =
         effigy_runtime::signals::run_compose_plan_capture(&plan).map_err(RunnerError::from)?;
     if output.status.success() {
+        crate::runner::container_command::barge_lifecycle::return_torn_down_stack(
+            &policy.profile,
+            &policy.project_name,
+        );
         Ok(format!("inline environment `{}` is down", policy.name))
     } else {
         Err(RunnerError::task_invocation(format!(

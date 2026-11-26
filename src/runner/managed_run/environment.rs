@@ -367,6 +367,12 @@ fn run_up(
         terminal: Terminal::Inherit { capture: false },
         label: "environment up".to_owned(),
     };
+    let lease_policy = match &plan.binding {
+        Binding::Named { selector } if !plan.borrowed => {
+            effigy_containers::load_container_policy(&plan.repo, selector.as_deref()).ok()
+        }
+        _ => None,
+    };
     let started = Instant::now();
     let mut process = run
         .spawn_with_handoff(spec, false, grant.map(|grant| grant.into_reader()))
@@ -402,6 +408,9 @@ fn run_up(
         if Instant::now() >= next_progress_read {
             next_progress_read = Instant::now() + ENVIRONMENT_PROGRESS_READ;
             progress(environment_counts(plan, run.id()));
+            // Taken while `up` still holds it, so the lease stays held from
+            // the bring-up to this run's settle.
+            hold_run_lease(lease_policy.as_ref());
         }
         if Instant::now() >= next_progress {
             next_progress = Instant::now() + START_PROGRESS_INTERVAL;
@@ -422,6 +431,7 @@ fn run_up(
                     started.elapsed().as_secs()
                 )));
             }
+            hold_run_lease(lease_policy.as_ref());
             println!(
                 "[environment] `{}` is up after {}s",
                 plan.name,
@@ -430,6 +440,13 @@ fn run_up(
             return Ok(exit.code);
         }
         std::thread::sleep(POLL);
+    }
+}
+
+/// Hold the Barge lease of the stack this run brings up, once there is one.
+fn hold_run_lease(policy: Option<&effigy_containers::EffectiveContainerPolicy>) {
+    if let Some(policy) = policy {
+        crate::runner::container_command::barge_lifecycle::hold_for_session(policy);
     }
 }
 

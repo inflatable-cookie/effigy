@@ -2783,3 +2783,51 @@ shape gave the same health and zero-zombie results over three minutes.
 
 Not proven: reaping of the reported zombies under the original incident's
 conditions, which may need a longer window or a different probe path.
+
+## Barge container leases
+
+Effigy reserves per-profile container slots through the pinned Barge library
+(effigy#1143, effigy#1144). Barge owns the reservation; Effigy starts, stops and
+labels stacks.
+
+**Pass-through.** Without a Barge account holding container state, or when the
+profile is not declared (`NotManaged`), no lease is taken, no label is rendered
+and no Barge state is created. Unreadable Barge state is an error.
+
+**Acquire before apply.** `container up`, a task activation's apply and the
+`effigy-release` builder acquire `(profile, project)` before Compose runs. The
+owner is the Barge worktree lease holding the checkout, else the checkout path.
+Workers are linked worktrees, ephemeral clones, CI, detached `up` without a
+terminal, and the release builder; everything else is interactive. A full pool
+waits, sweeps, then refuses before any apply.
+
+**Label.** The ID is recorded in
+`.effigy/runtime/barge-lease/<profile>.<project>`, and every render of that
+environment adds `barge.lease=<id>` to each generated service. Shared backing
+services are not leased.
+
+**Hold.** Attached sessions, task-started stacks and builds hold the lease in
+their process. A managed run holds it until it settles; the idle reaper takes
+the hold from the exiting command before that command ends. A persistent stack's
+lease is unheld, and a task's ensure never demotes it. An attached session that
+leaves its stack running converts its lease to unheld.
+
+**Immediate return.** Each teardown Effigy performs returns the lease in the
+same step, only after it succeeds: every environment stop transition (`down`,
+`down --global`, handover, failed attached `up`, attached session and managed
+run stop), `reset`, the idle stop, `down --project`, and `retire` /
+`retire --dead` for a stack with no container left. A failed bring-up returns
+its lease when it never applied a newly acquired one, or when no container of
+the project is running. A failed teardown keeps the lease. A narrow peer
+data-service stop is not a teardown.
+
+**Sweep.** Only crashes and ended owners wait for the sweep
+(`HoldReleased` keeps volumes, `OwnerEnded` removes them), run before and during
+acquisition and by `effigy container prune`. A `HoldReleased` lease whose own
+owner returns is returned and retaken without teardown. A release builder whose
+previous lease was returned may be recreated even though its environment record
+is still active.
+
+**Not covered.** An inline workspace environment that a managed run starts
+with its own raw Compose command takes no lease.
+

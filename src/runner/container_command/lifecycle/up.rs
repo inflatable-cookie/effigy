@@ -8,6 +8,7 @@ use super::report::{
     detached_activation_failure, detached_activation_identity, listener_exposure_failure,
     render_container_up_result, DetachedOperationState,
 };
+use crate::runner::container_command::barge_lifecycle::{self, LeaseIntent, Reservation};
 use crate::runner::container_command::closeout::{
     finish_container_up_failure, render_interrupted_up_closeout,
 };
@@ -24,10 +25,11 @@ use effigy_containers::exec::{
     parse_compose_step_event, run_compose_invocation_streaming_with_env_owner, RetainedComposeOwner,
 };
 use effigy_containers::{
-    ContainerComposeInvocationPlan, EffectiveAttachMode, EffectiveContainerPolicy,
+    ContainerAction, ContainerComposeInvocationPlan, EffectiveAttachMode, EffectiveContainerPolicy,
     WorkspaceExtraMountDecision,
 };
 use effigy_kernel::id::RunId;
+use effigy_manifest::ManifestContainerOnTaskExit;
 use effigy_ui::steps::ProgressFrame;
 use std::ffi::OsString;
 use std::path::Path;
@@ -119,6 +121,7 @@ fn run_container_up_inner(
     // Whether this bring-up may have replaced the containers a running relay
     // watches into.
     let applied = std::cell::Cell::new(false);
+    let mut reservation = None;
     let result = (|| {
         operation.active = plan.attach_mode == EffectiveAttachMode::Detached;
         operation.identity = Some(detached_activation_identity(&plan.policy));
@@ -141,8 +144,12 @@ fn run_container_up_inner(
         }
         plan.handover_notes.extend(handed_over);
 
-        // The reconcile run journals the one Compose apply under Gate(Env).
+        // The slot is reserved after a handover freed its peers' slots and
+        // before Compose applies anything.
         operation.stage = Some("compose_activation");
+        reservation = reserve_up_lease(repo_root, &mut plan, retention, holders)?;
+
+        // The reconcile run journals the one Compose apply under Gate(Env).
         let attached_end = std::cell::RefCell::new(None);
         let detached_failure = std::cell::RefCell::new(None);
         // The one budget this bring-up's runtime observations share, started when
@@ -218,6 +225,9 @@ fn run_container_up_inner(
         compose_steps
             .borrow()
             .finish_unfinished(true, "the runtime reported the stack as reconciled");
+        if let Some(reservation) = &reservation {
+            reservation.confirm(&plan.policy);
+        }
 
         if container_up_stop_requested(&plan) {
             return render_container_up_interrupted(repo_root, &plan);
@@ -287,20 +297,88 @@ fn run_container_up_inner(
 
         reconcile_stack_fs_relay(&plan.policy, repo_root, plan.attach_mode, &mut integrations);
         activation_waits.finish(true)?;
-        render_container_up_result(
+        let rendered = render_container_up_result(
             repo_root,
             &plan,
             health,
             integrations,
             bring_up.creation.as_ref(),
             output_json,
-        )
+        )?;
+        // An attached session whose stack is configured to outlive it leaves a
+        // running stack, which keeps its slot.
+        if plan.attach_mode == EffectiveAttachMode::Attached
+            && plan.policy.on_task_exit != ManifestContainerOnTaskExit::Stop
+        {
+            if let Some(reservation) = &reservation {
+                reservation.keep_after_session(&plan.policy);
+            }
+        }
+        Ok(rendered)
     })();
     if result.is_err() && applied.get() {
         crate::runner::fs_relay::stop_stack_relay(repo_root, &plan.policy);
     }
+    if result.is_err() {
+        if let Some(reservation) = &reservation {
+            reservation.settle_failed(&plan.policy, applied.get());
+        }
+    }
     activation_waits.finish(result.is_ok())?;
     result
+}
+
+/// Reserve this bring-up's Barge lease and, when the render was made without
+/// that ID, render again so every service carries `barge.lease`.
+fn reserve_up_lease(
+    repo_root: &Path,
+    plan: &mut ContainerUpPlan,
+    retention: Retention,
+    holders: &[RunId],
+) -> Result<Option<Reservation>, RunnerError> {
+    let recorded = |policy: &EffectiveContainerPolicy| {
+        effigy_containers::recorded_barge_lease(
+            &policy.repo_root,
+            &policy.profile,
+            &policy.project_name,
+        )
+    };
+    let rendered_with = recorded(&plan.policy);
+    let attached = plan.attach_mode == EffectiveAttachMode::Attached;
+    let reservation = barge_lifecycle::reserve(
+        &plan.policy,
+        LeaseIntent {
+            retention,
+            session: attached,
+            explicit_detached: !attached
+                && retention == Retention::Persistent
+                && holders.is_empty()
+                && environment::requested_holder().is_none(),
+        },
+    )?;
+    if recorded(&plan.policy) != rendered_with {
+        if let Err(error) = render_up_again(repo_root, plan) {
+            if let Some(reservation) = &reservation {
+                reservation.settle_failed(&plan.policy, false);
+            }
+            return Err(error);
+        }
+    }
+    Ok(reservation)
+}
+
+fn render_up_again(repo_root: &Path, plan: &mut ContainerUpPlan) -> Result<(), RunnerError> {
+    let (policy, _) =
+        effigy_containers::load_container_policy_for_creation(repo_root, Some(&plan.policy.name))?;
+    plan.up_plan = effigy_runtime::container_manager::compose_up_invocation_plan(
+        repo_root,
+        &policy,
+        ContainerAction::Activate,
+        "docker compose up",
+    )
+    .map_err(RunnerError::from)?;
+    plan.policy = policy;
+    Ok(())
 }
 
 fn reject_conflicting_container_up_modes(attach: bool, detach: bool) -> Result<(), RunnerError> {

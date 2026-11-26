@@ -28,6 +28,7 @@ pub use artifact_source::{
 pub use effigy_core::host_alias::HostAlias;
 pub use manager::*;
 pub use ops::ContainerCapturedExecOperation;
+pub use policy::barge_lease::{record_barge_lease, recorded_barge_lease, BARGE_LEASE_LABEL};
 pub use policy::data_from::{
     borrowed_volume_ensure_commands, plan_volume_data_handover, VolumeDataHandover,
 };

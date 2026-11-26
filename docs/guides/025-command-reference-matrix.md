@@ -288,6 +288,7 @@ effigy container <NAME> hosts [--repo <PATH>] [--json]
 effigy container scope [--repo <PATH>] [--json]
 effigy container retire [--repo <PATH>] [--scope <TOKEN>] [--keep-data] [--yes] [--json]
 effigy container retire --dead [--keep-data] [--yes] [--json]
+effigy container prune [--profile <PROFILE>] [--json]
 effigy workspace [<NAME>] [--system <NAME>] [--repo <PATH>]
 ```
 
@@ -308,6 +309,11 @@ labelled stack whose checkout path no longer exists. It rejects `effigy
 container <NAME> retire` before checkout resolution or runtime inventory,
 including when `--scope` or `--yes` is also supplied. Pass `--scope <TOKEN>` to
 restrict retirement to one scope token of this checkout.
+`effigy container prune` tears down stacks whose Barge container lease has
+ended, and orphaned `barge.lease`-labelled stacks, on one profile or every
+running one. It needs no manifest, never starts a stopped profile, and exits
+non-zero when a lease is retained. See
+[Container leases](063-container-system-guide.md#container-leases-barge).
 `effigy container volume list` inventories Effigy-managed named volumes. `--dormant`
 shows repo-scoped superseded volumes; `--global` shows machine-level volumes
 across available runtimes and `--orphans` narrows that global view to ownerless

@@ -3232,3 +3232,90 @@ fn created_builder_started_before_transition_is_not_targeted() {
     assert_no_builder_effects(&fixture, &error);
     fixture.assert_preserved();
 }
+
+/// A temporary Barge account the fixture's CLI reads, declaring the release
+/// profile with `max` worker slots.
+fn builder_barge(fixture: &Fixture, max: u32) -> (EnvGuard, barge::Barge) {
+    let state = fixture.root.join("state/barge");
+    std::fs::create_dir_all(&state).unwrap();
+    std::fs::write(
+        state.join("container-profiles.json"),
+        json!({"profiles": [{"name": "effigy-release", "max": max}]}).to_string(),
+    )
+    .unwrap();
+    let env = EnvGuard::set_many(&[
+        ("BARGE_STATE_DIR", Some(state.display().to_string())),
+        ("EFFIGY_CONTAINER_LEASE_WAIT_SECS", Some("0".to_owned())),
+    ]);
+    let account = barge::Barge::open_with(
+        &state,
+        std::sync::Arc::new(barge::FakeOs::new()),
+        std::sync::Arc::new(barge::ManualClock::new(1_700_000_000_000)),
+    )
+    .unwrap();
+    (env, account)
+}
+
+#[test]
+fn release_builder_leases_labels_reuses_and_rebuilds_after_a_returned_lease() {
+    let _lock = crate::contract_test_support::lock_test();
+    let fixture = Fixture::new(false, false, "docker");
+    let (_env, account) = builder_barge(&fixture, 1);
+    let only_lease = || {
+        let mut leases = account.container_status().unwrap();
+        assert_eq!(leases.len(), 1, "{leases:?}");
+        leases.remove(0)
+    };
+
+    fixture.task().expect("first build creates the builder");
+    let first = only_lease();
+    assert_eq!(first.profile, "effigy-release");
+    assert_eq!(first.project, fixture.policy.project_name);
+    assert_eq!(first.class, barge::container::ContainerClass::Worker);
+    assert_eq!(
+        first.ended.map(|ending| ending.reason),
+        Some(barge::container::ContainerEndReason::HoldReleased),
+        "the retained builder is reclaimable once its build ends"
+    );
+    let compose = std::fs::read_to_string(fixture.root.join("state/last-up-compose")).unwrap();
+    assert!(
+        compose.contains(&format!("barge.lease: {}", first.id)),
+        "{compose}"
+    );
+
+    fixture.task().expect("the next build reuses the builder");
+    assert_builder_effects(&fixture, 1, 2, "reuse keeps the builder");
+    assert_ne!(only_lease().id, first.id, "the released lease is renewed");
+
+    // A sweep, `down` or `retire` removes the builder and returns its lease.
+    std::fs::remove_file(fixture.root.join("state/identity.json")).unwrap();
+    account.container_return(&only_lease().id).unwrap();
+    fixture.task().expect("a torn-down builder is recreated");
+    assert_builder_effects(&fixture, 2, 3, "rebuild after teardown");
+}
+
+#[test]
+fn release_builder_returns_its_lease_when_bring_up_fails() {
+    let _lock = crate::contract_test_support::lock_test();
+    let fixture = Fixture::new(false, false, "docker");
+    let (_env, account) = builder_barge(&fixture, 1);
+    fixture.mode("up_fail");
+
+    fixture.task().expect_err("the builder does not start");
+
+    assert!(fixture.root.join("state/calls").exists());
+    assert_eq!(account.container_status().unwrap(), Vec::new());
+}
+
+#[test]
+fn release_builder_waits_for_a_slot_before_creating_anything() {
+    let _lock = crate::contract_test_support::lock_test();
+    let fixture = Fixture::new(false, false, "docker");
+    let (_env, account) = builder_barge(&fixture, 0);
+
+    let error = fixture.task().expect_err("no release slot");
+
+    assert!(error.contains("is full"), "{error}");
+    assert_no_builder_effects(&fixture, "a full pool starts nothing");
+    assert_eq!(account.container_status().unwrap(), Vec::new());
+}

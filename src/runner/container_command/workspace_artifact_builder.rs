@@ -39,6 +39,7 @@ use crate::runner::exec_command::{
 };
 use crate::runner::task_engine::TaskRun;
 
+use super::barge_lifecycle::{self, LeaseIntent};
 use super::workspace_artifact_source;
 
 /// Whether the builder's environment is recorded as retained: its record
@@ -934,6 +935,39 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
     {
         return Err(RunnerError::task_invocation(message));
     }
+    // The builder reserves its worker slot before anything starts or creates
+    // it, and holds the lease until this build ends.
+    let recorded = |policy: &EffectiveContainerPolicy| {
+        effigy_containers::recorded_barge_lease(repo_root, &policy.profile, &policy.project_name)
+    };
+    let previous_lease = recorded(&policy);
+    // A lease already returned means Effigy tore that builder down (a sweep,
+    // `down` or `retire`), so finding no builder is then expected.
+    let torn_down = match &previous_lease {
+        Some(previous) => barge_lifecycle::lease_was_returned(previous)?,
+        None => false,
+    };
+    let reservation = barge_lifecycle::reserve(
+        &policy,
+        LeaseIntent {
+            retention: effigy_containers::environment::Retention::Persistent,
+            session: true,
+            explicit_detached: false,
+        },
+    )?;
+    let _lease_hold = reservation
+        .as_ref()
+        .map(|_| BuilderLeaseHold(policy.clone()));
+    // A reservation that fails before a verified builder exists frees its slot.
+    let settle = |policy: &EffectiveContainerPolicy, error: RunnerError| {
+        if let Some(reservation) = &reservation {
+            reservation.settle_failed(policy, true);
+        }
+        error
+    };
+    if recorded(&policy) != previous_lease {
+        policy = load_labelled_builder_policy(repo_root).map_err(|error| settle(&policy, error))?;
+    }
     // The build's inventory gets a fresh budget after the mismatch check.
     deadline = Instant::now() + Duration::from_secs(15);
     let mut retained = builder_retained(&policy).then_some(());
@@ -943,53 +977,66 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
     if runtime.profile_created_or_restarted {
         retained = None;
     }
-    let rows = list_compose_containers_for_policy_including_stopped_with_deadline(
-        repo_root,
-        &policy,
-        Some(deadline),
-    )?;
-    let binding = match workspace_artifact_builder_preparation(
-        repo_root,
-        &policy,
-        &rows,
-        deadline,
-        retained.is_some(),
-        no_change,
-    )? {
-        WorkspaceBuilderPreparation::Reuse(binding) => *binding,
-        WorkspaceBuilderPreparation::Activate(observed) => {
-            // Mutation still requires the same exact identity and source at its
-            // boundary. The pure preparation decision grants no lasting lease.
-            check_interruption()?;
-            if let Some(observed) = observed.as_ref() {
-                confirm_transition_target(repo_root, &policy, observed)?;
-            }
-            check_interruption()?;
-            super::lifecycle::run_container_up(
-                repo_root,
-                Some("linux-release"),
-                false,
-                true,
-                false,
-                effigy_containers::environment::Retention::Persistent,
-                &[],
-            )?;
-            policy = load_container_policy(repo_root, Some("linux-release"))?;
-            retained = builder_retained(&policy).then_some(());
-            deadline = Instant::now() + Duration::from_secs(15);
-            let replanned = list_compose_containers_for_policy_including_stopped_with_deadline(
+    // Any failure up to a verified builder is a failed bring-up.
+    let prepared = {
+        let mut prepare = || -> Result<_, RunnerError> {
+            let rows = list_compose_containers_for_policy_including_stopped_with_deadline(
                 repo_root,
                 &policy,
                 Some(deadline),
             )?;
-            let [replanned] = replanned.as_slice() else {
-                return Err(RunnerError::task_invocation(
+            if torn_down && rows.is_empty() {
+                retained = None;
+            }
+            Ok(
+                match workspace_artifact_builder_preparation(
+                    repo_root,
+                    &policy,
+                    &rows,
+                    deadline,
+                    retained.is_some(),
+                    no_change,
+                )? {
+                    WorkspaceBuilderPreparation::Reuse(binding) => *binding,
+                    WorkspaceBuilderPreparation::Activate(observed) => {
+                        // Mutation still requires the same exact identity and source at its
+                        // boundary. The pure preparation decision grants no lasting lease.
+                        check_interruption()?;
+                        if let Some(observed) = observed.as_ref() {
+                            confirm_transition_target(repo_root, &policy, observed)?;
+                        }
+                        check_interruption()?;
+                        super::lifecycle::run_container_up(
+                            repo_root,
+                            Some("linux-release"),
+                            false,
+                            true,
+                            false,
+                            effigy_containers::environment::Retention::Persistent,
+                            &[],
+                        )?;
+                        policy = load_container_policy(repo_root, Some("linux-release"))?;
+                        retained = builder_retained(&policy).then_some(());
+                        deadline = Instant::now() + Duration::from_secs(15);
+                        let replanned =
+                            list_compose_containers_for_policy_including_stopped_with_deadline(
+                                repo_root,
+                                &policy,
+                                Some(deadline),
+                            )?;
+                        let [replanned] = replanned.as_slice() else {
+                            return Err(RunnerError::task_invocation(
                     "workspace artifact builder inventory after activation must contain exactly one owned builder; no build attempted",
                 ));
-            };
-            verify_workspace_artifact_builder(repo_root, &policy, replanned, deadline)?
-        }
+                        };
+                        verify_workspace_artifact_builder(repo_root, &policy, replanned, deadline)?
+                    }
+                },
+            )
+        };
+        prepare()
     };
+    let binding = prepared.map_err(|error| settle(&policy, error))?;
     let mut args = ["exec", "-T", "-w", "/workspace", "builder"]
         .map(OsString::from)
         .to_vec();
@@ -1132,6 +1179,25 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
         )
     );
     Ok(())
+}
+
+/// The builder's policy rendered with its current lease label, staged for the
+/// backend that reads it.
+fn load_labelled_builder_policy(repo_root: &Path) -> Result<EffectiveContainerPolicy, RunnerError> {
+    let policy = load_container_policy(repo_root, Some("linux-release"))?;
+    let mut policy = effigy_containers::policy::render::prepare_inputs(&policy)?;
+    effigy_containers::artifact_source::stage_compose_render(&mut policy)?;
+    Ok(policy)
+}
+
+/// The build's hold on its lease. The builder stays for the next build, so the
+/// reservation does too; releasing the hold lets a sweep reclaim it.
+struct BuilderLeaseHold(EffectiveContainerPolicy);
+
+impl Drop for BuilderLeaseHold {
+    fn drop(&mut self) {
+        barge_lifecycle::release_hold(&self.0);
+    }
 }
 
 fn colima_vm_log_shows_oom_kill(repo_root: &Path, profile: &str) -> bool {

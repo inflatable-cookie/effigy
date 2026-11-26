@@ -41,6 +41,7 @@ pub(in crate::runner) use shared_data::{
 };
 
 mod barge_leases;
+pub(in crate::runner) mod barge_lifecycle;
 mod bounded_exec;
 mod cache;
 mod closeout;

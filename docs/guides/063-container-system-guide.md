@@ -1287,6 +1287,48 @@ Colima-only host lists its running environments without starting Docker
 Desktop. Genuine failures still make the inventory incomplete and report the
 backend, profile, and error once per launch.
 
+### Container leases (Barge)
+
+Barge can cap how many stacks run on a Colima profile. It applies only when the
+account's `container-profiles.json` declares the profile, for example:
+
+```json
+{"profiles": [{"name": "effigy", "max": 4}, {"name": "effigy-release", "max": 1}]}
+```
+
+Without Barge, or on an undeclared profile, nothing changes.
+
+On a declared profile, `container up`, task-started stacks and the
+`effigy-release` builder reserve a lease before Compose runs, and every
+generated service carries `barge.lease=<id>`.
+
+| Stack | Lease lasts |
+| --- | --- |
+| `up --detach` | until teardown, or its checkout or worktree ends |
+| Attached `up`, task stacks, `effigy dev` | held while in use and through the idle linger |
+| Release builder | held for each build, then reclaimable |
+
+A **worker** lease uses one of the profile's `max` slots: linked worktrees,
+ephemeral clones, CI, a detached `up` with no terminal, and the release builder.
+Everything else in a primary checkout is **interactive**, uses no slot, and
+lasts until teardown or until the checkout is gone.
+
+When the profile is full, a worker waits up to 300 seconds
+(`EFFIGY_CONTAINER_LEASE_WAIT_SECS`), sweeping between tries, then refuses
+before starting anything.
+
+- **Immediate return.** `down` (all forms), `reset`, `retire`, the idle stop, a
+  task's own stop and a failed bring-up that leaves nothing running return the
+  lease in the same step.
+- **Sweep.** A worker whose holder crashed, or any lease whose owner is gone, is
+  reclaimed by the next `up` on that profile or by
+  `effigy container prune [--profile <PROFILE>]`. A crashed holder keeps its
+  volumes; a gone owner's volumes are removed. The same checkout coming back
+  first takes its lease again and keeps the stack.
+- **Release builder.** The builder stays between builds with its hold released,
+  so another checkout's build can reclaim the slot. The next build then
+  recreates the builder.
+
 ## Task Activation
 
 Container-backed tasks now use two distinct lifecycle models.
