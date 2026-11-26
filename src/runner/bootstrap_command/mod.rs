@@ -125,8 +125,8 @@ enum BootstrapEntry {
 /// quoted arguments survive and a built-in name resolves the way it does when
 /// typed after `effigy`.
 fn parse_bootstrap_entry(repo_root: &Path, selector: &str) -> Result<BootstrapEntry, RunnerError> {
-    let words = effigy_tasks::split_task_reference_words(selector)
-        .map_err(|error| RunnerError::task_invocation(error))?;
+    let words =
+        effigy_tasks::split_task_reference_words(selector).map_err(RunnerError::task_invocation)?;
     if words.is_empty() {
         return Err(RunnerError::task_invocation(
             "the entry names no task or command".to_owned(),
