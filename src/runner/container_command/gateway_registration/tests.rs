@@ -67,7 +67,7 @@ fn unreachable_profile_restart_runs_stop_and_start_for_the_selected_profile() {
     let colima = bin.join("colima");
     std::fs::write(
         &colima,
-        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$COLIMA_CALL_LOG\"\n",
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$COLIMA_CALL_LOG\"\nif [ \"$1\" = start ]; then printf '%s\\n' \"$PWD\" \"${TMPDIR-unset}\" \"${TMP-unset}\" \"${TEMP-unset}\" > \"$COLIMA_START_LOG\"; fi\n",
     )
     .expect("write fake Colima");
     #[cfg(unix)]
@@ -80,10 +80,19 @@ fn unreachable_profile_restart_runs_stop_and_start_for_the_selected_profile() {
         std::fs::set_permissions(&colima, permissions).expect("make fake Colima executable");
     }
     let call_log = fixture.path().join("colima-calls.log");
+    let start_log = fixture.path().join("colima-start.log");
+    let home = fixture.path().join("home");
+    std::fs::create_dir(&home).expect("create host home");
+    let home = home.canonicalize().expect("canonical host home");
     let path = std::env::var("PATH").unwrap_or_default();
     let _env = crate::contract_test_support::EnvGuard::set_many(&[
         ("PATH", Some(format!("{}:{path}", bin.display()))),
         ("COLIMA_CALL_LOG", Some(call_log.display().to_string())),
+        ("COLIMA_START_LOG", Some(start_log.display().to_string())),
+        ("HOME", Some(home.display().to_string())),
+        ("TMPDIR", Some(fixture.path().display().to_string())),
+        ("TMP", Some(fixture.path().display().to_string())),
+        ("TEMP", Some(fixture.path().display().to_string())),
     ]);
     let mut policy = test_policy();
     policy.profile = "mac-4f6a-test".to_owned();
@@ -99,6 +108,10 @@ fn unreachable_profile_restart_runs_stop_and_start_for_the_selected_profile() {
     assert_eq!(
         std::fs::read_to_string(call_log).expect("read Colima calls"),
         "stop --profile mac-4f6a-test\nstart --profile mac-4f6a-test\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(start_log).expect("read start environment"),
+        format!("{}\nunset\nunset\nunset\n", home.display())
     );
 }
 

@@ -997,8 +997,12 @@ fn run_command(
     label: &str,
     allow_failure: bool,
 ) -> Result<Output, RunnerError> {
-    Command::new(program)
-        .args(args)
+    let mut command = Command::new(program);
+    command.args(args);
+    if program == "colima" && args.first() == Some(&"start") {
+        effigy_containers::colima::configure_colima_start(&mut command);
+    }
+    command
         .output()
         .map_err(|error| RunnerError::TaskCommandLaunch {
             command: format!("{label} ({program} {})", args.join(" ")),
@@ -1076,6 +1080,49 @@ fn yes_no(value: bool) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn profile_colima_start_uses_neutral_host_environment() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _lock = crate::contract_test_support::lock_test();
+        let fixture = tempfile::tempdir().expect("fixture");
+        let bin = fixture.path().join("bin");
+        let home = fixture.path().join("home");
+        std::fs::create_dir(&bin).expect("create bin");
+        std::fs::create_dir(&home).expect("create host home");
+        let home = home.canonicalize().expect("canonical host home");
+        let colima = bin.join("colima");
+        std::fs::write(
+            &colima,
+            "#!/bin/sh\nprintf '%s\\n' \"$PWD\" \"${TMPDIR-unset}\" \"${TMP-unset}\" \"${TEMP-unset}\"\n",
+        )
+        .expect("write fake Colima");
+        std::fs::set_permissions(&colima, std::fs::Permissions::from_mode(0o755))
+            .expect("make fake Colima executable");
+        let path = std::env::var("PATH").unwrap_or_default();
+        let scratch = fixture.path().display().to_string();
+        let _env = crate::contract_test_support::EnvGuard::set_many(&[
+            ("PATH", Some(format!("{}:{path}", bin.display()))),
+            ("HOME", Some(home.display().to_string())),
+            ("TMPDIR", Some(scratch.clone())),
+            ("TMP", Some(scratch.clone())),
+            ("TEMP", Some(scratch)),
+        ]);
+
+        let output = run_command(
+            "colima",
+            &["start", "--profile", "effigy"],
+            "colima start",
+            false,
+        )
+        .expect("start profile");
+        assert_eq!(
+            String::from_utf8(output.stdout).expect("start output"),
+            format!("{}\nunset\nunset\nunset\n", home.display())
+        );
+    }
 
     #[test]
     fn parse_colima_list_reads_profile_rows() {

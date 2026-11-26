@@ -916,3 +916,35 @@ fn profile_config_colima_home_resolution_prefers_explicit_then_home() {
         Some(root.path().join(".colima"))
     );
 }
+
+#[test]
+fn colima_start_configuration_uses_home_or_root_and_clears_temp_overrides() {
+    let _lock = env_lock();
+    let fixture = tempfile::tempdir().expect("fixture");
+    let _home = effigy_test_support::env::ScopedEnv::set("HOME", fixture.path());
+    let mut command = Command::new("colima");
+    command.current_dir(fixture.path().join("checkout"));
+    command
+        .env("TMPDIR", "scratch")
+        .env("TMP", "scratch")
+        .env("TEMP", "scratch");
+    configure_colima_start(&mut command);
+    assert_eq!(command.get_current_dir(), Some(fixture.path()));
+    let env: Vec<_> = command.get_envs().collect();
+    for key in ["TMPDIR", "TMP", "TEMP"] {
+        assert!(
+            env.iter()
+                .any(|(name, value)| *name == key && value.is_none()),
+            "{key}"
+        );
+    }
+    unsafe { std::env::set_var("HOME", fixture.path().join("missing")) };
+    configure_colima_start(&mut command);
+    #[cfg(unix)]
+    assert_eq!(command.get_current_dir(), Some(std::path::Path::new("/")));
+    #[cfg(not(unix))]
+    assert_eq!(
+        command.get_current_dir(),
+        Some(std::env::temp_dir().as_path())
+    );
+}

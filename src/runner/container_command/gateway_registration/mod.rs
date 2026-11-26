@@ -888,15 +888,16 @@ fn restart_colima_profile(
         vec!["stop", "--profile", policy.profile.as_str()],
         vec!["start", "--profile", policy.profile.as_str()],
     ] {
-        let output = Command::new("colima")
-            .current_dir(repo_root)
-            .args(args)
-            .output()
-            .map_err(|command_error| {
-                RunnerError::task_invocation(format!(
-                    "{detail}\nfailed to run `{command}`: {command_error}"
-                ))
-            })?;
+        let mut child = Command::new("colima");
+        child.current_dir(repo_root).args(&args);
+        if args.first() == Some(&"start") {
+            effigy_containers::colima::configure_colima_start(&mut child);
+        }
+        let output = child.output().map_err(|command_error| {
+            RunnerError::task_invocation(format!(
+                "{detail}\nfailed to run `{command}`: {command_error}"
+            ))
+        })?;
         if !output.status.success() {
             return Err(RunnerError::task_invocation(format!(
                 "{detail}\nrestart command failed ({}): {}",
