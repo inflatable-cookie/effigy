@@ -524,10 +524,8 @@ fn dead_retire_works_outside_a_repository_without_a_manifest() {
     fs::create_dir(&cwd).expect("outside-repo cwd");
     assert!(!cwd.join("effigy.toml").exists());
 
-    let output = fixture.run_without_repo(
-        &cwd,
-        &["container", "retire", "--dead", "--yes", "--json"],
-    );
+    let output =
+        fixture.run_without_repo(&cwd, &["container", "retire", "--dead", "--yes", "--json"]);
     let (ok, report) = report(&output);
     assert!(ok, "{report} ({output:?})");
     assert_eq!(report["schema"], "effigy.container.retire-dead.v1");
@@ -556,11 +554,7 @@ fn dead_retire_finds_created_builder_on_release_profile_and_keeps_live_and_unlab
     )
     .expect("write Compose containers");
     fixture.profile_container("effigy-artifact-builder-v1-dead", &dead, "effigy-release");
-    fixture.profile_container(
-        "effigy-artifact-builder-v1-live",
-        &live,
-        "effigy-release",
-    );
+    fixture.profile_container("effigy-artifact-builder-v1-live", &live, "effigy-release");
     fs::remove_dir_all(&dead_checkout_dir).expect("remove dead checkout");
 
     let output = fixture.run_with_colima(&["container", "retire", "--dead", "--yes"]);
@@ -569,7 +563,10 @@ fn dead_retire_finds_created_builder_on_release_profile_and_keeps_live_and_unlab
     let scopes = report["scopes"].as_array().expect("scope rows");
     assert_eq!(scopes.len(), 1, "{report}");
     let removed = names(&scopes[0]["report"]["removed"]);
-    assert!(removed.contains(&"dead-compose-1".to_owned()), "{removed:?}");
+    assert!(
+        removed.contains(&"dead-compose-1".to_owned()),
+        "{removed:?}"
+    );
     assert!(
         removed.contains(&"effigy-artifact-builder-v1-dead".to_owned()),
         "{removed:?}"
@@ -588,8 +585,16 @@ fn dead_retire_finds_created_builder_on_release_profile_and_keeps_live_and_unlab
 fn dead_retire_warns_about_stopped_profiles_without_starting_or_touching_them() {
     let fixture = Fixture::new("effigy-retire-dead-stopped-profile-");
     fixture.colima_profile("effigy-release", "Stopped");
-    let missing = fixture.root().join("dead-builder-checkout").display().to_string();
-    fixture.profile_container("effigy-artifact-builder-v1-stopped", &missing, "effigy-release");
+    let missing = fixture
+        .root()
+        .join("dead-builder-checkout")
+        .display()
+        .to_string();
+    fixture.profile_container(
+        "effigy-artifact-builder-v1-stopped",
+        &missing,
+        "effigy-release",
+    );
 
     let output = fixture.run_with_colima(&["container", "retire", "--dead", "--yes"]);
     let (ok, report) = report(&output);
