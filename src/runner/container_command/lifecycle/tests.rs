@@ -76,6 +76,7 @@ pub(super) fn test_policy(shared_services: Vec<SharedServiceBinding>) -> Effecti
         shutdown: ManifestContainerShutdownMode::Graceful,
         detach_timeout_secs: 10,
         host_processes: Vec::new(),
+        fs_events: Default::default(),
     }
 }
 

@@ -703,6 +703,57 @@ pub struct ManifestContainerHostConfig {
     /// one per start. The derived port is never recorded. Off by default.
     #[serde(default)]
     pub stable_ports: bool,
+    /// Scoped host-to-guest file-event relay for this environment's bind
+    /// mounts. Shorthand `fs_events = "auto"` or the table form.
+    #[serde(default)]
+    pub fs_events: Option<ManifestContainerFsEventsConfig>,
+}
+
+/// Whether the host-to-guest file-event relay runs for an environment.
+///
+/// `auto` runs it when the environment has a writable bind mount to watch,
+/// `on` requires it, and `off` never runs it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ManifestContainerFsEventsMode {
+    #[default]
+    Auto,
+    On,
+    Off,
+}
+
+/// The table form of `[containers.<name>.host].fs_events`.
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ManifestContainerFsEventsTable {
+    /// Defaults to `auto`.
+    #[serde(default)]
+    pub mode: ManifestContainerFsEventsMode,
+    /// Subpaths of the writable bind mounts to watch. Empty watches every
+    /// writable bind mount.
+    #[serde(default)]
+    pub paths: Vec<String>,
+    /// Paths to skip, added to the built-in default ignores.
+    #[serde(default)]
+    pub ignore: Vec<String>,
+    /// Coalescing window in milliseconds. Defaults to 100; must be greater
+    /// than zero.
+    #[serde(default)]
+    pub debounce_ms: Option<u64>,
+    /// Explicit target services for relayed events. Empty targets the
+    /// primary service.
+    #[serde(default)]
+    pub services: Vec<String>,
+}
+
+/// `[containers.<name>.host].fs_events`, in shorthand or table form.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(untagged)]
+pub enum ManifestContainerFsEventsConfig {
+    /// `fs_events = "auto" | "on" | "off"`.
+    Mode(ManifestContainerFsEventsMode),
+    /// `[containers.<name>.host.fs_events]` with per-field settings.
+    Table(ManifestContainerFsEventsTable),
 }
 
 /// A host -> container bind mount declaration on `[containers.<name>.host]`.

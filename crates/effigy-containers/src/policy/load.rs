@@ -2,7 +2,8 @@ use std::path::{Path, PathBuf};
 
 use effigy_manifest::{
     load_task_manifest_with_inspection, resolve_task_execution_binding_from_parts,
-    ManifestContainerConfig, ManifestContainerDriver, ManifestContainerOnTaskExit,
+    ManifestContainerConfig, ManifestContainerDriver, ManifestContainerFsEventsConfig,
+    ManifestContainerFsEventsMode, ManifestContainerFsEventsTable, ManifestContainerOnTaskExit,
     ManifestContainerSecretDelivery, ManifestContainerShutdownMode, ManifestContainerStartup,
     ManifestContainersConfig, ManifestTask, ManifestWorkspaceConfig, ResolvedTaskExecutionBinding,
     ResolvedWorkspaceContainer, TASK_MANIFEST_FILE,
@@ -13,6 +14,7 @@ use crate::policy::hosts::{apply_scope_to_routes, host_key, rewrite_declared_hos
 use crate::policy::project::{
     default_project_name_base, resolve_project_name, validate_unique_project_names,
 };
+use crate::policy::validation::validate_fs_events;
 use crate::policy_support::resolve_compose_source;
 use crate::runtime::dns::{materialize_runtime_dns_override, runtime_route_domains};
 use crate::workspace::{
@@ -26,8 +28,9 @@ use crate::{
 
 use super::model::{
     ComposeVolumeBorrow, ContainerPolicyError, EffectiveAttachMode, EffectiveComposeSource,
-    EffectiveContainerPolicy, EffectiveDataPeer, EffectiveDnsRoute, EffectiveHostProcess,
-    EffectiveManagedHostListener, EffectiveServiceAlias, HostProcessRestart, HostProcessSignal,
+    EffectiveContainerPolicy, EffectiveDataPeer, EffectiveDnsRoute, EffectiveFsEventsConfig,
+    EffectiveFsEventsMode, EffectiveHostProcess, EffectiveManagedHostListener,
+    EffectiveServiceAlias, HostProcessRestart, HostProcessSignal, DEFAULT_FS_EVENTS_DEBOUNCE_MS,
 };
 
 pub fn load_container_policy(
@@ -665,6 +668,8 @@ fn build_effective_policy(
     }
     let host = config.host.as_ref().cloned().unwrap_or_default();
     let resolved_host_mounts = resolve_host_mounts(repo_root, name, &host.mounts)?;
+    let inline_services: Vec<&str> = config.services.keys().map(String::as_str).collect();
+    let fs_events = resolve_fs_events(name, host.fs_events.as_ref(), &inline_services)?;
     let data = config.data.as_ref().cloned().unwrap_or_default();
     let health = config.health.as_ref().cloned().unwrap_or_default();
     let lifecycle = config.lifecycle.as_ref();
@@ -743,6 +748,7 @@ fn build_effective_policy(
             .iter()
             .map(|entry| resolve_host_process(entry, runtime_host_key))
             .collect(),
+        fs_events,
     };
     draft.finish(&mut policy, effective_manifest)?;
     // A host-process `env` reference to a resolved environment fact fails here,
@@ -860,6 +866,49 @@ fn shared_data_service_names(
     names.sort();
     names.dedup();
     names
+}
+
+/// Resolves `[containers.<name>.host].fs_events`. An omitted key, or the
+/// shorthand `fs_events = "<mode>"`, takes the same defaults as the table form
+/// with only `mode` set. Entries are validated as written, then stored trimmed.
+fn resolve_fs_events(
+    name: &str,
+    declared: Option<&ManifestContainerFsEventsConfig>,
+    inline_services: &[&str],
+) -> Result<EffectiveFsEventsConfig, ContainerPolicyError> {
+    let table = match declared {
+        None => return Ok(EffectiveFsEventsConfig::default()),
+        Some(ManifestContainerFsEventsConfig::Mode(mode)) => ManifestContainerFsEventsTable {
+            mode: *mode,
+            ..ManifestContainerFsEventsTable::default()
+        },
+        Some(ManifestContainerFsEventsConfig::Table(table)) => table.clone(),
+    };
+    let raw = EffectiveFsEventsConfig {
+        mode: match table.mode {
+            ManifestContainerFsEventsMode::Auto => EffectiveFsEventsMode::Auto,
+            ManifestContainerFsEventsMode::On => EffectiveFsEventsMode::On,
+            ManifestContainerFsEventsMode::Off => EffectiveFsEventsMode::Off,
+        },
+        paths: table.paths,
+        ignore: table.ignore,
+        debounce_ms: table.debounce_ms.unwrap_or(DEFAULT_FS_EVENTS_DEBOUNCE_MS),
+        services: table.services,
+    };
+    validate_fs_events(name, &raw, inline_services)?;
+    let trimmed = |values: Vec<String>| -> Vec<String> {
+        values
+            .into_iter()
+            .map(|value| value.trim().to_owned())
+            .collect()
+    };
+    Ok(EffectiveFsEventsConfig {
+        mode: raw.mode,
+        paths: trimmed(raw.paths),
+        ignore: trimmed(raw.ignore),
+        debounce_ms: raw.debounce_ms,
+        services: trimmed(raw.services),
+    })
 }
 
 fn resolve_host_process(

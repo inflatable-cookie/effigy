@@ -796,6 +796,7 @@ mod legacy_admission_tests {
             shutdown: ManifestContainerShutdownMode::Graceful,
             detach_timeout_secs: 10,
             host_processes: vec![],
+            fs_events: Default::default(),
         }
     }
 

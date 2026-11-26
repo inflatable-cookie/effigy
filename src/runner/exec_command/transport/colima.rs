@@ -963,6 +963,7 @@ mod tests {
             shutdown: effigy_manifest::ManifestContainerShutdownMode::Graceful,
             detach_timeout_secs: 10,
             host_processes: Vec::new(),
+            fs_events: Default::default(),
         };
 
         let rows = [
@@ -1031,6 +1032,7 @@ mod tests {
             shutdown: effigy_manifest::ManifestContainerShutdownMode::Graceful,
             detach_timeout_secs: 10,
             host_processes: Vec::new(),
+            fs_events: Default::default(),
         };
 
         let container_id = resolve_compose_service_container_id_via_ps(
@@ -1094,6 +1096,7 @@ mod tests {
             shutdown: effigy_manifest::ManifestContainerShutdownMode::Graceful,
             detach_timeout_secs: 10,
             host_processes: Vec::new(),
+            fs_events: Default::default(),
         };
         let parsed = ParsedComposeExec {
             env: Vec::new(),
