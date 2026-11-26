@@ -919,6 +919,7 @@ mod tests {
                     shutdown: effigy_manifest::ManifestContainerShutdownMode::Graceful,
                     detach_timeout_secs: 10,
                     host_processes: Vec::new(),
+                    fs_events: Default::default(),
                 })
             },
             |repo_root, policy, request, plan| {
@@ -999,6 +1000,7 @@ mod tests {
             shutdown: effigy_manifest::ManifestContainerShutdownMode::Graceful,
             detach_timeout_secs: 10,
             host_processes: Vec::new(),
+            fs_events: Default::default(),
         };
         let mut activation_call = None;
 
