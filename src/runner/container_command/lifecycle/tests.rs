@@ -260,9 +260,11 @@ fn detached_json_host_dependency_drift_keeps_its_recovery_and_refusal_kind() {
 
 #[test]
 fn detached_text_host_dependency_drift_only_notes_started_backing_containers() {
-    let host_drift = || RunnerError::HostDependencyDrift {
+    let host_drift = || {
+        RunnerError::HostDependencyDrift {
         detail: "JavaScript dependencies for `/repo/apps/web` disagree with `bun.lock`: `praxis` is installed at 0.6.0 but the lock resolves 0.7.1. Effigy refused to launch this environment's managed host processes because a stale install can fail after launch.".to_owned(),
         remediation: "Run `bun install --frozen-lockfile`, then rerun the container start.".to_owned(),
+    }
     };
     let policy = test_policy(Vec::new());
     let operation = DetachedOperationState {

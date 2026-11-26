@@ -1541,7 +1541,10 @@ fn detached_activation_host_dependency_drift_renders_its_remediation_directly() 
         !rendered.contains("Backing containers were started and left running."),
         "a wrapper without lifecycle-stage context must not claim a stack was started: {rendered}"
     );
-    assert!(!rendered.contains("Container `web` did not finish starting"), "{rendered}");
+    assert!(
+        !rendered.contains("Container `web` did not finish starting"),
+        "{rendered}"
+    );
     assert!(!rendered.contains("Compose left the stack"), "{rendered}");
     assert!(
         !rendered.contains("Run `effigy container up --detach` to finish setup"),

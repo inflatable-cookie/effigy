@@ -959,8 +959,10 @@ children out while the stack is still coming up, and reuse or handover
 starts from prepared volumes.
 
 Detached JSON failures contain bounded structural details: state, phase,
-unverified readiness/exposure, and supported recovery/stop commands. No raw
-backend logs, argv or environment enter these details. A failed detached
+unverified readiness/exposure, and supported recovery/stop commands. For a
+host dependency-drift refusal, `recovery` may carry the same bounded install
+or bootstrap remediation sentence as `remediation`, including its rerun advice.
+No raw backend logs, argv or environment enter these details. A failed detached
 backend's output now lives in the checkout's retained runtime record
 (`.effigy/runtime/logs/<project>.compose.log`, bounded to its last 64 KiB) and
 its tail enters the operator-facing error text, which is not part of the JSON

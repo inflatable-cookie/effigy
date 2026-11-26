@@ -153,9 +153,8 @@ pub(super) fn detached_activation_failure(
         let safe_remediation = sanitized_failure_text(remediation);
         let headline = "Host JavaScript dependencies have drifted";
         if output_json {
-            let cause = sanitized_failure_text(&format!(
-                "{safe_detail} Remediation: {safe_remediation}"
-            ));
+            let cause =
+                sanitized_failure_text(&format!("{safe_detail} Remediation: {safe_remediation}"));
             let message = sanitized_failure_text(&format!(
                 "{headline}: {safe_detail} Next: {safe_remediation}"
             ));
