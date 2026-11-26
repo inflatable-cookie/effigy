@@ -145,6 +145,27 @@ glibc_at_most() {
   [ "$required_minor" -le "$floor_minor" ]
 }
 
+normalize_git_url() {
+  url=$1
+  case "$url" in
+    *://*) printf '%s\n' "$url"; return 0 ;;
+  esac
+  case "$url" in
+    *@*:*)
+      hostpart=${url%%:*}
+      case "$hostpart" in
+        */*) ;; # a path separator before the colon means a local path
+        *)
+          pathpart=${url#*:}
+          printf 'ssh://%s/%s\n' "$hostpart" "$pathpart"
+          return 0
+          ;;
+      esac
+      ;;
+  esac
+  printf '%s\n' "$url"
+}
+
 cargo_manifest_version() {
   awk '
     /^\[workspace\.package\]/ { section = 1; next }
@@ -346,6 +367,7 @@ case "$verb" in
       repo_url=$(git -C "$root" remote get-url origin 2>/dev/null || true)
     fi
     [ -n "$repo_url" ] || fail "verify-install needs --repo-url <URL> or an origin remote"
+    repo_url=$(normalize_git_url "$repo_url")
     version=${tag#v}
     temp_root=$(mktemp -d "${TMPDIR:-/tmp}/effigy-release-verify-install.XXXXXX")
     install_root="$temp_root/install-root"
@@ -532,7 +554,7 @@ case "$verb" in
     else
       command -v brew >/dev/null 2>&1 \
         || fail "brew is not available, so the Homebrew tap cannot be verified; install Homebrew, verify the tap another way, or pass --skip-homebrew deliberately"
-      brew_formula=$(brew info --json=v2 inflatable-cookie/effigy/effigy 2>/dev/null | jq -r '.formulae[0].versions.stable // ""' || true)
+      brew_formula=$(brew info --json=v2 inflatable-cookie/tap/effigy 2>/dev/null | jq -r '.formulae[0].versions.stable // ""' || true)
       [ -n "$brew_formula" ] || fail "the Homebrew tap does not publish effigy"
       [ "$brew_formula" = "${tag#v}" ] || fail "Homebrew tap publishes $brew_formula, expected ${tag#v}"
       ok "Homebrew tap publishes $brew_formula"
