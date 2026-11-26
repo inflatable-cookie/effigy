@@ -5,6 +5,7 @@ pub mod colima;
 pub mod compose;
 pub mod environment;
 pub mod exec;
+pub mod fs_relay;
 pub mod health;
 pub mod host_load;
 pub mod manager;
