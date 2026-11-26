@@ -89,6 +89,15 @@ pub(in crate::runner) fn teardown_project_on_profile(
         }
     }
 
+    let projects = BTreeSet::from([project.to_owned()]);
+    for checkout in &checkouts {
+        crate::runner::fs_relay::stop_checkout_stack_relays(
+            Path::new(checkout),
+            &projects,
+            Some(profile),
+        );
+    }
+
     let mut outcome = if selected.is_empty() {
         RetireOutcome::default()
     } else {
@@ -176,6 +185,7 @@ pub(super) fn lifecycle_cleanup_failed_container_up(
     policy: &EffectiveContainerPolicy,
 ) -> Result<(), RunnerError> {
     environment::stop(repo_root, policy, Operation::Down, |_| {
+        crate::runner::fs_relay::stop_stack_relay(repo_root, policy);
         closeout::cleanup_failed_container_up(
             repo_root,
             policy,

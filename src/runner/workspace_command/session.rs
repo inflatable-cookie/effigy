@@ -59,8 +59,16 @@ pub(super) fn run_workspace_container_session(
         routes_were_ready_before_handoff,
         cleanup_override,
     );
+    let relay = crate::runner::fs_relay::start_session(
+        repo_root,
+        &policy,
+        crate::runner::fs_relay::RelayInvocation::terminal(
+            effigy_containers::fs_relay::detect::Invocation::Shell,
+        ),
+    );
     let shell_result =
         super::run_workspace_handoff_shell(repo_root, container_name.as_deref(), initial_command);
+    drop(relay);
     // The session's use of the environment ends with its shell. Settle the
     // hold first, so the closeout stop is not refused by this command's own
     // session (contract 053 §4).

@@ -8,7 +8,9 @@ use crate::runner::container_command::{
     gateway_registration, render_container_report, runtime_error_from_runner, support, RunnerError,
 };
 use crate::runner::environment;
+use crate::runner::fs_relay::RelayInvocation;
 use effigy_containers::environment::{Operation, Retention};
+use effigy_containers::fs_relay::detect::Invocation;
 use effigy_containers::{
     annotate_workspace_extra_mount_decisions, up_detached_report,
     workspace_extra_mount_decision_lines, ContainerCommandReport, EffectiveAttachMode,
@@ -353,6 +355,16 @@ pub(super) fn render_container_up_result(
             "`effigy container up --json` is only supported for detached bring-up; attached sessions stream live output instead",
         ));
     }
+    // The attached session's own relay: it ends with the session, and before
+    // the session's shutdown takes the containers away.
+    let relay = std::cell::RefCell::new(crate::runner::fs_relay::start_session(
+        repo_root,
+        &plan.policy,
+        RelayInvocation::terminal(Invocation::ContainerUp),
+    ));
+    // The session's configured shutdown is one stop transition: it refuses
+    // while other runs hold the environment.
+    let stop = environment::stop_hook(Operation::Down);
     let mut session = run_attached_container_session_with_hook(
         repo_root,
         &plan.policy,
@@ -363,9 +375,12 @@ pub(super) fn render_container_up_result(
             gateway_registration::deregister_gateway_routes_for_container(policy)
                 .map_err(runtime_error_from_runner)
         },
-        // The session's configured shutdown is one stop transition: it
-        // refuses while other runs hold the environment.
-        environment::stop_hook(Operation::Down),
+        |repo_root, policy, effect| {
+            stop(repo_root, policy, &|progress| {
+                drop(relay.borrow_mut().take());
+                effect(progress)
+            })
+        },
     )
     .map_err(RunnerError::from)?;
     for line in workspace_extra_mount_decision_lines(&plan.workspace_mount_decisions) {

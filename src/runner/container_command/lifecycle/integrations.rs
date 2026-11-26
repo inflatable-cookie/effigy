@@ -8,7 +8,7 @@ use crate::runner::container_command::support::reconcile_primary_service_tcp_ali
 use crate::runner::container_command::{
     gateway_registration, support, workspace_integrations, RunnerError,
 };
-use effigy_containers::EffectiveContainerPolicy;
+use effigy_containers::{EffectiveAttachMode, EffectiveContainerPolicy};
 use effigy_ui::steps::ProgressFrame;
 use std::path::Path;
 
@@ -221,6 +221,25 @@ impl RuntimeIntegrationContext<'_> {
         }
         Ok(())
     }
+}
+
+/// The bring-up's last integration, once it has succeeded: the stack-owned
+/// file-event relay matches the environment now running. Only a detached
+/// `fs_events = "on"` environment starts one; an unstartable relay is a
+/// warning, never a failed bring-up.
+pub(super) fn reconcile_stack_fs_relay(
+    policy: &EffectiveContainerPolicy,
+    root: &Path,
+    attach_mode: EffectiveAttachMode,
+    report: &mut ContainerUpRuntimeIntegrations,
+) {
+    report
+        .warnings
+        .extend(crate::runner::fs_relay::reconcile_stack_relay(
+            root,
+            policy,
+            attach_mode,
+        ));
 }
 
 /// Run workspace permission preparation as a `container up` integration

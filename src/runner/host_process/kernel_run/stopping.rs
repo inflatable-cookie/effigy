@@ -164,7 +164,7 @@ pub(in crate::runner::host_process) fn wait_for_predecessor_gate(
 }
 
 /// Stops the open run of one host-process resource, if any.
-pub(super) fn stop_resource_run(
+pub(in crate::runner::host_process) fn stop_resource_run(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     resource: &ResourceId,

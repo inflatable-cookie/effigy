@@ -1,5 +1,7 @@
 mod down;
 mod exec;
+#[cfg(test)]
+mod fs_relay_tests;
 mod integrations;
 mod logs;
 mod prepare;

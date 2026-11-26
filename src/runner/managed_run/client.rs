@@ -10,7 +10,7 @@
 //! escalates to KILL.
 
 use std::ffi::OsString;
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -77,6 +77,7 @@ fn start_with(request: &ClientStart<'_>) -> Result<Started, RunnerError> {
         front: request.front,
         state_home: home.clone(),
         terminal: request.terminal,
+        interactive: std::io::stdin().is_terminal() && std::io::stdout().is_terminal(),
     };
     // The supervisor is Effigy's own process, and it is never a workload's
     // environment: it starts without session access, then reads the one-shot

@@ -79,6 +79,7 @@ pub fn effigy_home() -> Option<std::path::PathBuf> {
     policy_support::effigy_home_dir()
 }
 
+pub use runtime::dns::colima_profile_mount_inotify;
 /// The gateway address a Colima profile's own configuration names, as an
 /// observation the workspace channel can refuse on. It distinguishes a
 /// configured address from an absent profile, an unreadable one and a profile

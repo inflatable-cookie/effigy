@@ -990,6 +990,42 @@ Current v1 rules:
   touches only volumes whose Effigy labels name this project; a same-named
   lookalike is reported and left alone
 
+## Host File Events
+
+A dev server inside a VM often misses saves made on the host. Effigy relays
+them for the containers that need it:
+
+```toml
+[containers.web.host]
+fs_events = "auto" # or "on", "off"
+
+# or, with settings
+[containers.web.host.fs_events]
+mode = "on"
+paths = ["src"]       # default: every writable bind mount
+ignore = ["dist"]     # added to .git, node_modules, vendor, target, .effigy/runtime
+debounce_ms = 100
+services = ["app"]    # default: every service
+```
+
+| Command | `auto` | `on` |
+| --- | --- | --- |
+| `effigy dev` with a client attached | relay for the session, on a terminal | relay for the session |
+| foreground `container up`, interactive `container shell`, `workspace` | relay for the session, on a terminal | relay for the session |
+| `container up --detach` | nothing starts | relay stays with the stack |
+| CI, no terminal, ephemeral clone | nothing starts | relay |
+
+`off` never relays. Native Linux Docker and OrbStack already deliver host
+events, so the relay does nothing there.
+
+One environment has one relay at a time, and a running stack relay is reused.
+The stack relay is a supervised host process: `container down`, `reset`,
+`retire`, an idle stop and a failed `up` stop it. `effigy container status` (JSON field
+`fs_events`) and `effigy doctor` show its state, reason and targets.
+
+If the Colima profile also has `mountInotify: true`, both relays run and
+`doctor` warns. Set `mountInotify: false` at your next planned profile restart.
+
 ## External Host Mounts
 
 `[containers.<name>.host].mounts` accepts:

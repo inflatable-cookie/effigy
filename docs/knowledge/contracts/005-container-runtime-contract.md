@@ -507,6 +507,32 @@ A terminal `stopped` lifecycle observation ends an in-flight readiness wait imme
 The supervisor's process identity can remain observable as a Linux zombie after
 stop; that does not make the listener still starting or spend its readiness budget.
 
+## Host file-event relay lifecycle
+
+`[containers.<name>.host].fs_events` resolves to one relay per environment.
+The process that holds `.effigy/runtime/fs-events/<container>.lock` is the only
+watcher, and it writes `<container>.json` beside it.
+
+- Attached owners (`dev` with a client, foreground `container up`, interactive
+  `container shell`, `workspace`) hold a session relay. It stops when the
+  command ends, and before that command's own environment stop.
+- Only a successful detached `container up` with explicit `on` starts a
+  stack-owned relay: a kernel-supervised host process under the reserved name
+  `__fs-relay`, outside the declared `host_processes`. `auto` detached starts
+  none and removes a leftover one.
+- `down`, `reset`, handover, idle stop, `retire`, project teardown from a known
+  checkout and a failed `up` stop the stack relay before containers are removed.
+- `dev` under `auto` needs a client on a terminal; other managed tasks relay
+  only under explicit `on`.
+- A relay that cannot start or stop is a warning. It never fails or blocks the
+  container operation.
+- `container status --json` carries `fs_events`: `mode`, `state` (`active`,
+  `reconnecting`, `inactive`, `noop`, `interrupted`, `unknown`), `reason`,
+  `owner`, `pid` and `targets`. The field is additive to
+  `effigy.container.status.v1`. `doctor` reports the same state, warns on a
+  Colima profile that also sets `mountInotify: true`, and warns on an
+  unsettled stack relay run. Effigy never edits that profile setting.
+
 ## Per-route exposure
 
 Exposure is decided per declared route target, not per activation. `up`

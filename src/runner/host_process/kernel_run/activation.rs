@@ -216,6 +216,72 @@ pub(in crate::runner::host_process) fn restart_selection(
     Ok(RestartSelection { ordered, dependent })
 }
 
+/// How long an Effigy-owned process may take to report its launch.
+const PLAIN_LAUNCH_BOUND: Duration = Duration::from_secs(30);
+
+/// Starts (or replaces) the one plain, Effigy-owned process `policy` declares
+/// and detaches once its workload runs. It has no listener, dependency or
+/// activation wait of its own, so it publishes nothing beside the
+/// environment's declared host processes. A launch that is not reported in
+/// time fails, and its run is stopped with its owning client.
+pub(in crate::runner::host_process) fn start_plain_host_process(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<(), RunnerError> {
+    let process = policy
+        .host_processes
+        .first()
+        .ok_or_else(|| RunnerError::task_invocation("no host process to start"))?;
+    let checkout_root = repo_root.canonicalize().map_err(|error| {
+        RunnerError::task_invocation(format!("failed to resolve checkout: {error}"))
+    })?;
+    let project_path = checkout_root.display().to_string();
+    let dir = host_process_dir_for_policy(&checkout_root, policy);
+    host::create_host_process_dir(&checkout_root, &dir)?;
+    let cx = effects();
+    let launch_cx = crate::runner::task_engine::bounded_effect_context(PLAIN_LAUNCH_BOUND);
+    let state_root = journal_root(&checkout_root)?;
+    let state_home = crate::runner::task_engine::state_home_path().ok_or_else(|| {
+        RunnerError::task_invocation("HOME is unset; host process runs need a checkout journal")
+    })?;
+    let executable = crate::runner::task_engine::startup_executable()?;
+    let checkout = effigy_containers::environment::EnvRef::for_policy(policy)
+        .map_err(crate::runner::environment::error)?
+        .checkout;
+    let facts = HostProcessEnvFacts::for_policy(policy)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let listener_binds = BTreeMap::new();
+    let by_name = std::collections::HashMap::from([(process.name.as_str(), process)]);
+    let mut kernel = KernelActivation {
+        repo_root,
+        policy,
+        dir: &dir,
+        project_path: &project_path,
+        checkout_root: &checkout_root,
+        facts: &facts,
+        listener_binds: &listener_binds,
+        route_table: None,
+        listener_root: None,
+        state_root,
+        state_home: &state_home,
+        executable: &executable,
+        checkout: Some(checkout),
+        gate: ReplaceGate::Unheld,
+        cx: &cx,
+        launch_cx: &launch_cx,
+        deadline: None,
+        by_name: &by_name,
+        pending: Vec::new(),
+        pending_generation: None,
+        result: HostProcessStart::default(),
+    };
+    // A failed launch drops its owning client, which is the kernel's
+    // owner-loss stop.
+    host::HostActivation::launch(&mut kernel, process)?;
+    detach_started(repo_root, policy, kernel.result.started, None)?;
+    Ok(())
+}
+
 /// Releases the owning pipes of a bring-up that reached its readiness.
 ///
 /// A process that exits before the detach has already settled its run: there
@@ -333,6 +399,8 @@ struct KernelActivation<'a> {
     checkout: Option<effigy_kernel::id::CheckoutId>,
     gate: ReplaceGate,
     cx: &'a EffectContext,
+    /// Bounds the wait for a plain workload's launch decision.
+    launch_cx: &'a EffectContext,
     deadline: Option<Instant>,
     by_name: &'a std::collections::HashMap<&'a str, &'a effigy_containers::EffectiveHostProcess>,
     /// The dependency records the process about to launch observed.
@@ -579,7 +647,7 @@ impl host::HostActivation for KernelActivation<'_> {
             await_plain_launch(
                 &mut client,
                 &process.name,
-                cx,
+                self.launch_cx,
                 &source,
                 &state_path,
                 generation,
@@ -873,6 +941,7 @@ fn start_host_processes_inner(
         checkout: Some(checkout),
         gate,
         cx: &cx,
+        launch_cx: &cx,
         deadline,
         by_name: &by_name,
         pending: Vec::new(),

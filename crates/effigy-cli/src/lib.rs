@@ -548,6 +548,10 @@ pub enum ContainerSubcommand {
         service: Option<String>,
         follow: bool,
     },
+    /// Internal: run the stack-owned file-event relay until signaled.
+    FsRelay {
+        name: Option<String>,
+    },
     /// Restart only the named environment-owned host processes, and the
     /// processes that depend on them.
     Restart {

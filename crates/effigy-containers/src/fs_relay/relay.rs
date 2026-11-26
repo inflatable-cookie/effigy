@@ -61,6 +61,8 @@ impl FsEventRelayHandle {
                 .collect();
             let (program, args) =
                 manager.runtime_process_invocation(detection, profile, docker_program, &args)?;
+            // The runtime CLI may live outside a detached process's `PATH`.
+            let program = crate::compose::resolve_host_cli_program(&program.to_string_lossy());
             roots.extend(group.iter().map(|target| target.host.clone()));
             plans.push((container, group, program, args));
         }

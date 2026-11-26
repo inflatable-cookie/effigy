@@ -9,6 +9,8 @@ use super::common::{shared_flag_arm, shared_output_flag_arm, CommonArgs, CommonF
 use super::container_data::parse_container_data;
 use super::{unknown_argument, CliParseError};
 
+const FS_RELAY: &str = "__fs-relay";
+
 const CONTAINER_EJECT_RETIRED_ERROR: &str = "`effigy container eject` is retired in v0.15 with `compose_file`: generated Compose stays internal. Run `effigy container render <NAME>` to read the exact render, and customise a service with a project catalog fragment under `infra/dev/catalog/`";
 
 const NAMED_CONTAINER_RETIRE_ERROR: &str = "`effigy container <NAME> retire` is unsupported; use `effigy container retire` for the checkout or `effigy container retire --scope <TOKEN>` for one recorded scope";
@@ -17,9 +19,9 @@ pub(super) fn parse_container_command<I>(args: I) -> Result<Command, CliParseErr
 where
     I: IntoIterator<Item = String>,
 {
-    const ACTIONS: [&str; 18] = [
+    const ACTIONS: [&str; 19] = [
         "up", "down", "status", "stats", "logs", "restart", "shell", "reset", "cache", "volume",
-        "data", "profile", "eject", "hosts", "retire", "scope", "render", "migrate",
+        "data", "profile", "eject", "hosts", "retire", "scope", "render", "migrate", FS_RELAY,
     ];
 
     let mut args = args.into_iter();
@@ -42,6 +44,11 @@ where
 
     match action.as_str() {
         "render" => parse_container_render(name, args, |name| ContainerSubcommand::Render { name }),
+        // Internal: the stack-owned file-event relay's own process. It takes
+        // only a name and `--repo`, as `render` does.
+        FS_RELAY => {
+            parse_container_render(name, args, |name| ContainerSubcommand::FsRelay { name })
+        }
         "migrate" => {
             parse_container_render(name, args, |name| ContainerSubcommand::Migrate { name })
         }

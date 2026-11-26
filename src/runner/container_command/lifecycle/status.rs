@@ -25,6 +25,7 @@ pub(in crate::runner::container_command) fn run_container_status_command(
     match resolve_repo_root_or_invocation_cwd_scope(repo_override)? {
         ContainerRepoScope::RepoRoot(repo_root) => {
             let rendered = run_container_status(&repo_root, name, output_json)?;
+            let rendered = annotate_fs_events_status(&repo_root, name, output_json, rendered);
             Ok(annotate_host_process_status(
                 &repo_root,
                 name,
@@ -33,6 +34,8 @@ pub(in crate::runner::container_command) fn run_container_status_command(
             ))
         }
         ContainerRepoScope::InvocationCwd(cwd) => {
+            // Several environments may answer here, so no single relay field
+            // belongs to this report.
             let rendered = run_container_status_under_path(&cwd, name, output_json)?;
             Ok(annotate_host_process_status(
                 &cwd,
@@ -42,6 +45,33 @@ pub(in crate::runner::container_command) fn run_container_status_command(
             ))
         }
     }
+}
+
+/// The report's `fs_events` field, refined by what only the host knows: the
+/// backend that makes a relay unnecessary, and a stack relay run whose
+/// supervisor is gone.
+fn annotate_fs_events_status(
+    repo_root: &std::path::Path,
+    name: Option<&str>,
+    output_json: bool,
+    rendered: String,
+) -> String {
+    let Ok(policy) = load_container_policy_for_inspection(repo_root, name) else {
+        return rendered;
+    };
+    let status = crate::runner::fs_relay::observed_status(repo_root, &policy);
+    if output_json {
+        let Ok(mut value) = serde_json::from_str::<serde_json::Value>(&rendered) else {
+            return rendered;
+        };
+        let (Some(object), Ok(status)) = (value.as_object_mut(), serde_json::to_value(&status))
+        else {
+            return rendered;
+        };
+        object.insert("fs_events".to_owned(), status);
+        return value.to_string();
+    }
+    format!("{rendered}\nfs_events: {}", status.summary())
 }
 
 /// Each declared host process is a kernel run: status reports its run, state

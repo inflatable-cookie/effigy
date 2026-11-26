@@ -50,6 +50,7 @@ mod stopping;
 pub(in crate::runner) use activation::start_host_processes_for_container;
 #[cfg(test)]
 pub(super) use activation::start_host_processes_owning;
+pub(super) use activation::start_plain_host_process;
 #[cfg(test)]
 pub(super) use activation::{
     plain_launch_observation, restart_selection, rollback_after_detach_failure,
@@ -58,21 +59,22 @@ pub(in crate::runner) use activation::{
     restart_host_processes_for_container, start_host_processes_in_activation,
 };
 use endpoints::*;
+#[cfg(test)]
+pub(super) use observation::pane_listener;
 use observation::*;
 pub(in crate::runner) use observation::{
-    host_process_status, HostPaneIdentity, HostPaneObservation,
+    host_process_status, HostPaneIdentity, HostPaneObservation, HostProcessStatus,
 };
 pub(super) use observation::{
     lifecycle_from_effects, publish_lifecycle, read_lifecycle, HostLifecycleSource,
 };
-#[cfg(test)]
-pub(super) use observation::{pane_listener, HostProcessStatus};
+use stopping::stop_host_processes;
 pub(in crate::runner) use stopping::stop_host_processes_for_container;
 #[cfg(test)]
 pub(super) use stopping::stop_report_path;
+pub(super) use stopping::stop_resource_run;
 #[cfg(test)]
 pub(super) use stopping::wait_for_predecessor_gate;
-use stopping::{stop_host_processes, stop_resource_run};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
