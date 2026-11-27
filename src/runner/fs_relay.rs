@@ -9,7 +9,8 @@ use std::collections::BTreeSet;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
-use std::time::Duration;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use effigy_containers::fs_relay::detect::{
     resolve_fs_events_activation, ActivationContext, Backend, FsEventsDecision, FsEventsState,
@@ -19,7 +20,7 @@ use effigy_containers::fs_relay::host::{
     observe_fs_relay_backend, start_fs_relay, FsRelaySession, FsRelayStart,
 };
 use effigy_containers::fs_relay::state::{
-    clear_dead_fs_relay_record, fs_events_status, FsEventsStatus, RelayOwner,
+    clear_dead_fs_relay_record, fs_events_status, stack_relay_published, FsEventsStatus, RelayOwner,
 };
 use effigy_containers::{EffectiveAttachMode, EffectiveContainerPolicy, EffectiveFsEventsMode};
 
@@ -28,6 +29,13 @@ use super::error::RunnerError;
 /// How often a stack relay retries while an attached session holds the
 /// environment's relay.
 const TAKEOVER_POLL: Duration = Duration::from_millis(500);
+
+/// How long `container up --detach` waits for a freshly started stack relay to
+/// publish its record, so a `container status` run right after reads it.
+const STACK_RELAY_SETTLE: Duration = Duration::from_secs(3);
+
+/// How often that wait looks for the record.
+const STACK_RELAY_SETTLE_POLL: Duration = Duration::from_millis(40);
 
 /// How the current command uses the environment.
 #[derive(Debug, Clone, Copy)]
@@ -165,14 +173,40 @@ pub(in crate::runner) fn reconcile_stack_relay(
         stop_stack_relay(repo_root, policy);
         return None;
     }
-    crate::runner::host_process::start_stack_fs_relay(repo_root, policy)
-        .err()
-        .map(|error| {
-            format!(
-                "file-event relay for `{}` did not start: {error}",
-                policy.name
-            )
-        })
+    match crate::runner::host_process::start_stack_fs_relay(repo_root, policy) {
+        Ok(()) => {
+            await_stack_relay(repo_root, policy, STACK_RELAY_SETTLE);
+            None
+        }
+        Err(error) => Some(format!(
+            "file-event relay for `{}` did not start: {error}",
+            policy.name
+        )),
+    }
+}
+
+/// Wait until the stack relay publishes its record, its run ends, or the budget
+/// runs out. A timeout is not a failure: the relay is an aid, and `container
+/// status` reports whatever it finds.
+fn await_stack_relay(repo_root: &Path, policy: &EffectiveContainerPolicy, budget: Duration) {
+    await_settled(budget, STACK_RELAY_SETTLE_POLL, || {
+        stack_relay_published(repo_root, &policy.name)
+            || crate::runner::host_process::stack_fs_relay_ended(repo_root, policy)
+    });
+}
+
+/// Poll `settled` until it holds or `budget` passes. Reports whether it held.
+fn await_settled(budget: Duration, poll: Duration, mut settled: impl FnMut() -> bool) -> bool {
+    let deadline = Instant::now() + budget;
+    loop {
+        if settled() {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        thread::sleep(poll);
+    }
 }
 
 /// Stop the stack-owned relay, if one runs. Called before the stack goes down;
@@ -261,4 +295,70 @@ pub(in crate::runner) fn run_stack_relay(
     }
     drop(session);
     Ok(String::new())
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use effigy_containers::fs_relay::state::{
+        fs_relay_record_path, RelayRecord, FS_RELAY_RECORD_SCHEMA,
+    };
+    use std::fs;
+
+    fn publish(repo: &Path, owner: RelayOwner) {
+        let record = RelayRecord {
+            schema: FS_RELAY_RECORD_SCHEMA.to_owned(),
+            container: "web".to_owned(),
+            owner,
+            pid: std::process::id(),
+            state: "active".to_owned(),
+            reason: "explicit_on".to_owned(),
+            targets: Vec::new(),
+        };
+        let path = fs_relay_record_path(repo, "web");
+        fs::create_dir_all(path.parent().expect("record directory")).expect("directory");
+        fs::write(path, serde_json::to_vec(&record).expect("record JSON")).expect("record");
+    }
+
+    #[test]
+    fn settle_wait_returns_once_the_stack_relay_record_is_visible() {
+        let dir = tempfile::tempdir().expect("fixture");
+        let repo = dir.path().to_path_buf();
+        // A session's record does not settle a stack relay.
+        publish(&repo, RelayOwner::Session);
+        assert!(!await_settled(
+            Duration::from_millis(100),
+            Duration::from_millis(10),
+            || stack_relay_published(&repo, "web")
+        ));
+        fs::remove_file(fs_relay_record_path(&repo, "web")).expect("clear");
+
+        let writer = {
+            let repo = repo.clone();
+            thread::spawn(move || {
+                thread::sleep(Duration::from_millis(200));
+                publish(&repo, RelayOwner::Stack);
+            })
+        };
+        let started = Instant::now();
+        assert!(await_settled(
+            Duration::from_secs(3),
+            Duration::from_millis(10),
+            || stack_relay_published(&repo, "web")
+        ));
+        assert!(started.elapsed() < Duration::from_secs(3));
+        writer.join().expect("writer");
+    }
+
+    #[test]
+    fn settle_wait_gives_up_at_its_budget_without_failing() {
+        let dir = tempfile::tempdir().expect("fixture");
+        let started = Instant::now();
+        assert!(!await_settled(
+            Duration::from_millis(150),
+            Duration::from_millis(10),
+            || stack_relay_published(dir.path(), "web")
+        ));
+        assert!(started.elapsed() >= Duration::from_millis(150));
+    }
 }

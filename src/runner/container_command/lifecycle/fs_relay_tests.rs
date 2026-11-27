@@ -100,15 +100,22 @@ impl RelayFixture {
                 .replace("@REPO@", &repo.display().to_string()),
         );
         write_executable(&bin.join("colima"), "#!/bin/sh\nexit 0\n");
-        // The supervised relay's executable: it records its argv and stays up.
-        // Its path reaches the launch as a classified environment value.
-        write_executable(
-            &bin.join("effigy"),
-            &format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}/relay.argv'\nexec sleep 120\n",
-                state.display()
-            ),
-        );
+        // The supervised relay's executable: it records its argv, publishes its
+        // stack record after a short start, then stays up. Its path reaches the
+        // launch as a classified environment value.
+        let relay = r#"#!/bin/sh
+printf '%s\n' "$*" >> 'STATE/relay.argv'
+sleep 0.5
+record='REPO/.effigy/runtime/fs-events/dev.json'
+mkdir -p "$(dirname "$record")"
+cat > "$record" <<EOF
+{"schema":"effigy.fs-events.relay.v1","container":"dev","owner":"stack","pid":$$,"state":"active","reason":"explicit_on","targets":[]}
+EOF
+exec sleep 120
+"#
+        .replace("STATE", &state.display().to_string())
+        .replace("REPO", &repo.display().to_string());
+        write_executable(&bin.join("effigy"), &relay);
         let env = EnvGuard::set_many(&[
             ("HOME", Some(home.display().to_string())),
             ("PATH", Some(format!("{}:/usr/bin:/bin", bin.display()))),
@@ -297,6 +304,19 @@ fn detached_on_up_supervises_a_stack_relay_that_down_and_a_failed_up_stop() {
     fixture.up(false).expect_err("compose up fails");
     assert!(!stack_fs_relay_running(&fixture.repo, &policy));
     fs::remove_file(fixture.state.join("fail-up")).expect("restore");
+    fixture.down();
+}
+
+#[test]
+fn detached_up_returns_once_the_stack_relay_is_visible() {
+    let fixture = RelayFixture::new("fs_events = \"on\"");
+
+    fixture.up(false).expect("detached up");
+
+    // The relay publishes its record half a second after it starts, so a status
+    // read right after `up` would say `not_running` if `up` returned first.
+    let status = fixture.status();
+    assert_eq!(status["fs_events"]["state"], "active", "{status}");
     fixture.down();
 }
 

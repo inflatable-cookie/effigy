@@ -114,6 +114,20 @@ pub(in crate::runner) fn stack_fs_relay_running(
         .is_some_and(|row| row.state == kernel_run::HostProcessState::Running)
 }
 
+/// Whether the relay run has ended for good: closed, or open with no live
+/// supervisor. A run that is still starting is neither.
+pub(in crate::runner) fn stack_fs_relay_ended(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> bool {
+    stack_fs_relay_status(repo_root, policy).is_some_and(|row| {
+        matches!(
+            row.state,
+            kernel_run::HostProcessState::Closed | kernel_run::HostProcessState::Interrupted
+        )
+    })
+}
+
 /// The id of a relay run that is open without a live supervisor.
 pub(in crate::runner) fn stack_fs_relay_unsettled_run(
     repo_root: &Path,

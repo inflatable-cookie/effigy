@@ -2,7 +2,7 @@
 use super::{
     protocol::GUEST_LOOP,
     targets::RelayTarget,
-    watcher::{Coalescer, EventFilter},
+    watcher::{Coalescer, EventFilter, PathFingerprint},
 };
 use crate::{ContainerBackendDetection, ContainerManager, EffectiveFsEventsConfig};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
@@ -98,7 +98,7 @@ impl FsEventRelayHandle {
                 match event_rx.recv_timeout(Duration::from_millis(25)) {
                     Ok(Ok(event)) => {
                         for path in filter.expand(&event) {
-                            coalescer.push(path, Instant::now());
+                            coalescer.push(path, Instant::now(), PathFingerprint::of);
                         }
                     }
                     Ok(Err(_)) => overflow.store(true, Ordering::Release),
@@ -110,7 +110,7 @@ impl FsEventRelayHandle {
                         rescan(root, &filter, &streams, &stopped);
                     }
                 }
-                for path in coalescer.drain_ready(Instant::now()) {
+                for path in coalescer.drain_ready(Instant::now(), PathFingerprint::of) {
                     for (group, tx) in &streams {
                         for target in group {
                             if let Some(guest) = target.guest_path(&path) {
@@ -388,5 +388,80 @@ mod tests {
             nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), None).is_err(),
             "child should be reaped"
         );
+    }
+
+    /// The guest loop's `chmod <current mode>` echoes back through the host's
+    /// watcher. The fake runtime runs that same `chmod`, so one host write must
+    /// reach the guest once and never again.
+    #[test]
+    fn guest_chmod_echo_relays_one_line_per_host_write() {
+        let dir = tempfile::tempdir().expect("fixture");
+        let real_watch = dir.path().join("real-watch");
+        fs::create_dir(&real_watch).expect("watch directory");
+        let watch = dir.path().join("watch");
+        std::os::unix::fs::symlink(&real_watch, &watch).expect("watch alias");
+        let file = watch.join("hello");
+        fs::write(&file, "one").expect("seed");
+        let script = dir.path().join("fake-runtime");
+        let starts = dir.path().join("starts");
+        let received = dir.path().join("received");
+        let body = r#"#!/bin/sh
+echo started >> 'STARTS'
+while IFS= read -r p; do
+  if stat -c %a / >/dev/null 2>&1; then m=$(stat -c %a -- "$p"); else m=$(stat -f %Lp -- "$p"); fi
+  chmod "$m" -- "$p"
+  printf '%s\n' "$p" >> 'RECEIVED'
+done
+"#;
+        fs::write(
+            &script,
+            body.replace("STARTS", &starts.display().to_string())
+                .replace("RECEIVED", &received.display().to_string()),
+        )
+        .expect("script");
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).expect("executable");
+        let target = RelayTarget {
+            service: "app".into(),
+            container: "container".into(),
+            host: watch.clone(),
+            guest: "/workspace".into(),
+        };
+        let manager = ContainerManager::defaults();
+        let detection = ContainerBackendDetection::new(true)
+            .backend_override(crate::BackendId::docker_compose());
+        let handle = FsEventRelayHandle::start(
+            &manager,
+            &detection,
+            "profile",
+            script.to_str().expect("utf8"),
+            vec![target],
+            &EffectiveFsEventsConfig::default(),
+            &dir.path().join("state"),
+        )
+        .expect("start");
+        let lines = || -> Vec<String> {
+            fs::read_to_string(&received)
+                .unwrap_or_default()
+                .lines()
+                .map(String::from)
+                .collect()
+        };
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while fs::read_to_string(&starts).unwrap_or_default().is_empty()
+            && Instant::now() < deadline
+        {
+            thread::sleep(Duration::from_millis(25));
+        }
+        // Let the watch settle before the one write under test.
+        thread::sleep(Duration::from_millis(300));
+        fs::write(&file, "two").expect("save");
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while lines().is_empty() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(25));
+        }
+        // The window in which a looping echo would have re-sent the path.
+        thread::sleep(Duration::from_millis(1500));
+        drop(handle);
+        assert_eq!(lines(), vec!["/workspace/hello".to_owned()]);
     }
 }

@@ -63,7 +63,8 @@ mod waits;
 #[path = "../../tests/support/host_lifecycle.rs"]
 mod lifecycle_fixture;
 pub(in crate::runner) use fs_relay::{
-    stack_fs_relay_running, stack_fs_relay_unsettled_run, start_stack_fs_relay, stop_stack_fs_relay,
+    stack_fs_relay_ended, stack_fs_relay_running, stack_fs_relay_unsettled_run,
+    start_stack_fs_relay, stop_stack_fs_relay,
 };
 pub(in crate::runner) use kernel_run::{
     host_process_listener_state_path, host_process_log_path, host_process_status,
