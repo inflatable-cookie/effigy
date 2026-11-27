@@ -111,6 +111,7 @@ pub struct ColimaRecoveryReport {
 struct ColimaProfileEntry {
     name: String,
     status: String,
+    runtime: String,
     cpus: u64,
     memory: u64,
     disk: u64,
@@ -886,11 +887,39 @@ pub(super) fn detect_container_backend() -> Result<BackendId, ContainerExecError
 
 pub fn running_colima_profiles(repo_root: &Path) -> Result<Vec<String>, ContainerExecError> {
     let profiles = list_colima_profiles(repo_root)?;
-    Ok(profiles
+    Ok(running_nerdctl_profile_names(profiles))
+}
+
+fn is_nerdctl_compatible_profile(entry: &ColimaProfileEntry) -> bool {
+    entry.runtime.is_empty() || entry.runtime.eq_ignore_ascii_case("containerd")
+}
+
+fn running_nerdctl_profile_names(profiles: Vec<ColimaProfileEntry>) -> Vec<String> {
+    profiles
         .into_iter()
-        .filter(|entry| entry.status.eq_ignore_ascii_case("running"))
+        .filter(|entry| {
+            is_nerdctl_compatible_profile(entry) && entry.status.eq_ignore_ascii_case("running")
+        })
         .map(|entry| entry.name)
-        .collect())
+        .collect()
+}
+
+fn nerdctl_profile_names_for_all_states(
+    entries: Vec<ColimaProfileEntry>,
+) -> (Vec<String>, Vec<String>) {
+    let mut running = Vec::new();
+    let mut stopped = Vec::new();
+    for entry in entries {
+        if !is_nerdctl_compatible_profile(&entry) {
+            continue;
+        }
+        if entry.status.eq_ignore_ascii_case("running") {
+            running.push(entry.name);
+        } else {
+            stopped.push(entry.name);
+        }
+    }
+    (running, stopped)
 }
 
 /// Profile names for an all-states inventory: the profiles that are running,
@@ -904,16 +933,7 @@ pub fn running_colima_profiles(repo_root: &Path) -> Result<Vec<String>, Containe
 pub(super) fn colima_profiles_for_all_states_inventory(
 ) -> Result<(Vec<String>, Vec<String>), ContainerExecError> {
     let entries = list_colima_profiles(Path::new("."))?;
-    let mut running = Vec::new();
-    let mut stopped = Vec::new();
-    for entry in entries {
-        if entry.status.eq_ignore_ascii_case("running") {
-            running.push(entry.name);
-        } else {
-            stopped.push(entry.name);
-        }
-    }
-    Ok((running, stopped))
+    Ok(nerdctl_profile_names_for_all_states(entries))
 }
 
 pub(crate) fn default_runtime_profile() -> String {
@@ -1118,6 +1138,11 @@ fn parse_colima_profiles(stdout: &str) -> Result<Vec<ColimaProfileEntry>, Contai
                         stderr: "missing `name` in `colima list --json` row".to_owned(),
                     })?
                     .to_owned(),
+                runtime: value
+                    .get("runtime")
+                    .and_then(JsonValue::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
                 status: value
                     .get("status")
                     .and_then(JsonValue::as_str)
@@ -1199,7 +1224,41 @@ mod tests {
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].name, "effigy");
+        assert_eq!(entries[0].runtime, "");
         assert_eq!(entries[0].disk, 300 * 1024 * 1024 * 1024);
+    }
+
+    #[test]
+    fn colima_profile_discovery_skips_explicit_non_containerd_runtimes() {
+        let entries = parse_colima_profiles(
+            concat!(
+                r#"{"name":"containerd","status":"Running","runtime":"containerd","cpus":2,"memory":1,"disk":1}"#,
+                "\n",
+                r#"{"name":"docker","status":"Running","runtime":"docker","cpus":2,"memory":1,"disk":1}"#,
+                "\n",
+                r#"{"name":"legacy","status":"Running","cpus":2,"memory":1,"disk":1}"#,
+                "\n",
+                r#"{"name":"stopped-docker","status":"Stopped","runtime":"docker","cpus":2,"memory":1,"disk":1}"#,
+                "\n",
+                r#"{"name":"stopped-legacy","status":"Stopped","runtime":"","cpus":2,"memory":1,"disk":1}"#
+            ),
+        )
+        .expect("parse profiles");
+
+        assert_eq!(entries[0].runtime, "containerd");
+        assert_eq!(entries[1].runtime, "docker");
+        assert_eq!(entries[2].runtime, "");
+        assert_eq!(
+            running_nerdctl_profile_names(entries.clone()),
+            ["containerd", "legacy"]
+        );
+        assert_eq!(
+            nerdctl_profile_names_for_all_states(entries),
+            (
+                vec!["containerd".to_owned(), "legacy".to_owned()],
+                vec!["stopped-legacy".to_owned()]
+            )
+        );
     }
 
     #[test]
