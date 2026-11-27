@@ -9,7 +9,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use effigy_catalog::volumes::{parse_listed_resource_names, remove_volume_command, DockerCommand};
+use effigy_catalog::volumes::{parse_listed_resource_names, DockerCommand};
 use effigy_containers::{
     retire_report, FailedResource, GatewayRelease, KeptResource, OwnedResource, ResourceKind,
     RetireOutcome,
@@ -19,7 +19,7 @@ use effigy_gateway::registration::withdraw_owned_routes;
 use super::barge_lifecycle;
 use super::data::maybe_confirm_destructive_container_action;
 use super::profile_inventory::{list_containers, list_networks, list_volumes};
-use super::support::run_runtime_volume_capture;
+use super::support::{remove_named_batch, run_runtime_volume_capture, stop_and_remove_containers};
 use super::{render_container_report, RunnerError};
 use crate::runner::command_context::resolve_active_command_context;
 
@@ -471,18 +471,27 @@ fn owns_longest_project<'a>(name: &str, projects: &'a [String]) -> Option<&'a st
 }
 
 /// Delete every listed resource. `--keep-data` keeps the volumes and names
-/// them. The backend is re-read afterwards, so only what is really gone counts
-/// as removed.
+/// them. Deletion runs in dependency order, containers then networks then
+/// volumes, with one batched command per profile and kind. The backend is
+/// listed afterwards, once per profile and kind, so only what is really gone
+/// counts as removed. The outcome keeps the order of `owned`.
 pub(super) fn retire_owned(
     checkout: &Path,
     owned: &[OwnedResource],
     keep_data: bool,
 ) -> Result<RetireOutcome, RunnerError> {
     let cwd = observation_cwd(checkout);
+    let keeps = |resource: &OwnedResource| keep_data && resource.kind == ResourceKind::Volume;
+    let attempted = owned
+        .iter()
+        .filter(|resource| !keeps(resource))
+        .cloned()
+        .collect::<Vec<_>>();
+    let errors = delete_in_phases(&cwd, &attempted);
+    let remaining = still_there(&cwd, &attempted)?;
     let mut outcome = RetireOutcome::default();
-    let mut attempted = Vec::new();
     for resource in owned {
-        if resource.kind == ResourceKind::Volume && keep_data {
+        if keeps(resource) {
             outcome.kept.push(KeptResource {
                 resource: resource.clone(),
                 reason: if resource.persist {
@@ -491,100 +500,129 @@ pub(super) fn retire_owned(
                     REQUESTED_KEPT
                 },
             });
-            continue;
-        }
-        attempted.push((resource.clone(), delete_resource(&cwd, resource).err()));
-    }
-    let remaining = still_there(&cwd, attempted.iter().map(|(resource, _)| resource))?;
-    for (resource, error) in attempted {
-        match remaining.contains(&resource) {
-            true => outcome.failed.push(FailedResource {
-                resource,
-                error: error.unwrap_or_else(|| "the backend still lists it".to_owned()),
-            }),
-            false => outcome.removed.push(resource),
+        } else if remaining.contains(resource) {
+            outcome.failed.push(FailedResource {
+                resource: resource.clone(),
+                error: errors
+                    .get(resource)
+                    .cloned()
+                    .unwrap_or_else(|| "the backend still lists it".to_owned()),
+            });
+        } else {
+            outcome.removed.push(resource.clone());
         }
     }
     Ok(outcome)
 }
 
-/// Re-read the backend and report which attempted resources are still listed.
-fn still_there<'a>(
-    cwd: &Path,
-    resources: impl IntoIterator<Item = &'a OwnedResource>,
-) -> Result<BTreeSet<OwnedResource>, RunnerError> {
-    let mut present = BTreeSet::new();
-    for resource in resources {
-        let (program, args) = match resource.kind {
-            ResourceKind::Container => ("ps", vec!["-a"]),
-            ResourceKind::Volume => ("volume", vec!["ls"]),
-            ResourceKind::Network => ("network", vec!["ls"]),
-        };
-        let mut command_args = args.into_iter().map(str::to_owned).collect::<Vec<_>>();
-        command_args.extend([
-            "--filter".to_owned(),
-            format!("name={}", resource.name),
-            "--format".to_owned(),
-            if resource.kind == ResourceKind::Container {
-                "{{.Names}}".to_owned()
-            } else {
-                "{{.Name}}".to_owned()
-            },
-        ]);
-        let command = DockerCommand {
-            program: "docker".to_owned(),
-            args: std::iter::once(program.to_owned())
-                .chain(command_args)
-                .collect(),
-            description: format!("confirm removal of {}", resource.name),
-        };
-        let output = run_runtime_volume_capture(cwd, &resource.profile, &command)?;
-        let names = parse_listed_resource_names(&String::from_utf8_lossy(&output.stdout))
-            .unwrap_or_default();
-        if names.iter().any(|name| name == &resource.name) {
-            present.insert(resource.clone());
+/// Delete `resources` in dependency order: containers, networks, then volumes.
+/// Each phase issues one batch per profile. Returns the reason of every
+/// resource a batch, or its one-at-a-time retry, could not remove.
+fn delete_in_phases(cwd: &Path, resources: &[OwnedResource]) -> BTreeMap<OwnedResource, String> {
+    let mut errors = BTreeMap::new();
+    for kind in [
+        ResourceKind::Container,
+        ResourceKind::Network,
+        ResourceKind::Volume,
+    ] {
+        let mut by_profile: BTreeMap<&str, Vec<&OwnedResource>> = BTreeMap::new();
+        for resource in resources.iter().filter(|resource| resource.kind == kind) {
+            by_profile
+                .entry(resource.profile.as_str())
+                .or_default()
+                .push(resource);
+        }
+        for (profile, batch) in by_profile {
+            errors.extend(delete_batch(cwd, profile, kind, &batch));
         }
     }
-    Ok(present)
+    errors
 }
 
-fn delete_resource(cwd: &Path, resource: &OwnedResource) -> Result<(), String> {
-    let runtime_error = |error: &str| {
-        let reason = runtime_reason(error).unwrap_or_else(|| {
-            format!(
-                "could not remove {} {}",
-                resource.kind.label(),
-                resource.name
-            )
-        });
-        if reason.contains(&resource.name) {
-            reason
-        } else {
-            format!("{}: {reason}", resource.name)
-        }
+/// Delete one profile's resources of one kind in a single batch.
+fn delete_batch(
+    cwd: &Path,
+    profile: &str,
+    kind: ResourceKind,
+    batch: &[&OwnedResource],
+) -> Vec<(OwnedResource, String)> {
+    let names = batch
+        .iter()
+        .map(|resource| resource.name.clone())
+        .collect::<Vec<_>>();
+    let failures = match kind {
+        // The stop-then-remove order is the container-removal rule (effigy#376).
+        ResourceKind::Container => stop_and_remove_containers(cwd, profile, &names),
+        ResourceKind::Network => remove_named_batch(cwd, profile, &["network", "rm"], &names),
+        ResourceKind::Volume => remove_named_batch(cwd, profile, &["volume", "rm"], &names),
     };
-    let command = match resource.kind {
-        ResourceKind::Container => {
-            // The stop-then-remove order is the container-removal rule
-            // (effigy#376), shared with the shared-service replacement.
-            return super::support::stop_and_remove_container(
-                cwd,
-                &resource.profile,
-                &resource.name,
-            )
-            .map_err(|error| runtime_error(&error.to_string()));
+    failures
+        .into_iter()
+        .filter_map(|(name, error)| {
+            let resource = batch.iter().find(|resource| resource.name == name)?;
+            Some((
+                (*resource).clone(),
+                delete_error(resource, &error.to_string()),
+            ))
+        })
+        .collect()
+}
+
+/// The reason one resource could not be deleted, named so a person can act on it.
+fn delete_error(resource: &OwnedResource, error: &str) -> String {
+    let reason = runtime_reason(error).unwrap_or_else(|| {
+        format!(
+            "could not remove {} {}",
+            resource.kind.label(),
+            resource.name
+        )
+    });
+    if reason.contains(&resource.name) {
+        reason
+    } else {
+        format!("{}: {reason}", resource.name)
+    }
+}
+
+/// Re-read the backend once per `(profile, kind)` and report which attempted
+/// resources are still listed.
+fn still_there(
+    cwd: &Path,
+    resources: &[OwnedResource],
+) -> Result<BTreeSet<OwnedResource>, RunnerError> {
+    let mut listed: BTreeMap<(&str, ResourceKind), BTreeSet<String>> = BTreeMap::new();
+    for resource in resources {
+        let key = (resource.profile.as_str(), resource.kind);
+        if listed.contains_key(&key) {
+            continue;
         }
-        ResourceKind::Volume => remove_volume_command(&resource.name),
-        ResourceKind::Network => DockerCommand {
-            program: "docker".to_owned(),
-            args: vec!["network".to_owned(), "rm".to_owned(), resource.name.clone()],
-            description: format!("remove owned network {}", resource.name),
-        },
+        let output = run_runtime_volume_capture(cwd, &resource.profile, &listing_command(key.1))?;
+        let names = parse_listed_resource_names(&String::from_utf8_lossy(&output.stdout))
+            .unwrap_or_default();
+        listed.insert(key, names.into_iter().collect());
+    }
+    Ok(resources
+        .iter()
+        .filter(|resource| {
+            listed
+                .get(&(resource.profile.as_str(), resource.kind))
+                .is_some_and(|names| names.contains(&resource.name))
+        })
+        .cloned()
+        .collect())
+}
+
+/// The one listing that names every object of one kind on a profile.
+fn listing_command(kind: ResourceKind) -> DockerCommand {
+    let args: &[&str] = match kind {
+        ResourceKind::Container => &["ps", "-a", "--format", "{{.Names}}"],
+        ResourceKind::Volume => &["volume", "ls", "--format", "{{.Name}}"],
+        ResourceKind::Network => &["network", "ls", "--format", "{{.Name}}"],
     };
-    match run_runtime_volume_capture(cwd, &resource.profile, &command) {
-        Ok(output) if output.status.success() => Ok(()),
-        Ok(output) => Err(runtime_error(&String::from_utf8_lossy(&output.stderr))),
-        Err(error) => Err(runtime_error(&error.to_string())),
+    DockerCommand {
+        program: "docker".to_owned(),
+        args: args.iter().map(|arg| (*arg).to_owned()).collect(),
+        description: format!("confirm removal of owned {}", kind.label()),
     }
 }
 

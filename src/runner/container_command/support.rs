@@ -46,7 +46,8 @@ pub(super) use report_annotations::{
     annotate_tcp_alias_host_notes, annotate_warning_lines,
 };
 pub(super) use runtime_commands::{
-    remove_reset_volumes, run_runtime_volume_capture, stop_and_remove_container,
+    remove_named_batch, remove_reset_volumes, run_runtime_volume_capture,
+    stop_and_remove_containers,
 };
 pub(in crate::runner) use runtime_identity::validate_running_container_runtime_match;
 pub(super) use runtime_identity::{

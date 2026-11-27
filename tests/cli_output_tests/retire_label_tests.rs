@@ -307,45 +307,70 @@ case "$*" in
         label=com.docker.compose.project=*) project="${{arg#label=com.docker.compose.project=}}" ;;
       esac
     done
-    sed -n "s/^\([^|]*\)|$project\$/\1/p" "$state/networks" 2>/dev/null
+    if [ -z "$project" ]; then
+      cut -d'|' -f1 "$state/networks" 2>/dev/null
+    else
+      sed -n "s/^\([^|]*\)|$project\$/\1/p" "$state/networks" 2>/dev/null
+    fi
     ;;
   "stop "*)
-    name="${{2:-}}"
-    grep -vx "$name" "$state/running" > "$state/running.tmp" 2>/dev/null || true
-    mv "$state/running.tmp" "$state/running" 2>/dev/null || true
+    # `stop [-t <seconds>] <name>...`: every named container stops.
+    shift
+    if [ "${{1:-}}" = "-t" ]; then shift 2; fi
+    for name in "$@"; do
+      grep -vx "$name" "$state/running" > "$state/running.tmp" 2>/dev/null || true
+      mv "$state/running.tmp" "$state/running" 2>/dev/null || true
+    done
     ;;
   "rm -f "*)
-    name="${{3:-}}"
-    # A kill of a running `restart: unless-stopped` container is an exit the
-    # runtime undoes: the container comes back under the same name.
-    if grep -qx "$name" "$state/running" 2>/dev/null && grep -qx "$name" "$state/unless-stopped" 2>/dev/null; then
-      printf '%s\n' "$name" >> "$state/restarts"
-      exit 0
-    fi
-    if grep -qx "$name" "$state/locked" 2>/dev/null; then
-      printf 'container removal failed\n' >&2
-      exit 1
-    fi
-    grep -v "^$name|" "$state/containers" > "$state/containers.tmp" 2>/dev/null || true
-    mv "$state/containers.tmp" "$state/containers" 2>/dev/null || true
+    # `rm -f <name>...`: each name is removed or refused on its own, and a
+    # refusal fails the command after the others have gone, as the runtime does.
+    shift 2
+    status=0
+    for name in "$@"; do
+      # A kill of a running `restart: unless-stopped` container is an exit the
+      # runtime undoes: the container comes back under the same name.
+      if grep -qx "$name" "$state/running" 2>/dev/null && grep -qx "$name" "$state/unless-stopped" 2>/dev/null; then
+        printf '%s\n' "$name" >> "$state/restarts"
+        continue
+      fi
+      if grep -qx "$name" "$state/locked" 2>/dev/null; then
+        printf 'container removal failed\n' >&2
+        status=1
+        continue
+      fi
+      grep -v "^$name|" "$state/containers" > "$state/containers.tmp" 2>/dev/null || true
+      mv "$state/containers.tmp" "$state/containers" 2>/dev/null || true
+    done
+    exit $status
     ;;
   "volume rm "*)
-    name="${{3:-}}"
-    if grep -qx "$name" "$state/locked" 2>/dev/null; then
-      printf 'Error response from daemon: remove %s: volume is in use\n' "$name" >&2
-      exit 1
-    fi
-    grep -v "^$name|" "$state/volumes" > "$state/volumes.tmp" 2>/dev/null || true
-    mv "$state/volumes.tmp" "$state/volumes" 2>/dev/null || true
+    shift 2
+    status=0
+    for name in "$@"; do
+      if grep -qx "$name" "$state/locked" 2>/dev/null; then
+        printf 'Error response from daemon: remove %s: volume is in use\n' "$name" >&2
+        status=1
+        continue
+      fi
+      grep -v "^$name|" "$state/volumes" > "$state/volumes.tmp" 2>/dev/null || true
+      mv "$state/volumes.tmp" "$state/volumes" 2>/dev/null || true
+    done
+    exit $status
     ;;
   "network rm "*)
-    name="${{3:-}}"
-    if grep -qx "$name" "$state/locked" 2>/dev/null; then
-      printf 'network removal failed\n' >&2
-      exit 1
-    fi
-    grep -v "^$name|" "$state/networks" > "$state/networks.tmp" 2>/dev/null || true
-    mv "$state/networks.tmp" "$state/networks" 2>/dev/null || true
+    shift 2
+    status=0
+    for name in "$@"; do
+      if grep -qx "$name" "$state/locked" 2>/dev/null; then
+        printf 'network removal failed\n' >&2
+        status=1
+        continue
+      fi
+      grep -v "^$name|" "$state/networks" > "$state/networks.tmp" 2>/dev/null || true
+      mv "$state/networks.tmp" "$state/networks" 2>/dev/null || true
+    done
+    exit $status
     ;;
 esac
 exit 0
@@ -421,6 +446,20 @@ fn keep_data_keeps_the_named_volumes_and_lists_them() {
         == "named data volume (`com.effigy.persist=true`), kept by `--keep-data`"));
     assert!(names(&report["removed"]).contains(&"web-1".to_owned()));
     assert_eq!(fixture.state_lines("volumes").len(), 2);
+    // Kept volumes are never removed, and never listed to confirm a removal.
+    let calls = teardown_calls(&fixture);
+    assert!(
+        calls
+            .iter()
+            .all(|call| !call.starts_with("docker volume rm ")),
+        "{calls:?}"
+    );
+    assert!(
+        calls
+            .iter()
+            .all(|call| call != "docker volume ls --format {{.Name}}"),
+        "{calls:?}"
+    );
 }
 
 #[test]
@@ -739,16 +778,196 @@ fn retire_stops_before_removing_so_unless_stopped_never_resurrects() {
         fixture.state_lines("restarts").is_empty(),
         "a removal never restarts what it is removing"
     );
+    // One batched stop covers both containers, and it runs before the one
+    // batched removal of them.
+    let calls = teardown_calls(&fixture);
+    let stop = calls
+        .iter()
+        .position(|call| call == "docker stop -t 2 mail-1 web-1")
+        .unwrap_or_else(|| panic!("no batched stop: {calls:?}"));
+    let remove = calls
+        .iter()
+        .position(|call| call == "docker rm -f mail-1 web-1")
+        .unwrap_or_else(|| panic!("no batched removal: {calls:?}"));
+    assert!(stop < remove, "both are stopped before either is removed");
+}
+
+/// The runtime calls of the teardown itself: everything from the first stop on,
+/// so the inventory reads that come before it are left out.
+fn teardown_calls(fixture: &Fixture) -> Vec<String> {
     let calls = fixture.state_lines("calls.log");
-    for name in ["web-1", "mail-1"] {
-        let stop = calls
+    let start = calls
+        .iter()
+        .position(|call| call.starts_with("docker stop "))
+        .unwrap_or_else(|| panic!("no stop in the teardown: {calls:?}"));
+    calls[start..].to_vec()
+}
+
+fn position_of(calls: &[String], call: &str) -> usize {
+    calls
+        .iter()
+        .position(|candidate| candidate == call)
+        .unwrap_or_else(|| panic!("no `{call}` in {calls:?}"))
+}
+
+#[test]
+fn teardown_batches_each_phase_per_profile_and_lists_each_kind_once() {
+    let fixture = Fixture::new("effigy-retire-batched-");
+    let scope = "55555555555555555555555555555555";
+    let project = "app-web-wt-555555555555";
+    fixture.container("web-1", project, scope);
+    fixture.container("db-1", project, scope);
+    fixture.volume("app-web-wt-555555555555-target", project, scope, false);
+    fixture.volume("app-web-wt-555555555555-db-data", project, scope, false);
+    fixture.network("app-web-wt-555555555555_default", project);
+    fixture.network("app-web-wt-555555555555_jobs", project);
+
+    let (ok, report) = fixture.retire(&["container", "retire", "--yes"]);
+    assert!(ok, "{report}");
+    assert_eq!(names(&report["removed"]).len(), 6, "{report}");
+
+    let calls = teardown_calls(&fixture);
+    let stop = position_of(&calls, "docker stop -t 2 db-1 web-1");
+    let remove = position_of(&calls, "docker rm -f db-1 web-1");
+    let networks = position_of(
+        &calls,
+        "docker network rm app-web-wt-555555555555_default app-web-wt-555555555555_jobs",
+    );
+    let volumes = position_of(
+        &calls,
+        "docker volume rm app-web-wt-555555555555-db-data app-web-wt-555555555555-target",
+    );
+    // Containers, then networks, then volumes: each phase follows the last.
+    assert!(
+        stop < remove && remove < networks && networks < volumes,
+        "{calls:?}"
+    );
+    // Exactly one stop, one removal per kind, and no per-resource command.
+    assert_eq!(
+        calls
             .iter()
-            .position(|call| call == &format!("docker stop {name}"))
-            .unwrap_or_else(|| panic!("no stop of {name}: {calls:?}"));
-        let remove = calls
+            .filter(|call| call.starts_with("docker stop "))
+            .count(),
+        1,
+        "{calls:?}"
+    );
+    assert_eq!(
+        calls
             .iter()
-            .position(|call| call == &format!("docker rm -f {name}"))
-            .unwrap_or_else(|| panic!("no removal of {name}: {calls:?}"));
-        assert!(stop < remove, "{name} is stopped before it is removed");
+            .filter(|call| call.starts_with("docker rm -f "))
+            .count(),
+        1,
+        "{calls:?}"
+    );
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call.starts_with("docker network rm "))
+            .count(),
+        1,
+        "{calls:?}"
+    );
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call.starts_with("docker volume rm "))
+            .count(),
+        1,
+        "{calls:?}"
+    );
+    // The backend is listed once per kind to confirm what is gone.
+    for listing in [
+        "docker ps -a --format {{.Names}}",
+        "docker volume ls --format {{.Name}}",
+        "docker network ls --format {{.Name}}",
+    ] {
+        assert_eq!(
+            calls.iter().filter(|call| call.as_str() == listing).count(),
+            1,
+            "{listing} once: {calls:?}"
+        );
     }
+    assert!(fixture.state_lines("networks").is_empty());
+}
+
+#[test]
+fn a_busy_volume_in_a_batch_fails_alone_and_its_siblings_are_removed() {
+    let fixture = Fixture::new("effigy-retire-batch-busy-volume-");
+    let scope = "66666666666666666666666666666666";
+    let project = "app-web-wt-666666666666";
+    let stuck = "app-web-wt-666666666666-stuck";
+    fixture.container("web-1", project, scope);
+    fixture.volume("app-web-wt-666666666666-db-data", project, scope, false);
+    fixture.volume(stuck, project, scope, false);
+    fixture.volume("app-web-wt-666666666666-target", project, scope, false);
+    fixture.lock(stuck);
+
+    let (ok, report) = fixture.retire(&["container", "retire", "--yes"]);
+    assert!(!ok, "a leftover is never reported clean: {report}");
+    assert_eq!(names(&report["remaining"]), vec![stuck.to_owned()]);
+    let remaining = report["remaining"].as_array().expect("remaining rows");
+    assert!(
+        remaining[0]["error"]
+            .as_str()
+            .is_some_and(|error| error.contains(stuck) && error.contains("volume is in use")),
+        "{remaining:?}"
+    );
+    assert_eq!(
+        names(&report["removed"]),
+        vec![
+            "web-1".to_owned(),
+            "app-web-wt-666666666666-db-data".to_owned(),
+            "app-web-wt-666666666666-target".to_owned(),
+        ]
+    );
+    assert_eq!(
+        fixture.state_lines("volumes"),
+        vec![format!(
+            "{stuck}|{project}|{}||{scope}|false",
+            fixture.checkout()
+        )]
+    );
+    // One batch of all three, then the refused volume alone.
+    let calls = teardown_calls(&fixture);
+    position_of(
+        &calls,
+        "docker volume rm app-web-wt-666666666666-db-data app-web-wt-666666666666-stuck app-web-wt-666666666666-target",
+    );
+    position_of(&calls, &format!("docker volume rm {stuck}"));
+}
+
+#[test]
+fn an_unremovable_container_in_a_batch_fails_alone_with_its_own_reason() {
+    let fixture = Fixture::new("effigy-retire-batch-stuck-container-");
+    let scope = "77777777777777777777777777777777";
+    let project = "app-web-wt-777777777777";
+    fixture.container("db-1", project, scope);
+    fixture.container("web-1", project, scope);
+    fixture.lock("web-1");
+
+    let (ok, report) = fixture.retire(&["container", "retire", "--yes"]);
+    assert!(!ok, "a leftover is never reported clean: {report}");
+    assert_eq!(names(&report["remaining"]), vec!["web-1".to_owned()]);
+    let remaining = report["remaining"].as_array().expect("remaining rows");
+    assert!(
+        remaining[0]["error"].as_str().is_some_and(
+            |error| error.contains("web-1") && error.contains("container removal failed")
+        ),
+        "{remaining:?}"
+    );
+    assert_eq!(names(&report["removed"]), vec!["db-1".to_owned()]);
+    assert_eq!(
+        fixture.state_lines("containers"),
+        vec![format!("web-1|{project}|{}||{scope}", fixture.checkout())]
+    );
+    let calls = teardown_calls(&fixture);
+    position_of(&calls, "docker stop -t 2 db-1 web-1");
+    position_of(&calls, "docker rm -f db-1 web-1");
+    // The retry removes the refused container alone, without another stop.
+    position_of(&calls, "docker rm -f web-1");
+    let stops = calls
+        .iter()
+        .filter(|call| call.starts_with("docker stop "))
+        .count();
+    assert_eq!(stops, 1, "the batched stop is the only stop: {calls:?}");
 }
