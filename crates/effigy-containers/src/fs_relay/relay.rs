@@ -405,18 +405,27 @@ mod tests {
         let script = dir.path().join("fake-runtime");
         let starts = dir.path().join("starts");
         let received = dir.path().join("received");
+        let chmods = dir.path().join("chmods");
+        let failures = dir.path().join("failures");
+        // The guest path `/workspace/x` is the host file `<real_watch>/x`.
         let body = r#"#!/bin/sh
 echo started >> 'STARTS'
 while IFS= read -r p; do
-  if stat -c %a / >/dev/null 2>&1; then m=$(stat -c %a -- "$p"); else m=$(stat -f %Lp -- "$p"); fi
-  chmod "$m" -- "$p"
+  h='HOST'"${p#/workspace}"
+  if stat -c %a / >/dev/null 2>&1; then m=$(stat -c %a -- "$h" 2>/dev/null); else m=$(stat -f %Lp -- "$h" 2>/dev/null); fi
+  # Host chmod: macOS rejects `--` after the mode. The paths are absolute.
+  if [ -z "$m" ] || ! chmod "$m" "$h"; then echo "guest chmod failed: $h" >> 'FAILURES'; continue; fi
+  echo "$h" >> 'CHMODS'
   printf '%s\n' "$p" >> 'RECEIVED'
 done
 "#;
         fs::write(
             &script,
             body.replace("STARTS", &starts.display().to_string())
-                .replace("RECEIVED", &received.display().to_string()),
+                .replace("RECEIVED", &received.display().to_string())
+                .replace("CHMODS", &chmods.display().to_string())
+                .replace("FAILURES", &failures.display().to_string())
+                .replace("HOST", &real_watch.display().to_string()),
         )
         .expect("script");
         fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).expect("executable");
@@ -452,8 +461,13 @@ done
         {
             thread::sleep(Duration::from_millis(25));
         }
-        // Let the watch settle before the one write under test.
-        thread::sleep(Duration::from_millis(300));
+        // FSEvents replays the seed's own create once the watcher is up, and the
+        // guest chmods that file too. Let that settle, then clear its logs, so
+        // the counts below cover only the write under test.
+        thread::sleep(Duration::from_secs(1));
+        for log in [&received, &chmods, &failures] {
+            let _ = fs::remove_file(log);
+        }
         fs::write(&file, "two").expect("save");
         let deadline = Instant::now() + Duration::from_secs(20);
         while lines().is_empty() && Instant::now() < deadline {
@@ -462,6 +476,52 @@ done
         // The window in which a looping echo would have re-sent the path.
         thread::sleep(Duration::from_millis(1500));
         drop(handle);
-        assert_eq!(lines(), vec!["/workspace/hello".to_owned()]);
+        // The guest chmod must have run on the real host file, without error.
+        assert_eq!(
+            fs::read_to_string(&failures).unwrap_or_default(),
+            "",
+            "guest chmod failed"
+        );
+        // The write is relayed and chmodded once. macOS may also report the
+        // truncating write as a create, which sends the watch root once; that
+        // root's echo is dropped, so it never repeats.
+        let root_host = real_watch.display().to_string();
+        let file_host = real_watch.join("hello").display().to_string();
+        let chmod_lines: Vec<String> = fs::read_to_string(&chmods)
+            .unwrap_or_default()
+            .lines()
+            .map(String::from)
+            .collect();
+        assert_eq!(
+            chmod_lines.iter().filter(|c| **c == file_host).count(),
+            1,
+            "the guest chmod must run once on the watched file: {chmod_lines:?}"
+        );
+        assert!(
+            chmod_lines
+                .iter()
+                .all(|c| *c == file_host || c.trim_end_matches('/') == root_host),
+            "only the file and its root may be chmodded: {chmod_lines:?}"
+        );
+        assert!(
+            chmod_lines
+                .iter()
+                .filter(|c| c.trim_end_matches('/') == root_host)
+                .count()
+                <= 1,
+            "the root must not repeat: {chmod_lines:?}"
+        );
+        let relayed = lines();
+        assert_eq!(
+            relayed.iter().filter(|l| *l == "/workspace/hello").count(),
+            1,
+            "one relay for one host write: {relayed:?}"
+        );
+        assert!(
+            relayed
+                .iter()
+                .all(|l| l == "/workspace/hello" || l.trim_end_matches('/') == "/workspace"),
+            "only the file and its root may be relayed: {relayed:?}"
+        );
     }
 }
