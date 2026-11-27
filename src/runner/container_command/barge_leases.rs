@@ -148,6 +148,12 @@ fn acquire_profile_sweep_lock(
 /// Seam for Colima profile discovery, container inventory, and project teardown.
 pub(in crate::runner) trait LeaseRuntime {
     fn running_profiles(&self) -> Result<Vec<String>, RunnerError>;
+    fn profile_info(
+        &self,
+        _profile: &str,
+    ) -> Result<Option<effigy_containers::exec::ColimaProfileInfo>, RunnerError> {
+        Ok(None)
+    }
     fn list_containers(&self, profile: &str) -> Result<Vec<ContainerRow>, RunnerError>;
     fn teardown_project(
         &self,
@@ -165,6 +171,14 @@ impl LeaseRuntime for RealLeaseRuntime {
     fn running_profiles(&self) -> Result<Vec<String>, RunnerError> {
         let cwd = std::env::temp_dir();
         effigy_containers::exec::running_colima_profiles(&cwd).map_err(RunnerError::from)
+    }
+
+    fn profile_info(
+        &self,
+        profile: &str,
+    ) -> Result<Option<effigy_containers::exec::ColimaProfileInfo>, RunnerError> {
+        let cwd = std::env::temp_dir();
+        effigy_containers::exec::colima_profile_info(&cwd, profile).map_err(RunnerError::from)
     }
 
     fn list_containers(&self, profile: &str) -> Result<Vec<ContainerRow>, RunnerError> {
@@ -1206,6 +1220,20 @@ pub(in crate::runner) fn run_container_prune_command_with(
     profile: Option<&str>,
     output_json: bool,
 ) -> Result<String, RunnerError> {
+    if barge.is_some() {
+        if let Some(target) = profile {
+            if let Some(info) = runtime.profile_info(target)? {
+                if let Some(runtime_name) = info.runtime.as_deref() {
+                    if !info.supports_nerdctl() {
+                        return Err(RunnerError::task_invocation(format!(
+                            "Colima profile `{target}` uses the `{runtime_name}` runtime; `effigy container prune --profile {target}` requires a containerd profile"
+                        )));
+                    }
+                }
+            }
+        }
+    }
+
     let report = match profile {
         Some(target) => sweep_profile_leases_with(barge, runtime, target)?,
         None => sweep_all_running_profiles_with(barge, runtime)?,
@@ -1376,6 +1404,7 @@ mod tests {
 
     struct FakeLeaseRuntime {
         running: Mutex<Vec<String>>,
+        profile_info: Mutex<BTreeMap<String, effigy_containers::exec::ColimaProfileInfo>>,
         containers: Mutex<BTreeMap<String, Vec<ContainerRow>>>,
         running_profiles_calls: AtomicUsize,
         list_containers_calls: Mutex<Vec<String>>,
@@ -1389,6 +1418,7 @@ mod tests {
         fn new(running: &[&str]) -> Self {
             Self {
                 running: Mutex::new(running.iter().map(|s| (*s).to_owned()).collect()),
+                profile_info: Mutex::new(BTreeMap::new()),
                 containers: Mutex::new(BTreeMap::new()),
                 running_profiles_calls: AtomicUsize::new(0),
                 list_containers_calls: Mutex::new(Vec::new()),
@@ -1418,6 +1448,16 @@ mod tests {
                 .lock()
                 .expect("containers lock")
                 .insert(profile.to_owned(), rows);
+        }
+
+        fn set_profile_info(&self, profile: &str, status: &str, runtime: &str) {
+            self.profile_info.lock().expect("profile info lock").insert(
+                profile.to_owned(),
+                effigy_containers::exec::ColimaProfileInfo {
+                    status: status.to_owned(),
+                    runtime: (!runtime.is_empty()).then(|| runtime.to_owned()),
+                },
+            );
         }
 
         fn set_teardown_result(
@@ -1455,6 +1495,18 @@ mod tests {
         fn running_profiles(&self) -> Result<Vec<String>, RunnerError> {
             self.running_profiles_calls.fetch_add(1, Ordering::SeqCst);
             Ok(self.running.lock().expect("running lock").clone())
+        }
+
+        fn profile_info(
+            &self,
+            profile: &str,
+        ) -> Result<Option<effigy_containers::exec::ColimaProfileInfo>, RunnerError> {
+            Ok(self
+                .profile_info
+                .lock()
+                .expect("profile info lock")
+                .get(profile)
+                .cloned())
         }
 
         fn list_containers(&self, profile: &str) -> Result<Vec<ContainerRow>, RunnerError> {
@@ -1946,6 +1998,32 @@ mod tests {
         assert_eq!(parsed["ok"], true);
         assert_eq!(parsed["profile"], "effigy");
         assert_eq!(parsed["profiles_swept"], json!(["effigy"]));
+    }
+
+    #[test]
+    fn explicit_docker_profile_prune_errors_while_global_prune_skips_it() {
+        let fixture = BargeFixture::new();
+        fixture.declare_profiles(&[("default", 4), ("effigy", 4)]);
+        let runtime = FakeLeaseRuntime::new(&["effigy"]);
+        runtime.set_profile_info("default", "Running", "docker");
+
+        let error = run_container_prune_command_with(
+            Some(&fixture.barge),
+            &runtime,
+            Some("default"),
+            false,
+        )
+        .expect_err("an explicit Docker profile cannot be pruned through nerdctl");
+        assert!(error.to_string().contains("uses the `docker` runtime"));
+        assert!(error.to_string().contains("requires a containerd profile"));
+        assert_eq!(runtime.running_profiles_count(), 0);
+
+        let output = run_container_prune_command_with(Some(&fixture.barge), &runtime, None, true)
+            .expect("global prune skips non-containerd profiles");
+        let parsed: serde_json::Value = serde_json::from_str(&output).expect("valid json");
+        assert_eq!(parsed["ok"], true);
+        assert_eq!(parsed["profiles_swept"], json!(["effigy"]));
+        assert_eq!(runtime.list_containers_count(), 1);
     }
 
     #[test]
