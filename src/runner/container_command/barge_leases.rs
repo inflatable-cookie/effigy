@@ -422,7 +422,19 @@ pub(in crate::runner) fn sweep_ended_profile_leases_with(
 fn has_ended_lease_on_profile(statuses: &[ContainerLeaseStatus], profile: &str) -> bool {
     statuses
         .iter()
-        .any(|lease| lease.profile == profile && lease.ended.is_some())
+        .any(|lease| lease.profile == profile && is_actionable_ended_lease(lease))
+}
+
+fn is_actionable_ended_lease(lease: &ContainerLeaseStatus) -> bool {
+    let Some(ending) = lease.ended else {
+        return false;
+    };
+    if ending.reason == ContainerEndReason::OwnerEnded {
+        if let ContainerOwner::Checkout(path) = &lease.owner {
+            return is_checkout_confirmed_gone(path.to_str());
+        }
+    }
+    true
 }
 
 fn sweep_profile_with_mode(
@@ -525,7 +537,7 @@ pub(in crate::runner) fn sweep_all_running_profiles_with(
     let final_statuses = barge.container_status().map_err(barge_error)?;
     let mut stopped = BTreeSet::new();
     for lease in &final_statuses {
-        if lease.ended.is_some() && !running.contains(&lease.profile) {
+        if is_actionable_ended_lease(lease) && !running.contains(&lease.profile) {
             stopped.insert(lease.profile.clone());
             record_stopped_lease(lease, &mut report);
         }
@@ -541,7 +553,7 @@ fn record_stopped_profile_leases(
     report: &mut SweepReport,
 ) {
     for lease in statuses {
-        if lease.profile == profile && lease.ended.is_some() {
+        if lease.profile == profile && is_actionable_ended_lease(lease) {
             record_stopped_lease(lease, report);
         }
     }
@@ -571,6 +583,9 @@ fn sweep_running_profile(
 ) -> Result<(), RunnerError> {
     for lease in statuses {
         if lease.profile != profile {
+            continue;
+        }
+        if !is_actionable_ended_lease(lease) {
             continue;
         }
         let Some(ending) = lease.ended else {
@@ -780,6 +795,17 @@ fn is_checkout_confirmed_gone(owner_path: Option<&str>) -> bool {
     let parent_present = std::fs::metadata(parent).is_ok_and(|meta| meta.is_dir());
     if !parent_present {
         return false;
+    }
+    // A direct child of an empty `/Volumes/<name>` directory may be on a
+    // mount point left behind after an abnormal unmount. Do not infer deletion
+    // from that ambiguous stub.
+    if parent.parent() == Some(Path::new("/Volumes")) {
+        let Ok(mut entries) = std::fs::read_dir(parent) else {
+            return false;
+        };
+        if !matches!(entries.next(), Some(Ok(_))) {
+            return false;
+        }
     }
     matches!(
         std::fs::symlink_metadata(path),
@@ -1728,6 +1754,64 @@ mod tests {
             .returned_leases
             .iter()
             .any(|entry| entry.id == held_lease_id && entry.reason == "hold_released"));
+    }
+
+    #[test]
+    fn unconfirmed_owner_ended_checkout_is_retained_during_sweep_and_acquire_wait() {
+        let fixture = BargeFixture::new();
+        fixture.declare_profiles(&[("effigy", 1)]);
+
+        let missing_parent = fixture._temp.path().join("unmounted-volume");
+        let owner_checkout = missing_parent.join("worktrees").join("owner-wt");
+        std::fs::create_dir_all(&owner_checkout).expect("create owner checkout");
+
+        let owner = match fixture
+            .barge
+            .container_lease(&worker_request(
+                "effigy",
+                "proj-unmounted",
+                &owner_checkout,
+                false,
+            ))
+            .expect("owner lease")
+        {
+            ContainerLeaseOutcome::Leased(lease) => lease,
+            _ => panic!("expected owner lease"),
+        };
+        let owner_id = owner.id().to_owned();
+        drop(owner);
+
+        std::fs::remove_dir_all(&missing_parent).expect("simulate unmounted volume");
+
+        let runtime = FakeLeaseRuntime::new(&["effigy"]);
+        let report =
+            sweep_profile_leases_with(Some(&fixture.barge), &runtime, "effigy").expect("sweep");
+        let calls = runtime.teardown_calls();
+        assert!(calls.is_empty());
+        assert!(report.returned_leases.is_empty());
+        let remaining = fixture.barge.container_status().expect("status");
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].id, owner_id);
+
+        // A full pool wait should use one full runtime discovery only. The
+        // subsequent ended-only slices ignore this unconfirmed owner lease.
+        let wait_checkout = fixture._temp.path().join("waiter-wt");
+        std::fs::create_dir_all(&wait_checkout).expect("create waiter checkout");
+        let request = worker_request("effigy", "proj-waiter", &wait_checkout, false);
+        let wait_runtime = FakeLeaseRuntime::new(&["effigy"]);
+        let result = acquire_container_lease_with(
+            Some(&fixture.barge),
+            &wait_runtime,
+            &request,
+            Duration::from_millis(30),
+            Duration::from_millis(5),
+        );
+        assert!(result.is_err(), "unreturned lease keeps the pool full");
+        assert_eq!(wait_runtime.running_profiles_count(), 1);
+        assert!(wait_runtime.teardown_calls().is_empty());
+        let remaining = fixture.barge.container_status().expect("status");
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].id, owner_id);
     }
 
     #[test]
