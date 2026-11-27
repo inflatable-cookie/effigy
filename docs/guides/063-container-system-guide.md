@@ -1315,7 +1315,9 @@ lasts until teardown or until the checkout is gone.
 
 When the profile is full, a worker waits up to 300 seconds
 (`EFFIGY_CONTAINER_LEASE_WAIT_SECS`), sweeping between tries, then refuses
-before starting anything.
+before starting anything; both the wait notice and the refusal name the worker
+leases occupying slots (project, worktree or checkout path, and ended reason if
+retained).
 
 - **Immediate return.** `down` (all forms), `reset`, `retire`, the idle stop, a
   task's own stop and a failed bring-up that leaves nothing running return the
@@ -1323,8 +1325,13 @@ before starting anything.
   return every lease of the profile they delete.
 - **Sweep.** A worker whose holder crashed, or any lease whose owner is gone, is
   reclaimed by the next `up` on that profile or by
-  `effigy container prune [--profile <PROFILE>]`. A crashed holder keeps its
-  volumes; a gone owner's volumes are removed.
+  `effigy container prune [--profile <PROFILE>]`. Acquisition checks ended leases
+  in Barge first (avoiding Colima calls when none have ended), runs at most one
+  orphan container scan on the first full-pool wait slice, and serializes
+  per-profile sweeps across processes without blocking concurrent waiters;
+  `effigy container prune` waits for any active sweep on the profile before
+  running its full pass. A crashed holder keeps its volumes; a gone owner's
+  volumes are removed.
 - **Coming back.** If the same checkout returns before a sweep, it gets a new
   lease ID without a teardown. The next `up` or task apply then recreates its
   containers (the label changed) and keeps the volumes. Inline workspace

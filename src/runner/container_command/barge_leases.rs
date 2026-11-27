@@ -28,6 +28,122 @@ const CONTAINER_PRUNE_SCHEMA: &str = "effigy.container.prune.v1";
 const DEFAULT_LEASE_WAIT_SECS: u64 = 300;
 pub(super) const DEFAULT_LEASE_WAIT_SLICE: Duration = Duration::from_secs(2);
 const LEASE_WAIT_ENV: &str = "EFFIGY_CONTAINER_LEASE_WAIT_SECS";
+const SWEEP_LOCKS_DIR: &str = ".effigy-sweep-locks";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SweepMode {
+    /// Reclaim ended leases only; avoid `running_profiles()` when none are ended
+    /// and never scan `list_containers` for orphans.
+    EndedOnly,
+    /// Reclaim ended leases and scan `list_containers` for orphaned `barge.lease` stacks.
+    Full,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SweepLockMode {
+    TryLock,
+    Blocking,
+}
+
+/// Held advisory file lock serializing sweeps on one `(barge.state_dir(), profile)`.
+struct ProfileSweepLock {
+    _file: std::fs::File,
+}
+
+fn profile_sweep_lock_path(state_dir: &Path, profile: &str) -> PathBuf {
+    state_dir
+        .join(SWEEP_LOCKS_DIR)
+        .join(sanitize_profile_lock_filename(profile))
+}
+
+fn sanitize_profile_lock_filename(profile: &str) -> String {
+    let is_plain_safe = !profile.is_empty()
+        && profile != "."
+        && profile != ".."
+        && !profile.starts_with('.')
+        && profile
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'));
+    if is_plain_safe {
+        return format!("{profile}.lock");
+    }
+    let sanitized: String = profile
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let stem = if sanitized.is_empty() {
+        "profile".to_owned()
+    } else {
+        sanitized
+    };
+    format!("{stem}-{:016x}.lock", fnv1a_64(profile.as_bytes()))
+}
+
+fn fnv1a_64(bytes: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for &byte in bytes {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
+}
+
+fn acquire_profile_sweep_lock(
+    state_dir: &Path,
+    profile: &str,
+    mode: SweepLockMode,
+) -> Result<Option<ProfileSweepLock>, RunnerError> {
+    let lock_path = profile_sweep_lock_path(state_dir, profile);
+    let Some(lock_dir) = lock_path.parent() else {
+        return Err(RunnerError::task_invocation(format!(
+            "invalid sweep lock path `{}`",
+            lock_path.display()
+        )));
+    };
+    std::fs::create_dir_all(lock_dir).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "cannot create sweep lock directory `{}`: {error}",
+            lock_dir.display()
+        ))
+    })?;
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lock_path)
+        .map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "cannot open sweep lock `{}`: {error}",
+                lock_path.display()
+            ))
+        })?;
+    match mode {
+        SweepLockMode::TryLock => match file.try_lock() {
+            Ok(()) => Ok(Some(ProfileSweepLock { _file: file })),
+            Err(std::fs::TryLockError::WouldBlock) => Ok(None),
+            Err(std::fs::TryLockError::Error(error)) => Err(RunnerError::task_invocation(format!(
+                "cannot try-lock sweep lock `{}`: {error}",
+                lock_path.display()
+            ))),
+        },
+        SweepLockMode::Blocking => {
+            file.lock().map_err(|error| {
+                RunnerError::task_invocation(format!(
+                    "cannot lock sweep lock `{}`: {error}",
+                    lock_path.display()
+                ))
+            })?;
+            Ok(Some(ProfileSweepLock { _file: file }))
+        }
+    }
+}
 
 /// Seam for Colima profile discovery, container inventory, and project teardown.
 pub(in crate::runner) trait LeaseRuntime {
@@ -252,10 +368,85 @@ pub(in crate::runner) fn sweep_profile_leases_with(
     runtime: &dyn LeaseRuntime,
     profile: &str,
 ) -> Result<SweepReport, RunnerError> {
+    let report = sweep_profile_with_mode(
+        barge,
+        runtime,
+        profile,
+        SweepMode::Full,
+        SweepLockMode::Blocking,
+    )?
+    .unwrap_or_else(|| SweepReport {
+        barge_managed: barge.is_some(),
+        ..SweepReport::default()
+    });
+    Ok(report)
+}
+
+/// Sweep ended leases on one profile without calling Colima unless at least
+/// one lease on `profile` has already ended. Uses a non-blocking per-profile
+/// sweep lock and skips the slice cleanly if another sweeper holds it.
+#[allow(dead_code)]
+pub(in crate::runner) fn sweep_ended_profile_leases_with(
+    barge: Option<&Barge>,
+    runtime: &dyn LeaseRuntime,
+    profile: &str,
+) -> Result<SweepReport, RunnerError> {
+    let report = sweep_profile_with_mode(
+        barge,
+        runtime,
+        profile,
+        SweepMode::EndedOnly,
+        SweepLockMode::TryLock,
+    )?
+    .unwrap_or_else(|| SweepReport {
+        barge_managed: barge.is_some(),
+        ..SweepReport::default()
+    });
+    Ok(report)
+}
+
+fn has_ended_lease_on_profile(statuses: &[ContainerLeaseStatus], profile: &str) -> bool {
+    statuses
+        .iter()
+        .any(|lease| lease.profile == profile && lease.ended.is_some())
+}
+
+fn sweep_profile_with_mode(
+    barge: Option<&Barge>,
+    runtime: &dyn LeaseRuntime,
+    profile: &str,
+    mode: SweepMode,
+    lock_mode: SweepLockMode,
+) -> Result<Option<SweepReport>, RunnerError> {
     let Some(barge) = barge else {
-        return Ok(SweepReport::default());
+        return Ok(Some(SweepReport::default()));
     };
+
+    if mode == SweepMode::EndedOnly {
+        let initial_statuses = barge.container_status().map_err(barge_error)?;
+        if !has_ended_lease_on_profile(&initial_statuses, profile) {
+            return Ok(Some(SweepReport {
+                barge_managed: true,
+                ..SweepReport::default()
+            }));
+        }
+    }
+
+    let Some(_lock) = acquire_profile_sweep_lock(barge.state_dir(), profile, lock_mode)? else {
+        return Ok(None);
+    };
+
+    // Always re-read Barge status after acquiring the sweep lock so a waiter
+    // entering right after another sweeper finished sees already-returned
+    // leases and skips redundant teardowns.
     let statuses = barge.container_status().map_err(barge_error)?;
+    if mode == SweepMode::EndedOnly && !has_ended_lease_on_profile(&statuses, profile) {
+        return Ok(Some(SweepReport {
+            barge_managed: true,
+            ..SweepReport::default()
+        }));
+    }
+
     let running: BTreeSet<String> = runtime.running_profiles()?.into_iter().collect();
     let mut report = SweepReport {
         barge_managed: true,
@@ -265,7 +456,7 @@ pub(in crate::runner) fn sweep_profile_leases_with(
     if !running.contains(profile) {
         report.stopped_profiles.push(profile.to_owned());
         record_stopped_profile_leases(&statuses, profile, &mut report);
-        return Ok(report);
+        return Ok(Some(report));
     }
 
     let mut known_ids: HashSet<String> = statuses.iter().map(|lease| lease.id.clone()).collect();
@@ -274,11 +465,12 @@ pub(in crate::runner) fn sweep_profile_leases_with(
         barge,
         runtime,
         profile,
+        mode,
         &statuses,
         &mut known_ids,
         &mut report,
     )?;
-    Ok(report)
+    Ok(Some(report))
 }
 
 /// Sweep ended leases and orphaned `barge.lease` containers across all running
@@ -290,28 +482,35 @@ pub(in crate::runner) fn sweep_all_running_profiles_with(
     let Some(barge) = barge else {
         return Ok(SweepReport::default());
     };
-    let statuses = barge.container_status().map_err(barge_error)?;
+    // Fail closed on corrupt Barge state before invoking any runtime discovery.
+    let _initial_statuses = barge.container_status().map_err(barge_error)?;
     let running: BTreeSet<String> = runtime.running_profiles()?.into_iter().collect();
     let mut report = SweepReport {
         barge_managed: true,
         ..SweepReport::default()
     };
-    let mut known_ids: HashSet<String> = statuses.iter().map(|lease| lease.id.clone()).collect();
+    let mut known_ids: HashSet<String> = HashSet::new();
 
     for profile in &running {
+        let _lock =
+            acquire_profile_sweep_lock(barge.state_dir(), profile, SweepLockMode::Blocking)?;
+        let statuses = barge.container_status().map_err(barge_error)?;
+        known_ids.extend(statuses.iter().map(|lease| lease.id.clone()));
         report.profiles_swept.push(profile.clone());
         sweep_running_profile(
             barge,
             runtime,
             profile,
+            SweepMode::Full,
             &statuses,
             &mut known_ids,
             &mut report,
         )?;
     }
 
+    let final_statuses = barge.container_status().map_err(barge_error)?;
     let mut stopped = BTreeSet::new();
-    for lease in &statuses {
+    for lease in &final_statuses {
         if lease.ended.is_some() && !running.contains(&lease.profile) {
             stopped.insert(lease.profile.clone());
             record_stopped_lease(lease, &mut report);
@@ -351,6 +550,7 @@ fn sweep_running_profile(
     barge: &Barge,
     runtime: &dyn LeaseRuntime,
     profile: &str,
+    mode: SweepMode,
     statuses: &[ContainerLeaseStatus],
     known_ids: &mut HashSet<String>,
     report: &mut SweepReport,
@@ -404,6 +604,10 @@ fn sweep_running_profile(
                 });
             }
         }
+    }
+
+    if mode == SweepMode::EndedOnly {
+        return Ok(());
     }
 
     let containers = match runtime.list_containers(profile) {
@@ -628,9 +832,16 @@ pub(in crate::runner) fn acquire_container_lease_with(
     }
 
     let mut announced_wait = false;
+    let mut attempted_full_sweep = false;
     let mut last_sweep_notes = Vec::new();
-    collect_sweep_notes(
-        sweep_profile_leases_with(Some(barge), runtime, &request.profile),
+    record_try_sweep_notes(
+        sweep_profile_with_mode(
+            Some(barge),
+            runtime,
+            &request.profile,
+            SweepMode::EndedOnly,
+            SweepLockMode::TryLock,
+        ),
         &mut last_sweep_notes,
     );
 
@@ -652,26 +863,67 @@ pub(in crate::runner) fn acquire_container_lease_with(
                 max,
                 active,
             } => {
-                if started.elapsed() >= wait_budget {
-                    return Err(lease_pool_full_error(
-                        &profile,
-                        active,
-                        max,
-                        wait_budget,
-                        &last_sweep_notes,
-                    ));
-                }
-                if !announced_wait {
+                let budget_exhausted = started.elapsed() >= wait_budget;
+                if !budget_exhausted && !announced_wait {
                     announced_wait = true;
                     eprintln!(
-                        "[info] waiting up to {}s for a container slot on profile `{profile}` ({active}/{max} in use)",
-                        wait_budget.as_secs()
+                        "{}",
+                        format_lease_wait_notice(Some(barge), &profile, active, max, wait_budget)
                     );
                 }
-                collect_sweep_notes(
-                    sweep_profile_leases_with(Some(barge), runtime, &request.profile),
-                    &mut last_sweep_notes,
+                let mode = if attempted_full_sweep {
+                    SweepMode::EndedOnly
+                } else {
+                    attempted_full_sweep = true;
+                    SweepMode::Full
+                };
+                let sweep_result = sweep_profile_with_mode(
+                    Some(barge),
+                    runtime,
+                    &request.profile,
+                    mode,
+                    SweepLockMode::TryLock,
                 );
+                let reclaimed = sweep_result_reclaimed(&sweep_result);
+                record_try_sweep_notes(sweep_result, &mut last_sweep_notes);
+
+                if !budget_exhausted {
+                    continue;
+                }
+                if reclaimed {
+                    let mut retry = request.clone();
+                    retry.wait = None;
+                    match barge.container_lease(&retry).map_err(barge_error)? {
+                        ContainerLeaseOutcome::Leased(lease) => {
+                            return Ok(LeaseAcquireOutcome::Leased(lease));
+                        }
+                        ContainerLeaseOutcome::NotManaged => {
+                            return Ok(LeaseAcquireOutcome::NotManaged);
+                        }
+                        ContainerLeaseOutcome::Full {
+                            profile,
+                            max,
+                            active,
+                        } => {
+                            return Err(lease_pool_full_error(
+                                Some(barge),
+                                &profile,
+                                active,
+                                max,
+                                wait_budget,
+                                &last_sweep_notes,
+                            ));
+                        }
+                    }
+                }
+                return Err(lease_pool_full_error(
+                    Some(barge),
+                    &profile,
+                    active,
+                    max,
+                    wait_budget,
+                    &last_sweep_notes,
+                ));
             }
         }
     }
@@ -763,6 +1015,22 @@ pub(in crate::runner) fn hold_existing_lease_with(
     })
 }
 
+fn sweep_result_reclaimed(result: &Result<Option<SweepReport>, RunnerError>) -> bool {
+    matches!(result, Ok(Some(report)) if !report.returned_leases.is_empty())
+}
+
+fn record_try_sweep_notes(
+    result: Result<Option<SweepReport>, RunnerError>,
+    last_notes: &mut Vec<String>,
+) {
+    match result {
+        // Contended lock skipped this slice; keep notes from the last sweep that ran.
+        Ok(None) => {}
+        Ok(Some(report)) => collect_sweep_notes(Ok(report), last_notes),
+        Err(error) => collect_sweep_notes(Err(error), last_notes),
+    }
+}
+
 fn collect_sweep_notes(result: Result<SweepReport, RunnerError>, last_notes: &mut Vec<String>) {
     last_notes.clear();
     match result {
@@ -780,7 +1048,80 @@ fn collect_sweep_notes(result: Result<SweepReport, RunnerError>, last_notes: &mu
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WorkerSlotHolder {
+    project: String,
+    owner: String,
+    ended_reason: Option<&'static str>,
+}
+
+fn resolve_worker_slot_holders(barge: &Barge, profile: &str) -> Vec<WorkerSlotHolder> {
+    // Best-effort diagnostics: unreadable Barge state must never mask a Full error.
+    let Ok(statuses) = barge.container_status() else {
+        return Vec::new();
+    };
+    let mut worker_leases: Vec<ContainerLeaseStatus> = statuses
+        .into_iter()
+        .filter(|lease| lease.profile == profile && lease.class == ContainerClass::Worker)
+        .collect();
+    worker_leases.sort_by(|left, right| {
+        left.project
+            .cmp(&right.project)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    worker_leases
+        .into_iter()
+        .map(|lease| WorkerSlotHolder {
+            owner: describe_container_owner(barge, &lease.owner),
+            ended_reason: lease.ended.map(end_reason_label),
+            project: lease.project,
+        })
+        .collect()
+}
+
+fn describe_container_owner(barge: &Barge, owner: &ContainerOwner) -> String {
+    match owner {
+        ContainerOwner::Worktree(worktree_id) => match barge.worktree_lease_by_id(worktree_id) {
+            Ok(lease) => lease.path,
+            Err(_) => format!("worktree:{worktree_id}"),
+        },
+        ContainerOwner::Checkout(path) => path.display().to_string(),
+    }
+}
+
+fn format_holder_label(holder: &WorkerSlotHolder) -> String {
+    match holder.ended_reason {
+        Some(reason) => format!("{} ({}, ended: {reason})", holder.project, holder.owner),
+        None => format!("{} ({})", holder.project, holder.owner),
+    }
+}
+
+fn format_lease_wait_notice(
+    barge: Option<&Barge>,
+    profile: &str,
+    active: u32,
+    max: u32,
+    wait_budget: Duration,
+) -> String {
+    let holders = barge
+        .map(|account| resolve_worker_slot_holders(account, profile))
+        .unwrap_or_default();
+    if holders.is_empty() {
+        return format!(
+            "[info] waiting up to {}s for a container slot on profile `{profile}` ({active}/{max} in use)",
+            wait_budget.as_secs()
+        );
+    }
+    let summary: Vec<String> = holders.iter().map(format_holder_label).collect();
+    format!(
+        "[info] waiting up to {}s for a container slot on profile `{profile}` ({active}/{max} in use: {})",
+        wait_budget.as_secs(),
+        summary.join(", "),
+    )
+}
+
 fn lease_pool_full_error(
+    barge: Option<&Barge>,
     profile: &str,
     active: u32,
     max: u32,
@@ -791,6 +1132,15 @@ fn lease_pool_full_error(
         "container lease pool for profile `{profile}` is full ({active}/{max} active worker slots) after waiting {}s",
         wait_budget.as_secs(),
     );
+    let holders = barge
+        .map(|account| resolve_worker_slot_holders(account, profile))
+        .unwrap_or_default();
+    if !holders.is_empty() {
+        message.push_str("\nactive holders:");
+        for holder in &holders {
+            message.push_str(&format!("\n  - {}", format_holder_label(holder)));
+        }
+    }
     if !sweep_notes.is_empty() {
         message.push_str(&format!(
             "\nsweep failures during wait: {}",
@@ -980,6 +1330,7 @@ mod tests {
     use super::*;
     use barge::{FakeOs, ManualClock};
     use effigy_containers::{FailedResource, OwnedResource, ResourceKind};
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
     struct BargeFixture {
@@ -1026,6 +1377,10 @@ mod tests {
     struct FakeLeaseRuntime {
         running: Mutex<Vec<String>>,
         containers: Mutex<BTreeMap<String, Vec<ContainerRow>>>,
+        running_profiles_calls: AtomicUsize,
+        list_containers_calls: Mutex<Vec<String>>,
+        drop_on_list_containers: Mutex<Option<ContainerLease>>,
+        on_list_containers: Mutex<Option<std::sync::mpsc::SyncSender<()>>>,
         teardown_calls: Mutex<Vec<TeardownCall>>,
         teardown_results: Mutex<BTreeMap<(String, String), Result<RetireOutcome, String>>>,
     }
@@ -1035,9 +1390,27 @@ mod tests {
             Self {
                 running: Mutex::new(running.iter().map(|s| (*s).to_owned()).collect()),
                 containers: Mutex::new(BTreeMap::new()),
+                running_profiles_calls: AtomicUsize::new(0),
+                list_containers_calls: Mutex::new(Vec::new()),
+                drop_on_list_containers: Mutex::new(None),
+                on_list_containers: Mutex::new(None),
                 teardown_calls: Mutex::new(Vec::new()),
                 teardown_results: Mutex::new(BTreeMap::new()),
             }
+        }
+
+        fn drop_lease_on_list_containers(&self, lease: ContainerLease) {
+            *self
+                .drop_on_list_containers
+                .lock()
+                .expect("drop_on_list_containers lock") = Some(lease);
+        }
+
+        fn notify_on_list_containers(&self, tx: std::sync::mpsc::SyncSender<()>) {
+            *self
+                .on_list_containers
+                .lock()
+                .expect("on_list_containers lock") = Some(tx);
         }
 
         fn set_containers(&self, profile: &str, rows: Vec<ContainerRow>) {
@@ -1059,6 +1432,17 @@ mod tests {
                 .insert((profile.to_owned(), project.to_owned()), result);
         }
 
+        fn running_profiles_count(&self) -> usize {
+            self.running_profiles_calls.load(Ordering::SeqCst)
+        }
+
+        fn list_containers_count(&self) -> usize {
+            self.list_containers_calls
+                .lock()
+                .expect("list containers calls lock")
+                .len()
+        }
+
         fn teardown_calls(&self) -> Vec<TeardownCall> {
             self.teardown_calls
                 .lock()
@@ -1069,10 +1453,29 @@ mod tests {
 
     impl LeaseRuntime for FakeLeaseRuntime {
         fn running_profiles(&self) -> Result<Vec<String>, RunnerError> {
+            self.running_profiles_calls.fetch_add(1, Ordering::SeqCst);
             Ok(self.running.lock().expect("running lock").clone())
         }
 
         fn list_containers(&self, profile: &str) -> Result<Vec<ContainerRow>, RunnerError> {
+            self.list_containers_calls
+                .lock()
+                .expect("list containers calls lock")
+                .push(profile.to_owned());
+            let dropped = self
+                .drop_on_list_containers
+                .lock()
+                .expect("drop_on_list_containers lock")
+                .take();
+            drop(dropped);
+            if let Some(tx) = self
+                .on_list_containers
+                .lock()
+                .expect("on_list_containers lock")
+                .take()
+            {
+                let _ = tx.send(());
+            }
             Ok(self
                 .containers
                 .lock()
@@ -1873,5 +2276,707 @@ mod tests {
         assert!(msg.contains("effigy/proj-stuck"), "{msg}");
         assert!(msg.contains("colima nerdctl rm timed out"), "{msg}");
         assert!(msg.contains("effigy container prune"), "{msg}");
+    }
+
+    #[test]
+    fn fast_path_free_slot_makes_zero_colima_calls_when_no_ended_leases() {
+        let fixture = BargeFixture::new();
+        fixture.declare_profiles(&[("effigy", 4)]);
+        let checkout = fixture._temp.path().join("wt-fast");
+        std::fs::create_dir_all(&checkout).expect("mkdir");
+
+        // Occupy one slot with a live active lease (not ended).
+        let active_req = worker_request("effigy", "proj-active", &checkout, true);
+        let _active_lease = match fixture.barge.container_lease(&active_req).expect("lease") {
+            ContainerLeaseOutcome::Leased(lease) => lease,
+            _ => panic!("expected active lease"),
+        };
+
+        let runtime = FakeLeaseRuntime::new(&["effigy"]);
+        let next_req = worker_request("effigy", "proj-fast", &checkout, true);
+        let outcome = acquire_container_lease_with(
+            Some(&fixture.barge),
+            &runtime,
+            &next_req,
+            Duration::from_secs(1),
+            Duration::from_millis(25),
+        )
+        .expect("acquire free slot");
+        assert!(matches!(
+            outcome,
+            LeaseAcquireOutcome::Leased(ref lease) if lease.project() == "proj-fast"
+        ));
+        assert_eq!(runtime.running_profiles_count(), 0);
+        assert_eq!(runtime.list_containers_count(), 0);
+        assert!(runtime.teardown_calls().is_empty());
+    }
+
+    #[test]
+    fn repeated_full_wait_slices_run_at_most_one_orphan_scan_when_no_leases_ended() {
+        let fixture = BargeFixture::new();
+        fixture.declare_profiles(&[("effigy", 1)]);
+        let checkout = fixture._temp.path().join("wt-full-slices");
+        std::fs::create_dir_all(&checkout).expect("mkdir");
+
+        let held_req = worker_request("effigy", "proj-held", &checkout, true);
+        let _held_lease = match fixture.barge.container_lease(&held_req).expect("lease") {
+            ContainerLeaseOutcome::Leased(lease) => lease,
+            _ => panic!("expected held lease"),
+        };
+
+        let runtime = FakeLeaseRuntime::new(&["effigy"]);
+        let second_req = worker_request("effigy", "proj-waiter", &checkout, false);
+        let err = acquire_container_lease_with(
+            Some(&fixture.barge),
+            &runtime,
+            &second_req,
+            Duration::from_millis(95),
+            Duration::from_millis(20),
+        )
+        .expect_err("full pool times out across multiple slices");
+        assert!(err.to_string().contains("1/1"), "{err}");
+        assert_eq!(runtime.running_profiles_count(), 1);
+        assert_eq!(runtime.list_containers_count(), 1);
+        assert!(runtime.teardown_calls().is_empty());
+
+        // Direct ended-only sweep also makes zero Colima calls with no ended leases.
+        let ended_only = sweep_ended_profile_leases_with(Some(&fixture.barge), &runtime, "effigy")
+            .expect("ended-only sweep");
+        assert!(ended_only.barge_managed);
+        assert_eq!(runtime.running_profiles_count(), 1);
+        assert_eq!(runtime.list_containers_count(), 1);
+    }
+
+    #[test]
+    fn newly_ended_lease_mid_wait_is_detected_torn_down_and_reclaimed_without_rescan() {
+        let fixture = BargeFixture::new();
+        fixture.declare_profiles(&[("effigy", 1)]);
+        let checkout = fixture._temp.path().join("wt-mid-wait");
+        std::fs::create_dir_all(&checkout).expect("mkdir");
+
+        let first_req = worker_request("effigy", "proj-first", &checkout, true);
+        let first_lease = match fixture.barge.container_lease(&first_req).expect("lease") {
+            ContainerLeaseOutcome::Leased(lease) => lease,
+            _ => panic!("expected first lease"),
+        };
+
+        let runtime = FakeLeaseRuntime::new(&["effigy"]);
+        runtime.set_teardown_result(
+            "effigy",
+            "proj-first",
+            Ok(ok_outcome("effigy", "proj-first-app-1")),
+        );
+        // Release the held lease only after the first Full slice's orphan scan runs,
+        // so the second (EndedOnly) slice observes the newly ended lease deterministically.
+        runtime.drop_lease_on_list_containers(first_lease);
+        let second_req = worker_request("effigy", "proj-second", &checkout, false);
+
+        let acquired = acquire_container_lease_with(
+            Some(&fixture.barge),
+            &runtime,
+            &second_req,
+            Duration::from_secs(2),
+            Duration::from_millis(25),
+        )
+        .expect("wait loop reclaims newly ended lease");
+        assert!(matches!(
+            acquired,
+            LeaseAcquireOutcome::Leased(ref lease) if lease.project() == "proj-second"
+        ));
+
+        // First Full slice ran 1 orphan scan; subsequent ended-only slice tore down
+        // the newly ended lease without running another list_containers scan.
+        assert_eq!(runtime.list_containers_count(), 1);
+        assert_eq!(runtime.running_profiles_count(), 2);
+        let teardowns = runtime.teardown_calls();
+        assert_eq!(teardowns.len(), 1);
+        assert_eq!(teardowns[0].profile, "effigy");
+        assert_eq!(teardowns[0].project, "proj-first");
+        assert!(!teardowns[0].remove_volumes);
+    }
+
+    #[test]
+    fn contended_sweep_lock_causes_acquire_to_skip_sweeps_without_blocking_or_calling_colima() {
+        let fixture = BargeFixture::new();
+        fixture.declare_profiles(&[("effigy", 2)]);
+        let checkout = fixture._temp.path().join("wt-contended");
+        std::fs::create_dir_all(&checkout).expect("mkdir");
+
+        // Create an ended lease on `effigy` so EndedOnly wants to sweep.
+        let ended_req = worker_request("effigy", "proj-ended", &checkout, true);
+        let ended_lease = match fixture.barge.container_lease(&ended_req).expect("lease") {
+            ContainerLeaseOutcome::Leased(lease) => lease,
+            _ => panic!("expected ended lease"),
+        };
+        drop(ended_lease);
+
+        // Hold the profile sweep lock externally.
+        let held_lock =
+            acquire_profile_sweep_lock(&fixture.state_dir, "effigy", SweepLockMode::Blocking)
+                .expect("acquire external sweep lock")
+                .expect("lock held");
+
+        // 1. With a free slot available, acquire skips the contended pre-loop sweep
+        // and still acquires its slot with 0 Colima calls.
+        let runtime = FakeLeaseRuntime::new(&["effigy"]);
+        let free_req = worker_request("effigy", "proj-free", &checkout, true);
+        let acquired = acquire_container_lease_with(
+            Some(&fixture.barge),
+            &runtime,
+            &free_req,
+            Duration::from_millis(40),
+            Duration::from_millis(15),
+        )
+        .expect("contended sweep lock does not block or error");
+        assert!(matches!(
+            acquired,
+            LeaseAcquireOutcome::Leased(ref lease) if lease.project() == "proj-free"
+        ));
+        assert_eq!(runtime.running_profiles_count(), 0);
+        assert_eq!(runtime.list_containers_count(), 0);
+        assert!(runtime.teardown_calls().is_empty());
+
+        // 2. Now the pool is full (2/2: proj-ended + proj-free); wait loop also skips
+        // both Full and EndedOnly sweeps while the lock is held, with 0 Colima calls.
+        let full_req = worker_request("effigy", "proj-blocked", &checkout, false);
+        let err = acquire_container_lease_with(
+            Some(&fixture.barge),
+            &runtime,
+            &full_req,
+            Duration::from_millis(45),
+            Duration::from_millis(15),
+        )
+        .expect_err("full pool times out cleanly while sweep lock is held");
+        assert!(err.to_string().contains("2/2"), "{err}");
+        assert_eq!(runtime.running_profiles_count(), 0);
+        assert_eq!(runtime.list_containers_count(), 0);
+        assert!(runtime.teardown_calls().is_empty());
+
+        // Verify Barge itself ignores `.effigy-sweep-locks` cleanly.
+        assert_eq!(
+            fixture.barge.container_status().expect("status").len(),
+            2,
+            "Barge container_status must ignore .effigy-sweep-locks"
+        );
+        drop(held_lock);
+    }
+
+    #[test]
+    fn prune_waits_for_held_sweep_lock_and_rereads_status_before_full_sweep() {
+        let fixture = BargeFixture::new();
+        fixture.declare_profiles(&[("effigy", 4)]);
+        let checkout = fixture._temp.path().join("wt-prune-lock");
+        std::fs::create_dir_all(&checkout).expect("mkdir");
+
+        // Lease 1: will be returned by the active lock holder before releasing the lock.
+        let already_handled_req = worker_request("effigy", "proj-already-handled", &checkout, true);
+        let already_handled_lease = match fixture
+            .barge
+            .container_lease(&already_handled_req)
+            .expect("lease 1")
+        {
+            ContainerLeaseOutcome::Leased(lease) => lease,
+            _ => panic!("expected lease 1"),
+        };
+        let already_handled_id = already_handled_lease.id().to_owned();
+        drop(already_handled_lease);
+
+        // Lease 2: remains ended when prune acquires the lock.
+        let still_ended_req = worker_request("effigy", "proj-still-ended", &checkout, true);
+        let still_ended_lease = match fixture
+            .barge
+            .container_lease(&still_ended_req)
+            .expect("lease 2")
+        {
+            ContainerLeaseOutcome::Leased(lease) => lease,
+            _ => panic!("expected lease 2"),
+        };
+        drop(still_ended_lease);
+
+        let runtime = FakeLeaseRuntime::new(&["effigy"]);
+        runtime.set_teardown_result(
+            "effigy",
+            "proj-still-ended",
+            Ok(ok_outcome("effigy", "proj-still-ended-app-1")),
+        );
+        runtime.set_containers(
+            "effigy",
+            vec![ContainerRow {
+                name: "orphan-app-1".to_owned(),
+                project: Some("orphan-proj".to_owned()),
+                effigy_project: Some("orphan-proj".to_owned()),
+                checkout: Some(checkout.display().to_string()),
+                repo_root: None,
+                scope: None,
+                managed: true,
+                barge_lease: Some("orphan-lease-id".to_owned()),
+            }],
+        );
+        runtime.set_teardown_result(
+            "effigy",
+            "orphan-proj",
+            Ok(ok_outcome("effigy", "orphan-app-1")),
+        );
+
+        let held_lock =
+            acquire_profile_sweep_lock(&fixture.state_dir, "effigy", SweepLockMode::Blocking)
+                .expect("acquire external sweep lock")
+                .expect("lock held");
+
+        let rendered = std::thread::scope(|scope| {
+            let handle = scope.spawn(|| {
+                run_container_prune_command_with(
+                    Some(&fixture.barge),
+                    &runtime,
+                    Some("effigy"),
+                    true,
+                )
+            });
+            std::thread::sleep(Duration::from_millis(50));
+            // Prune must wait on the held lock and not touch Colima yet.
+            assert_eq!(runtime.running_profiles_count(), 0);
+            assert_eq!(runtime.list_containers_count(), 0);
+            assert!(runtime.teardown_calls().is_empty());
+
+            // Simulate the first sweeper finishing lease 1 before releasing the lock.
+            fixture
+                .barge
+                .container_return(&already_handled_id)
+                .expect("return lease 1");
+            drop(held_lock);
+
+            handle
+                .join()
+                .expect("prune thread")
+                .expect("prune json output")
+        });
+
+        let parsed: serde_json::Value = serde_json::from_str(&rendered).expect("valid json");
+        assert_eq!(parsed["ok"], true);
+        assert_eq!(parsed["returned_leases"].as_array().map(Vec::len), Some(1));
+        assert_eq!(parsed["returned_leases"][0]["project"], "proj-still-ended");
+        assert_eq!(
+            parsed["orphans_torn_down"].as_array().map(Vec::len),
+            Some(1)
+        );
+        assert_eq!(parsed["orphans_torn_down"][0]["project"], "orphan-proj");
+
+        let teardowns = runtime.teardown_calls();
+        assert_eq!(teardowns.len(), 2);
+        assert!(
+            !teardowns
+                .iter()
+                .any(|c| c.project == "proj-already-handled"),
+            "prune must re-read container_status after acquiring lock and skip returned leases"
+        );
+        assert_eq!(runtime.running_profiles_count(), 1);
+        assert_eq!(runtime.list_containers_count(), 1);
+    }
+
+    #[test]
+    fn full_error_and_wait_notice_name_worktree_and_checkout_holders_and_handle_status_errors() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let state_dir = temp.path().join("barge-state");
+        let mount = temp.path().join("builds-vol");
+        std::fs::create_dir_all(&mount).expect("mkdir mount");
+        let os = Arc::new(FakeOs::with_volume(
+            &mount,
+            "11111111-1111-1111-1111-111111111111",
+            100 * 1024 * 1024 * 1024,
+        ));
+        let clock = Arc::new(ManualClock::new(1_700_000_000_000));
+        let barge = Barge::open_with(&state_dir, os, clock).expect("open barge");
+
+        barge
+            .register_volume(
+                barge::VolumeRegistration::new("Builds", mount.clone())
+                    .uuid(Some("11111111-1111-1111-1111-111111111111"))
+                    .reserve_bytes(0)
+                    .floor_bytes(0),
+            )
+            .expect("register volume");
+        barge
+            .set_layout(
+                barge::Class::Worktrees,
+                barge::Placement {
+                    volume: "Builds".to_owned(),
+                    path: "worktrees".to_owned(),
+                    absent: barge::Absent::Fail,
+                },
+            )
+            .expect("set layout");
+
+        let origin = temp.path().join("origin");
+        std::fs::create_dir_all(&origin).expect("mkdir origin");
+        let run_git = |args: &[&str]| -> String {
+            let output = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&origin)
+                .args(args)
+                .env("GIT_AUTHOR_NAME", "Test")
+                .env("GIT_AUTHOR_EMAIL", "test@example.invalid")
+                .env("GIT_COMMITTER_NAME", "Test")
+                .env("GIT_COMMITTER_EMAIL", "test@example.invalid")
+                .output()
+                .expect("run git");
+            assert!(output.status.success(), "git failed");
+            String::from_utf8_lossy(&output.stdout).trim().to_owned()
+        };
+        run_git(&["init", "--quiet", "-b", "main"]);
+        std::fs::write(origin.join("README.md"), "ok\n").expect("write readme");
+        run_git(&["add", "-A"]);
+        run_git(&["commit", "--quiet", "-m", "base"]);
+        let base = run_git(&["rev-parse", "HEAD"]);
+        let canonical_origin = std::fs::canonicalize(&origin).expect("canonical origin");
+        let repo_id = canonical_origin.to_string_lossy().to_ascii_lowercase();
+        std::fs::write(
+            state_dir.join("worktree-pools.json"),
+            json!({
+                "schema": barge::worktree::POOLS_SCHEMA,
+                "pools": [{
+                    "repo": repo_id,
+                    "origin": canonical_origin.to_string_lossy(),
+                    "warm": 1,
+                    "max": 2
+                }]
+            })
+            .to_string(),
+        )
+        .expect("write pools");
+        std::fs::write(
+            state_dir.join("container-profiles.json"),
+            json!({ "profiles": [{ "name": "effigy", "max": 3 }] }).to_string(),
+        )
+        .expect("write container-profiles.json");
+
+        let wt_lease = barge
+            .worktree_lease(
+                barge::worktree::LeaseRequest {
+                    repo: canonical_origin.to_string_lossy().into_owned(),
+                    base,
+                    base_name: Some("main".to_owned()),
+                    branch: "task/holder-names".to_owned(),
+                    request: "req-holder-1".to_owned(),
+                    label: None,
+                },
+                Duration::ZERO,
+            )
+            .expect("lease worktree");
+
+        let plain_checkout = temp.path().join("plain-checkout");
+        let retained_checkout = temp.path().join("retained-checkout");
+        let interactive_checkout = temp.path().join("interactive-checkout");
+        let waiter_checkout = temp.path().join("waiter-checkout");
+        for dir in [
+            &plain_checkout,
+            &retained_checkout,
+            &interactive_checkout,
+            &waiter_checkout,
+        ] {
+            std::fs::create_dir_all(dir).expect("mkdir checkout");
+        }
+        let canonical_plain = std::fs::canonicalize(&plain_checkout).expect("canonical plain");
+        let canonical_retained =
+            std::fs::canonicalize(&retained_checkout).expect("canonical retained");
+
+        // 1. Worktree-owned worker lease.
+        let wt_req = ContainerLeaseRequest {
+            profile: "effigy".to_owned(),
+            project: "proj-wt".to_owned(),
+            owner: ContainerOwner::Worktree(wt_lease.lease_id.clone()),
+            class: ContainerClass::Worker,
+            hold: true,
+            wait: None,
+        };
+        let _wt_container_lease = match barge.container_lease(&wt_req).expect("wt container lease")
+        {
+            ContainerLeaseOutcome::Leased(lease) => lease,
+            _ => panic!("expected wt container lease"),
+        };
+
+        // 2. Checkout-owned worker lease.
+        let checkout_req = worker_request("effigy", "proj-checkout", &canonical_plain, true);
+        let _checkout_lease = match barge
+            .container_lease(&checkout_req)
+            .expect("checkout lease")
+        {
+            ContainerLeaseOutcome::Leased(lease) => lease,
+            _ => panic!("expected checkout lease"),
+        };
+
+        // 3. Retained ended worker lease (teardown fails so it remains in the pool).
+        let retained_req = worker_request("effigy", "proj-retained", &canonical_retained, true);
+        let retained_lease = match barge
+            .container_lease(&retained_req)
+            .expect("retained lease")
+        {
+            ContainerLeaseOutcome::Leased(lease) => lease,
+            _ => panic!("expected retained lease"),
+        };
+        drop(retained_lease);
+
+        // 4. Interactive lease (must not appear in worker holder diagnostics).
+        let interactive_req = ContainerLeaseRequest {
+            profile: "effigy".to_owned(),
+            project: "proj-interactive".to_owned(),
+            owner: ContainerOwner::Checkout(
+                std::fs::canonicalize(&interactive_checkout).expect("canonical interactive"),
+            ),
+            class: ContainerClass::Interactive,
+            hold: false,
+            wait: None,
+        };
+        let _interactive_lease = match barge
+            .container_lease(&interactive_req)
+            .expect("interactive lease")
+        {
+            ContainerLeaseOutcome::Leased(lease) => lease,
+            _ => panic!("expected interactive lease"),
+        };
+
+        let runtime = FakeLeaseRuntime::new(&["effigy"]);
+        runtime.set_teardown_result(
+            "effigy",
+            "proj-retained",
+            Err("simulated teardown failure".to_owned()),
+        );
+
+        let wait_notice =
+            format_lease_wait_notice(Some(&barge), "effigy", 3, 3, Duration::from_secs(300));
+        assert!(
+            wait_notice.contains("proj-checkout")
+                && wait_notice.contains(&canonical_plain.display().to_string()),
+            "{wait_notice}"
+        );
+        assert!(
+            wait_notice.contains("proj-retained")
+                && wait_notice.contains(&canonical_retained.display().to_string())
+                && wait_notice.contains("ended: hold_released"),
+            "{wait_notice}"
+        );
+        assert!(
+            wait_notice.contains("proj-wt") && wait_notice.contains(&wt_lease.path),
+            "{wait_notice}"
+        );
+        assert!(
+            !wait_notice.contains("proj-interactive"),
+            "interactive lease must not be listed as worker slot holder: {wait_notice}"
+        );
+
+        let waiter_req = worker_request("effigy", "proj-waiter", &waiter_checkout, false);
+        let err = acquire_container_lease_with(
+            Some(&barge),
+            &runtime,
+            &waiter_req,
+            Duration::from_millis(30),
+            Duration::from_millis(15),
+        )
+        .expect_err("full pool refuses with holder diagnostics");
+        let msg = err.to_string();
+        assert!(msg.contains("active holders:"), "{msg}");
+        let idx_checkout = msg.find("proj-checkout").expect("proj-checkout in error");
+        let idx_retained = msg.find("proj-retained").expect("proj-retained in error");
+        let idx_wt = msg.find("proj-wt").expect("proj-wt in error");
+        assert!(
+            idx_checkout < idx_retained && idx_retained < idx_wt,
+            "holders must be sorted deterministically by project: {msg}"
+        );
+        assert!(
+            msg.contains(&canonical_plain.display().to_string()),
+            "{msg}"
+        );
+        assert!(
+            msg.contains(&canonical_retained.display().to_string()),
+            "{msg}"
+        );
+        assert!(msg.contains("ended: hold_released"), "{msg}");
+        assert!(msg.contains(&wt_lease.path), "{msg}");
+        assert!(!msg.contains("proj-interactive"), "{msg}");
+
+        // Fallback when worktree lease ID cannot be resolved.
+        assert_eq!(
+            describe_container_owner(
+                &barge,
+                &ContainerOwner::Worktree("missing-wt-id".to_owned())
+            ),
+            "worktree:missing-wt-id"
+        );
+
+        // Corrupt container-leases state must never mask the Full error.
+        std::fs::write(
+            state_dir.join("container-leases").join("corrupt.json"),
+            "{not valid json",
+        )
+        .expect("write corrupt lease");
+        let fallback_err =
+            lease_pool_full_error(Some(&barge), "effigy", 3, 3, Duration::from_secs(10), &[]);
+        let fallback_msg = fallback_err.to_string();
+        assert!(
+            fallback_msg.contains("container lease pool for profile `effigy` is full (3/3"),
+            "{fallback_msg}"
+        );
+        assert!(
+            !fallback_msg.contains("active holders:"),
+            "status failure should omit holders rather than masking Full: {fallback_msg}"
+        );
+    }
+
+    #[test]
+    fn short_budget_full_runs_first_full_sweep_before_timing_out() {
+        for budget in [Duration::ZERO, Duration::from_millis(20)] {
+            let fixture = BargeFixture::new();
+            fixture.declare_profiles(&[("effigy", 1)]);
+            let checkout = fixture._temp.path().join("wt-short-budget");
+            std::fs::create_dir_all(&checkout).expect("mkdir");
+
+            let held_req = worker_request("effigy", "proj-held", &checkout, true);
+            let _held_lease = match fixture.barge.container_lease(&held_req).expect("lease") {
+                ContainerLeaseOutcome::Leased(lease) => lease,
+                _ => panic!("expected held lease"),
+            };
+
+            let runtime = FakeLeaseRuntime::new(&["effigy"]);
+            runtime.set_containers(
+                "effigy",
+                vec![ContainerRow {
+                    name: "orphan-app-1".to_owned(),
+                    project: Some("orphan-short-proj".to_owned()),
+                    effigy_project: Some("orphan-short-proj".to_owned()),
+                    checkout: Some(checkout.display().to_string()),
+                    repo_root: None,
+                    scope: None,
+                    managed: true,
+                    barge_lease: Some("stale-orphan-id".to_owned()),
+                }],
+            );
+            runtime.set_teardown_result(
+                "effigy",
+                "orphan-short-proj",
+                Ok(ok_outcome("effigy", "orphan-app-1")),
+            );
+
+            let second_req = worker_request("effigy", "proj-second", &checkout, false);
+            let err = acquire_container_lease_with(
+                Some(&fixture.barge),
+                &runtime,
+                &second_req,
+                budget,
+                Duration::from_millis(100),
+            )
+            .expect_err("short budget still times out when held slot stays occupied");
+            assert!(err.to_string().contains("proj-held"), "{err}");
+            assert_eq!(runtime.running_profiles_count(), 1);
+            assert_eq!(runtime.list_containers_count(), 1);
+            let teardowns = runtime.teardown_calls();
+            assert_eq!(teardowns.len(), 1);
+            assert_eq!(teardowns[0].project, "orphan-short-proj");
+        }
+    }
+
+    #[test]
+    fn short_budget_full_reclaims_lease_that_ends_during_first_wait_slice() {
+        let fixture = BargeFixture::new();
+        fixture.declare_profiles(&[("effigy", 1)]);
+        let checkout = fixture._temp.path().join("wt-short-reclaim");
+        std::fs::create_dir_all(&checkout).expect("mkdir");
+
+        let first_req = worker_request("effigy", "proj-first", &checkout, true);
+        let first_lease = match fixture.barge.container_lease(&first_req).expect("lease") {
+            ContainerLeaseOutcome::Leased(lease) => lease,
+            _ => panic!("expected first lease"),
+        };
+
+        let runtime = FakeLeaseRuntime::new(&["effigy"]);
+        runtime.set_teardown_result(
+            "effigy",
+            "proj-first",
+            Ok(ok_outcome("effigy", "proj-first-app-1")),
+        );
+        let second_req = worker_request("effigy", "proj-second", &checkout, false);
+
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                std::thread::sleep(Duration::from_millis(15));
+                drop(first_lease);
+            });
+            let acquired = acquire_container_lease_with(
+                Some(&fixture.barge),
+                &runtime,
+                &second_req,
+                Duration::from_millis(50),
+                Duration::from_millis(200),
+            )
+            .expect("first Full sweep reclaims lease that ended during the single wait slice");
+            assert!(matches!(
+                acquired,
+                LeaseAcquireOutcome::Leased(ref lease) if lease.project() == "proj-second"
+            ));
+        });
+
+        assert_eq!(runtime.list_containers_count(), 1);
+        let teardowns = runtime.teardown_calls();
+        assert_eq!(teardowns.len(), 1);
+        assert_eq!(teardowns[0].project, "proj-first");
+        assert!(!teardowns[0].remove_volumes);
+    }
+
+    #[test]
+    fn ended_only_sweep_reclaims_lease_ending_during_final_later_wait_slice() {
+        let fixture = BargeFixture::new();
+        fixture.declare_profiles(&[("effigy", 1)]);
+        let checkout = fixture._temp.path().join("wt-final-slice");
+        std::fs::create_dir_all(&checkout).expect("mkdir");
+
+        let first_req = worker_request("effigy", "proj-first", &checkout, true);
+        let first_lease = match fixture.barge.container_lease(&first_req).expect("lease") {
+            ContainerLeaseOutcome::Leased(lease) => lease,
+            _ => panic!("expected first lease"),
+        };
+
+        let runtime = FakeLeaseRuntime::new(&["effigy"]);
+        runtime.set_teardown_result(
+            "effigy",
+            "proj-first",
+            Ok(ok_outcome("effigy", "proj-first-app-1")),
+        );
+        let (list_tx, list_rx) = std::sync::mpsc::sync_channel(1);
+        runtime.notify_on_list_containers(list_tx);
+        let second_req = worker_request("effigy", "proj-second", &checkout, false);
+
+        // Wait budget 600ms with 180ms slices:
+        // - Slice 1 (0..180ms): Full sweep runs (~180ms) and signals `list_tx`.
+        // - Slice 2 (180..360ms): EndedOnly sweep runs (~360ms) while `first_lease` is still held.
+        // - Final slice (360..600ms): `first_lease` drops ~240ms after Slice 1 (~420ms, 180ms
+        //   before the 600ms budget ends), so the final `container_lease` returns Full with
+        //   `started.elapsed() >= wait_budget`. The final EndedOnly sweep must reclaim it and
+        //   retry acquisition.
+        std::thread::scope(|scope| {
+            scope.spawn(move || {
+                list_rx
+                    .recv()
+                    .expect("first Full sweep signals list_containers");
+                std::thread::sleep(Duration::from_millis(240));
+                drop(first_lease);
+            });
+            let acquired = acquire_container_lease_with(
+                Some(&fixture.barge),
+                &runtime,
+                &second_req,
+                Duration::from_millis(600),
+                Duration::from_millis(180),
+            )
+            .expect("final later wait slice reclaims newly ended lease before timing out");
+            assert!(matches!(
+                acquired,
+                LeaseAcquireOutcome::Leased(ref lease) if lease.project() == "proj-second"
+            ));
+        });
+
+        assert_eq!(runtime.list_containers_count(), 1);
+        assert_eq!(runtime.running_profiles_count(), 2);
+        let teardowns = runtime.teardown_calls();
+        assert_eq!(teardowns.len(), 1);
+        assert_eq!(teardowns[0].project, "proj-first");
+        assert!(!teardowns[0].remove_volumes);
     }
 }
