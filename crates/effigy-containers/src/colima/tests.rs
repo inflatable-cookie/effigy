@@ -248,6 +248,7 @@ fn colima_start_command_selects_runtime_and_managed_resources() {
             "--ssh-agent",
             "--memory",
             "32",
+            "--mount-inotify=false",
             "--dns",
             "1.1.1.1",
             "--dns",
@@ -274,6 +275,7 @@ fn colima_start_command_selects_runtime_and_managed_resources() {
             "--ssh-agent",
             "--memory",
             "32",
+            "--mount-inotify=false",
             "--dns",
             "1.1.1.1",
             "--dns",
@@ -947,5 +949,92 @@ fn colima_start_configuration_uses_home_or_root_and_clears_temp_overrides() {
     assert_eq!(
         command.get_current_dir(),
         Some(std::env::temp_dir().as_path())
+    );
+}
+
+#[test]
+fn prepare_managed_colima_profile_sets_mount_inotify_false_and_skips_unmanaged() {
+    let _lock = env_lock();
+    let fixture = tempfile::tempdir().expect("tempdir");
+    let colima_home = fixture.path().join(".colima");
+    let _env = effigy_test_support::env::ScopedEnv::set_many(&[
+        ("COLIMA_HOME", colima_home.as_os_str().to_owned()),
+        (
+            "EFFIGY_INTERNAL_HOST_MEMORY_BYTES",
+            (64u64 * 1024 * 1024 * 1024).to_string().into(),
+        ),
+    ]);
+
+    // Fresh managed profiles write `mountInotify: false`.
+    for profile in ["effigy", "effigy-release"] {
+        prepare_managed_colima_profile_name_with_disk(profile, None)
+            .expect("prepare fresh managed profile");
+        let rendered =
+            fs::read_to_string(colima_home.join(profile).join("colima.yaml")).expect("read config");
+        let parsed = serde_yaml::from_str::<serde_yaml::Value>(&rendered).expect("parse yaml");
+        assert_eq!(
+            parsed
+                .get("mountInotify")
+                .and_then(serde_yaml::Value::as_bool),
+            Some(false),
+            "{profile}: fresh managed config sets mountInotify: false"
+        );
+    }
+
+    // Existing managed config with `mountInotify: true` is rewritten to `false`.
+    let existing_path = colima_home.join("effigy/colima.yaml");
+    fs::write(&existing_path, "memory: 16\nmountInotify: true\n").expect("write existing config");
+    prepare_managed_colima_profile_name_with_disk("effigy", None)
+        .expect("prepare existing managed profile");
+    let rendered = fs::read_to_string(&existing_path).expect("read rewritten config");
+    let parsed = serde_yaml::from_str::<serde_yaml::Value>(&rendered).expect("parse yaml");
+    assert_eq!(
+        parsed
+            .get("mountInotify")
+            .and_then(serde_yaml::Value::as_bool),
+        Some(false),
+        "existing managed config rewrites mountInotify to false"
+    );
+
+    // Unmanaged profiles are never created or modified.
+    let unmanaged_missing = colima_home.join("unmanaged-missing/colima.yaml");
+    prepare_managed_colima_profile_name_with_disk("unmanaged-missing", None)
+        .expect("skip unmanaged missing profile");
+    assert!(
+        !unmanaged_missing.exists(),
+        "unmanaged profile config must not be created"
+    );
+
+    let unmanaged_dir = colima_home.join("unmanaged-existing");
+    fs::create_dir_all(&unmanaged_dir).expect("mkdir unmanaged");
+    let unmanaged_config = unmanaged_dir.join("colima.yaml");
+    let original = "memory: 4\nmountInotify: true\n";
+    fs::write(&unmanaged_config, original).expect("write unmanaged config");
+    prepare_managed_colima_profile_name_with_disk("unmanaged-existing", None)
+        .expect("skip unmanaged existing profile");
+    assert_eq!(
+        fs::read_to_string(&unmanaged_config).expect("read unmanaged config"),
+        original,
+        "unmanaged profile config must remain untouched"
+    );
+}
+
+#[test]
+fn colima_start_command_disables_mount_inotify_only_for_managed_profiles() {
+    let _lock = env_lock();
+    for profile in ["effigy", "effigy-release"] {
+        let cmd = colima_start_command_for_profile_with_disk(profile, None);
+        assert!(
+            cmd.args.contains(&"--mount-inotify=false".to_owned()),
+            "{profile}: missing --mount-inotify=false in {:?}",
+            cmd.args
+        );
+    }
+
+    let unmanaged = colima_start_command_for_profile_with_disk("custom", None);
+    assert!(
+        !unmanaged.args.contains(&"--mount-inotify=false".to_owned()),
+        "unmanaged profile must omit --mount-inotify=false: {:?}",
+        unmanaged.args
     );
 }

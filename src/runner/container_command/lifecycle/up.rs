@@ -22,7 +22,8 @@ use crate::runner::container_command::{
 use crate::runner::environment;
 use effigy_containers::environment::{BackendError, Retention};
 use effigy_containers::exec::{
-    parse_compose_step_event, run_compose_invocation_streaming_with_env_owner, RetainedComposeOwner,
+    parse_compose_step_event, run_compose_invocation_streaming_with_env_owner,
+    ColimaProfileBringupGuard, RetainedComposeOwner,
 };
 use effigy_containers::{
     ContainerAction, ContainerComposeInvocationPlan, EffectiveAttachMode, EffectiveContainerPolicy,
@@ -49,6 +50,7 @@ pub(super) struct ContainerUpPlan {
     pub(super) handover_notes: Vec<String>,
     pub(super) workspace_mount_decisions: Vec<WorkspaceExtraMountDecision>,
     pub(super) up_plan: ContainerComposeInvocationPlan,
+    pub(super) _colima_bringup_guard: ColimaProfileBringupGuard,
 }
 
 /// `retention` is persistent for an explicit `container up` and held for a

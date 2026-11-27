@@ -916,12 +916,20 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
     // one (effigy#316).
     let switch_value = std::env::var(NO_CHANGE_ENV).ok();
     let no_change = no_change_requested(switch_value.as_deref())?;
-    let runtime = if no_change {
-        effigy_containers::exec::verify_runtime_backend_no_change(&policy, repo_root)
+    let (runtime, _colima_bringup_guard) = if no_change {
+        (
+            effigy_containers::exec::verify_runtime_backend_no_change(&policy, repo_root)
+                .map_err(|error| RunnerError::task_invocation(error.to_string()))?,
+            None,
+        )
     } else {
-        effigy_containers::exec::ensure_runtime_backend_running_report(&policy, repo_root)
-    }
-    .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+        let (report, guard) =
+            effigy_containers::exec::ensure_runtime_backend_running_report_for_bringup(
+                &policy, repo_root,
+            )
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+        (report, Some(guard))
+    };
     // Preserve the existing runtime drift guard; this operation grants no
     // authority to change backend, profile or the owned builder's generation.
     let mut deadline = Instant::now() + Duration::from_secs(15);
