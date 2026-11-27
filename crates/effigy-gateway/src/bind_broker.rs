@@ -55,7 +55,8 @@ fn authorize(operator: u32, peer: u32, addresses: [SocketAddr; 2]) -> io::Result
 fn encode(addresses: [SocketAddr; 2]) -> io::Result<[u8; 16]> {
     let mut bytes = [0; 16];
     bytes[..4].copy_from_slice(b"EGB1");
-    for (address, chunk) in addresses.into_iter().zip(bytes[4..].chunks_exact_mut(6)) {
+    let (chunks, _) = bytes[4..].as_chunks_mut::<6>();
+    for (address, chunk) in addresses.into_iter().zip(chunks) {
         let SocketAddr::V4(address) = address else {
             return Err(error("bind broker requires IPv4"));
         };
@@ -69,7 +70,8 @@ fn decode(bytes: [u8; 16]) -> io::Result<[SocketAddr; 2]> {
         return Err(error("unknown bind broker protocol"));
     }
     let mut addresses = [SocketAddr::from(([0; 4], 0)); 2];
-    for (address, chunk) in addresses.iter_mut().zip(bytes[4..].chunks_exact(6)) {
+    let (chunks, _) = bytes[4..].as_chunks::<6>();
+    for (address, chunk) in addresses.iter_mut().zip(chunks) {
         *address = SocketAddr::from((
             [chunk[0], chunk[1], chunk[2], chunk[3]],
             u16::from_be_bytes([chunk[4], chunk[5]]),

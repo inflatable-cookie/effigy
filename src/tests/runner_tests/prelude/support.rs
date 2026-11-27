@@ -1,5 +1,4 @@
 pub(in crate::runner::tests) mod runtime {
-    pub(in crate::runner::tests) use crate::contract_test_support::EnvGuard;
     pub(in crate::runner::tests) use crate::runner::error::RunnerError;
     pub(in crate::runner::tests) use effigy_cli::{DoctorArgs, TaskInvocation, TasksArgs};
     pub(in crate::runner::tests) use effigy_tasks::TaskRuntimeArgs;

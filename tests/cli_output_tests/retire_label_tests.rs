@@ -614,7 +614,7 @@ fn dead_retire_finds_created_builder_on_release_profile_and_keeps_live_and_unlab
         fixture.state_lines("containers"),
         vec![
             format!("live-compose-1|live-compose|{live}||live-scope||||effigy"),
-            format!("foreign-compose-1|dead-compose|||||||effigy"),
+            "foreign-compose-1|dead-compose|||||||effigy".to_owned(),
             format!("effigy-artifact-builder-v1-live||{live}||||||effigy-release|Created"),
         ]
     );
@@ -683,7 +683,7 @@ fn a_volume_carrying_only_its_compose_project_label_is_retired_by_name() {
     assert_eq!(
         fixture.state_lines("volumes"),
         vec![
-            format!("c2raed464-elsewhere|c2raed464-other|||false"),
+            "c2raed464-elsewhere|c2raed464-other|||false".to_owned(),
             format!("efv-51bb06807c269fec|{project}|||false"),
         ]
     );

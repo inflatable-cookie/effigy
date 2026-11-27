@@ -862,10 +862,10 @@ fn private_three_scopes_concurrent_resume_replacement_and_cli_refusals() {
             format!("private-lease-{i}")
         );
     }
-    for i in 0..3 {
+    for (i, stack) in fixture.stacks.iter().enumerate() {
         println!(
             "scope {i} actual backend receipt:\n{}",
-            fs::read_to_string(fixture.stacks[i].root.join("commands.jsonl")).unwrap()
+            fs::read_to_string(stack.root.join("commands.jsonl")).unwrap()
         );
     }
     println!(

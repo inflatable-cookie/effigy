@@ -16,16 +16,13 @@ pub(super) fn can_prepare_shutdown(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<bool, EffigyRuntimeError> {
-    if policy.render.is_some()
+    let uninitialized_runtime_scope = policy.render.is_some()
         && effigy_core::worktree_scope::is_runtime_scoped(repo_root)
             .map_err(|e| EffigyRuntimeError::task_invocation(e.to_string()))?
         && effigy_core::worktree_scope::load(repo_root)
             .map_err(|e| EffigyRuntimeError::task_invocation(e.to_string()))?
-            .is_none()
-    {
-        return Ok(false);
-    }
-    Ok(true)
+            .is_none();
+    Ok(!uninitialized_runtime_scope)
 }
 
 /// Publishes the render a shutdown runs against. Called before the

@@ -358,9 +358,8 @@ pub fn render_release_pipeline_plan_text(plan: &ReleasePipelinePlan) -> String {
         },
         format!("  Repository: {}", plan.repo_root.display()),
         "  Mode: plan-only (non-destructive; no Run starts, no file is written)".to_owned(),
-        format!(
-            "  Stages: validate -> pre-gates -> prepare -> certify -> publish -> verify -> closeout"
-        ),
+        "  Stages: validate -> pre-gates -> prepare -> certify -> publish -> verify -> closeout"
+            .to_owned(),
         if plan.changelog_in_use {
             format!("  Changelog: {}", plan.changelog_path.display())
         } else {

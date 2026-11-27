@@ -208,8 +208,10 @@ pub fn render_snapshot_frame(snapshot: FrameSnapshot<'_>) -> Result<String, Stri
         .map(|name| (name.clone(), ProcessStartupState::Waiting))
         .collect::<HashMap<_, _>>();
     let active_entry_wait = state.entry_waits.get(snapshot.active);
-    let mut terminal = Terminal::new(TestBackend::new(snapshot.width, snapshot.height))
-        .map_err(|error| error.to_string())?;
+    let mut terminal = match Terminal::new(TestBackend::new(snapshot.width, snapshot.height)) {
+        Ok(terminal) => terminal,
+        Err(never) => match never {},
+    };
     let logs = snapshot.logs;
     terminal
         .draw(|frame| {
@@ -246,7 +248,7 @@ pub fn render_snapshot_frame(snapshot: FrameSnapshot<'_>) -> Result<String, Stri
                 },
             )
         })
-        .map_err(|error| error.to_string())?;
+        .unwrap_or_else(|never| match never {});
     let buffer = terminal.backend().buffer();
     let mut text = String::new();
     for y in 0..buffer.area.height {

@@ -53,7 +53,11 @@ fn probe_http_status_policy_is_explicit_and_bounded() {
         (401, StatusSet::default(), false),
         (404, StatusSet::default(), false),
         (500, StatusSet::default(), false),
-        (401, StatusSet::new(vec![401..=401]).unwrap(), true),
+        (
+            401,
+            StatusSet::new(std::iter::once(401..=401).collect()).unwrap(),
+            true,
+        ),
     ] {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
@@ -79,7 +83,7 @@ fn probe_http_status_policy_is_explicit_and_bounded() {
         );
         peer.join().unwrap();
     }
-    assert!(StatusSet::new(vec![99..=299]).is_err());
+    assert!(StatusSet::new(std::iter::once(99..=299).collect()).is_err());
     assert!(StatusSet::new(vec![]).is_err());
 }
 #[test]

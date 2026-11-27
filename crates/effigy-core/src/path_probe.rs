@@ -14,17 +14,15 @@ fn command_available_in_path_with(command: &str, raw_paths: Option<OsString>) ->
 
 fn command_available_in_dir(command: &str, dir: &Path) -> bool {
     let candidate = dir.join(command);
-    if candidate.is_file() {
-        return true;
-    }
     #[cfg(windows)]
     {
         let exe = dir.join(format!("{command}.exe"));
-        if exe.is_file() {
-            return true;
-        }
+        candidate.is_file() || exe.is_file()
     }
-    false
+    #[cfg(not(windows))]
+    {
+        candidate.is_file()
+    }
 }
 
 #[cfg(test)]

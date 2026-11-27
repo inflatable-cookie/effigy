@@ -1,7 +1,6 @@
 use std::path::{Path, PathBuf};
 
 use effigy_cli::{DocsBlockRequirement, DocsSubcommand};
-use effigy_rhai::surface::*;
 use serde_json::Value;
 
 use super::*;
