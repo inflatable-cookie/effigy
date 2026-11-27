@@ -92,7 +92,7 @@ workspace = true
 fault-injection = ["effigy-kernel/fault-injection"]
 
 [dependencies]
-barge = { git = "https://github.com/inflatable-cookie/barge", rev = "f296f82ce9c02a98b5644fc5e24520c82b59d9dc" }
+barge = { git = "https://github.com/inflatable-cookie/barge", rev = "e11833629fa3fc63c27a25dde7f0326d55754ba3" }
 base64 = "0.22"
 effigy-bootstrap = { path = "crates/effigy-bootstrap" }
 effigy-builtin = { path = "crates/effigy-builtin" }

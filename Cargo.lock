@@ -259,7 +259,7 @@ dependencies = [
 [[package]]
 name = "barge"
 version = "0.1.0"
-source = "git+https://github.com/inflatable-cookie/barge?rev=f296f82ce9c02a98b5644fc5e24520c82b59d9dc#f296f82ce9c02a98b5644fc5e24520c82b59d9dc"
+source = "git+https://github.com/inflatable-cookie/barge?rev=e11833629fa3fc63c27a25dde7f0326d55754ba3#e11833629fa3fc63c27a25dde7f0326d55754ba3"
 dependencies = [
  "libc",
  "serde",
