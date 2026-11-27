@@ -2328,9 +2328,17 @@ colima restart <profile>
 effigy container up
 ```
 
-Effigy pre-empts this: `container up` warns when the forwarded socket is stale
-before attempting the mount, and `effigy doctor` flags it for any running colima
-profile — both naming the `colima restart <profile>` remediation.
+Effigy pre-empts this: `container up` first repairs the forwarded socket inside
+the running VM when a live agent socket exists in the guest, and logs an
+`[info]` line. The VM is not restarted. Only when no live agent exists does it
+warn, naming the `colima restart <profile>` remediation to interactive callers.
+Automated callers are told to report the profile to the host operator instead.
+`effigy doctor` still flags a stale socket for any running colima profile.
+
+A cold start can also exit `DEGRADED` when the forwarded-socket boot hook runs
+before `/run/host-services` exists. `container up` then repairs the link and
+starts `containerd` and BuildKit inside the VM, without stopping it. If that
+fails, the refusal names the profile and the next step.
 
 ## Troubleshooting: services stay Exited after Colima restart
 
