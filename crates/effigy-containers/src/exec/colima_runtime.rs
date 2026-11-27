@@ -117,6 +117,30 @@ struct ColimaProfileEntry {
     disk: u64,
 }
 
+/// Runtime and VM state for a named Colima profile.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ColimaProfileInfo {
+    /// Colima's profile status, compared case-insensitively with `running`.
+    pub status: String,
+    /// Explicit Colima runtime, or `None` for older/mocked output.
+    pub runtime: Option<String>,
+}
+
+impl ColimaProfileInfo {
+    /// Whether this profile can be used through Colima's nerdctl interface.
+    pub fn supports_nerdctl(&self) -> bool {
+        self.runtime
+            .as_deref()
+            .map(runtime_supports_nerdctl)
+            .unwrap_or(true)
+    }
+
+    /// Whether Colima reports the profile's VM as running.
+    pub fn is_running(&self) -> bool {
+        self.status.eq_ignore_ascii_case("running")
+    }
+}
+
 /// Bound for the `container up` prune of leaked nerdctl health-check pid
 /// files. A profile holding the leak needs a few seconds to walk and delete
 /// its files; a clean profile walks a handful.
@@ -890,8 +914,31 @@ pub fn running_colima_profiles(repo_root: &Path) -> Result<Vec<String>, Containe
     Ok(running_nerdctl_profile_names(profiles))
 }
 
+/// Read the runtime and state for a named Colima profile, including profiles
+/// that cannot be used with nerdctl.
+///
+/// # Errors
+///
+/// Returns an error when Colima cannot list or parse its profiles.
+pub fn colima_profile_info(
+    repo_root: &Path,
+    profile: &str,
+) -> Result<Option<ColimaProfileInfo>, ContainerExecError> {
+    Ok(list_colima_profiles(repo_root)?
+        .into_iter()
+        .find(|entry| entry.name == profile)
+        .map(|entry| ColimaProfileInfo {
+            status: entry.status,
+            runtime: (!entry.runtime.is_empty()).then_some(entry.runtime),
+        }))
+}
+
 fn is_nerdctl_compatible_profile(entry: &ColimaProfileEntry) -> bool {
-    entry.runtime.is_empty() || entry.runtime.eq_ignore_ascii_case("containerd")
+    runtime_supports_nerdctl(&entry.runtime)
+}
+
+fn runtime_supports_nerdctl(runtime: &str) -> bool {
+    runtime.is_empty() || runtime.eq_ignore_ascii_case("containerd")
 }
 
 fn running_nerdctl_profile_names(profiles: Vec<ColimaProfileEntry>) -> Vec<String> {

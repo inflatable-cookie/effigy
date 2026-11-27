@@ -130,14 +130,52 @@ pub(in crate::runner) fn teardown_project_on_profile(
 /// A profile that is not running publishes nothing and cannot be read without
 /// starting it, which a project teardown never does.
 fn require_running_profile(cwd: &Path, profile: &str) -> Result<(), RunnerError> {
-    let running =
-        effigy_containers::exec::running_colima_profiles(cwd).map_err(RunnerError::from)?;
-    if running.iter().any(|name| name == profile) {
-        return Ok(());
+    let info =
+        effigy_containers::exec::colima_profile_info(cwd, profile).map_err(RunnerError::from)?;
+    validate_running_profile(profile, info.as_ref())
+}
+
+fn validate_running_profile(
+    profile: &str,
+    info: Option<&effigy_containers::exec::ColimaProfileInfo>,
+) -> Result<(), RunnerError> {
+    if let Some(info) = info {
+        if let Some(runtime) = info.runtime.as_deref() {
+            if !info.supports_nerdctl() {
+                return Err(RunnerError::task_invocation(format!(
+                    "Colima profile `{profile}` uses the `{runtime}` runtime; this operation requires a containerd profile"
+                )));
+            }
+        }
+        if info.is_running() {
+            return Ok(());
+        }
     }
+
     Err(RunnerError::task_invocation(format!(
         "Colima profile `{profile}` is not running, so its containers cannot be read without starting it; start the profile and retry"
     )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn down_names_non_containerd_runtime_for_explicit_profile() {
+        let info = effigy_containers::exec::ColimaProfileInfo {
+            status: "Running".to_owned(),
+            runtime: Some("docker".to_owned()),
+        };
+
+        let error = validate_running_profile("default", Some(&info))
+            .expect_err("Docker profiles cannot be read through nerdctl");
+
+        assert!(error
+            .to_string()
+            .contains("profile `default` uses the `docker` runtime"));
+        assert!(error.to_string().contains("requires a containerd profile"));
+    }
 }
 
 pub(in crate::runner::container_command) fn run_container_down_command(

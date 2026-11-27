@@ -38,14 +38,14 @@ pub use colima_cache_drop::{
 };
 pub use colima_runtime::{
     colima_advice_mode, colima_is_running, colima_is_running_with_deadline,
-    colima_profile_force_stop_advice, colima_profile_recovery_advice, colima_profile_warnings,
-    ensure_colima_running, ensure_colima_running_report, ensure_runtime_backend_running,
-    ensure_runtime_backend_running_report, observe_runtime_backend, recover_colima_runtime,
-    recover_colima_runtime_with_progress, reset_colima_runtime, reset_colima_runtime_with_progress,
-    run_runtime_command_capture_for_policy_with_timeout, running_colima_profiles,
-    runtime_backend_is_running, runtime_backend_is_running_with_deadline, selected_backend_label,
-    verify_runtime_backend_no_change, ColimaAdviceMode, ColimaEnsureReport, ColimaRecoveryPhase,
-    ColimaRecoveryReport, RuntimeObservation,
+    colima_profile_force_stop_advice, colima_profile_info, colima_profile_recovery_advice,
+    colima_profile_warnings, ensure_colima_running, ensure_colima_running_report,
+    ensure_runtime_backend_running, ensure_runtime_backend_running_report, observe_runtime_backend,
+    recover_colima_runtime, recover_colima_runtime_with_progress, reset_colima_runtime,
+    reset_colima_runtime_with_progress, run_runtime_command_capture_for_policy_with_timeout,
+    running_colima_profiles, runtime_backend_is_running, runtime_backend_is_running_with_deadline,
+    selected_backend_label, verify_runtime_backend_no_change, ColimaAdviceMode, ColimaEnsureReport,
+    ColimaProfileInfo, ColimaRecoveryPhase, ColimaRecoveryReport, RuntimeObservation,
 };
 pub use compose_progress::{
     parse_compose_step_event, service_from_container_name, ComposeStepEvent,
