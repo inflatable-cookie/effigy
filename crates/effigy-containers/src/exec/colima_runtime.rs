@@ -633,7 +633,10 @@ fn ensure_running_managed_profile_ready_inner(
 /// profile lifecycle lock, and zero containers are active on that profile.
 /// Automated callers, concurrent bring-ups, and profiles with running containers
 /// (or unreadable container lists) defer migration and leave `colima.yaml` and
-/// the VM untouched.
+/// the VM untouched. The per-profile `flock` serializes cooperating Effigy
+/// callers across `ps -q` and `colima stop`; Colima has no atomic stop-if-idle
+/// primitive, so non-cooperating external `colima nerdctl` or pre-upgrade
+/// Effigy invocations in that brief window are an accepted limitation.
 fn maybe_migrate_running_profile_mount_inotify(
     policy: &EffectiveContainerPolicy,
     repo_root: &Path,

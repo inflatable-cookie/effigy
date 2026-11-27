@@ -1046,10 +1046,14 @@ Effigy's managed Colima profiles (`effigy`, `effigy-release`) default to
 when an already-running managed profile still has `mountInotify: true` and zero
 running containers, Effigy migrates it automatically with a clean restart before
 bring-up; it never interrupts running containers and never restarts a running
-profile from non-interactive or CI callers. If a running profile still has
-`mountInotify: true` (for example while containers are active or on a
-non-interactive host), both relays run and `doctor` warns until it switches to
-`mountInotify: false` on the next idle start or planned restart.
+profile from non-interactive or CI callers. Serialization via a per-profile
+`flock` coordinates cooperating Effigy callers across admission and bring-up
+(Colima has no atomic stop-if-idle flag, so non-cooperating direct
+`colima nerdctl` or pre-upgrade Effigy invocations during that brief stop window
+are an accepted limitation). If a running profile still has `mountInotify: true`
+(for example while containers are active or on a non-interactive host), both
+relays run and `doctor` warns until it switches to `mountInotify: false` on the
+next idle start or planned restart.
 For the machine-readable status shape, see [JSON payload examples](026-json-payload-examples.md#container-status-effigycontainerstatusv1).
 
 ## External Host Mounts

@@ -542,7 +542,12 @@ watcher, and it writes `<container>.json` beside it.
   still has `mountInotify: true` and 0 running containers, Effigy migrates it
   automatically with a clean stop and restart before bring-up; it never
   interrupts running containers and never restarts a running profile from
-  non-interactive or CI callers.
+  non-interactive or CI callers. A per-profile advisory `flock` serializes the
+  idle `ps -q` check and `colima stop` against concurrent cooperating Effigy
+  admissions and bring-ups; Colima offers no atomic stop-if-idle primitive, so
+  non-cooperating external invocations (such as direct `colima nerdctl` or
+  pre-upgrade Effigy processes) during that brief window are an accepted
+  limitation.
 
 ### Relay architecture and loop prevention
 
