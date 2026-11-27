@@ -489,19 +489,6 @@ case "$verb" in
     command -v gh >/dev/null 2>&1 || fail "gh is required to dispatch release-binaries.yml"
     poll_interval=${EFFIGY_RELEASE_POLL_INTERVAL:-3}
 
-    previous_runs=$(gh run list --workflow release-binaries.yml --event workflow_dispatch --limit 20 --json databaseId) \
-      || fail "failed to inspect existing release-binaries.yml runs before dispatching $tag"
-    [ -n "$previous_runs" ] \
-      || fail "pre-dispatch release-binaries.yml run inventory was empty"
-    previous_id=$(printf '%s\n' "$previous_runs" | jq -er '
-      if type != "array" then error("expected array") else . end
-      | if all(((.databaseId // null) | (type == "number" or (type == "string" and test("^[0-9]+$"))))) then . else error("invalid databaseId") end
-      | [.[].databaseId | tonumber] | max // 0
-    ') || fail "pre-dispatch release-binaries.yml run inventory returned invalid JSON"
-    case "$previous_id" in
-      ''|*[!0-9]*) fail "pre-dispatch release-binaries.yml run inventory returned non-numeric run ID: $previous_id" ;;
-    esac
-
     dispatch_output=$(gh workflow run release-binaries.yml -f "tag=$tag") \
       || fail "dispatching release-binaries.yml for $tag failed"
     if [ -n "$dispatch_output" ]; then
@@ -510,89 +497,13 @@ case "$verb" in
 
     run_id=""
     run_url=""
-    attributed_by_dispatch=false
-    dispatched_url=$(printf '%s\n' "$dispatch_output" | sed -n 's|.*\(https://[^[:space:]]*/actions/runs/[0-9][0-9]*\).*|\1|p' | head -n 1)
+    dispatched_url=$(printf '%s\n' "$dispatch_output" | sed -n 's|.*\(https*://[^[:space:]]*/actions/runs/[0-9][0-9]*\).*|\1|p' | head -n 1)
     if [ -n "$dispatched_url" ]; then
       run_id=${dispatched_url##*/}
       case "$run_id" in
         ''|*[!0-9]*) run_id="" ;;
-        *)
-          run_url=$dispatched_url
-          attributed_by_dispatch=true
-          ;;
+        *) run_url=$dispatched_url ;;
       esac
-    fi
-
-    filter_post_dispatch_runs() {
-      printf '%s\n' "$1" | jq -ec --arg prev "$previous_id" --arg tag "$tag" '
-        if type != "array" then error("expected array") else . end
-        | [ .[]
-            | select(((.databaseId // null) | (type == "number" or (type == "string" and test("^[0-9]+$")))))
-            | select((.databaseId | tonumber) > ($prev | tonumber))
-            | select(
-                ((.displayTitle // "") == "")
-                or (((.displayTitle // "") | startswith("release: ")) | not)
-                or ((.displayTitle // "") == ("release: " + $tag))
-              )
-          ]
-        | sort_by(.databaseId | tonumber)
-        | reverse
-      '
-    }
-
-    if [ "$attributed_by_dispatch" = false ]; then
-      confirm_polls=2
-      max_discovery=20
-      if [ "$no_wait" = true ]; then
-        confirm_polls=1
-        max_discovery=3
-      fi
-      pending_id=""
-      pending_url=""
-      confirm_count=0
-      attempts=0
-      while [ "$attempts" -lt "$max_discovery" ] && [ -z "$run_id" ]; do
-        attempts=$((attempts + 1))
-        if runs_json=$(gh run list --workflow release-binaries.yml --event workflow_dispatch --limit 20 --json databaseId,displayTitle,url 2>/dev/null) \
-          && [ -n "$runs_json" ] \
-          && candidates_json=$(filter_post_dispatch_runs "$runs_json" 2>/dev/null); then
-          match_count=$(printf '%s\n' "$candidates_json" | jq -r 'length')
-          if [ "$match_count" -gt 1 ]; then
-            candidate_summary=$(printf '%s\n' "$candidates_json" | jq -r '[.[] | "#\(.databaseId)\(if (.url // "") != "" then " (\(.url))" else "" end)"] | join(", ")')
-            fail "multiple release-binaries.yml runs matched $tag after dispatch ($candidate_summary); cannot distinguish concurrent same-tag dispatches"
-          elif [ "$match_count" -eq 1 ]; then
-            seen_id=$(printf '%s\n' "$candidates_json" | jq -r '.[0].databaseId // ""')
-            seen_url=$(printf '%s\n' "$candidates_json" | jq -r '.[0].url // ""')
-            case "$seen_id" in
-              ''|*[!0-9]*)
-                seen_id=""
-                seen_url=""
-                ;;
-            esac
-            if [ -n "$seen_id" ]; then
-              if [ -z "$pending_id" ]; then
-                pending_id=$seen_id
-                pending_url=$seen_url
-                confirm_count=1
-              elif [ "$pending_id" = "$seen_id" ]; then
-                confirm_count=$((confirm_count + 1))
-                if [ -z "$pending_url" ] && [ -n "$seen_url" ]; then
-                  pending_url=$seen_url
-                fi
-              else
-                fail "observed different release-binaries.yml runs (#$pending_id then #$seen_id) for $tag; cannot establish dispatch attribution"
-              fi
-              if [ "$confirm_count" -gt "$confirm_polls" ]; then
-                run_id=$pending_id
-                run_url=$pending_url
-              fi
-            fi
-          fi
-        fi
-        if [ -z "$run_id" ] && [ "$attempts" -lt "$max_discovery" ]; then
-          sleep "$poll_interval"
-        fi
-      done
     fi
 
     if [ "$no_wait" = true ]; then
@@ -606,7 +517,7 @@ case "$verb" in
       exit 0
     fi
 
-    [ -n "$run_id" ] || fail "dispatched release-binaries.yml for $tag, but could not identify its workflow run ID to wait for completion"
+    [ -n "$run_id" ] || fail "gh workflow run release-binaries.yml for $tag did not return a workflow run URL; cannot attribute or watch the dispatched run"
 
     if gh run watch "$run_id" --exit-status; then
       view_json=$(gh run view "$run_id" --json status,conclusion 2>/dev/null || true)
@@ -614,13 +525,13 @@ case "$verb" in
         run_status=$(printf '%s\n' "$view_json" | jq -r '.status // ""' 2>/dev/null || true)
         run_conclusion=$(printf '%s\n' "$view_json" | jq -r '.conclusion // ""' 2>/dev/null || true)
         if [ "$run_status" = "completed" ] && [ -n "$run_conclusion" ] && [ "$run_conclusion" != "success" ]; then
-          fail "release-binaries.yml run #$run_id for $tag concluded $run_conclusion${run_url:+ ($run_url)}"
+          fail "release-binaries.yml run #$run_id for $tag concluded $run_conclusion ($run_url)"
         fi
       fi
     else
       view_json=$(gh run view "$run_id" --json status,conclusion 2>/dev/null || true)
       if [ -z "$view_json" ]; then
-        fail "release-binaries.yml run #$run_id for $tag failed${run_url:+ ($run_url)}"
+        fail "release-binaries.yml run #$run_id for $tag failed ($run_url)"
       fi
       run_status=$(printf '%s\n' "$view_json" | jq -r '.status // ""' 2>/dev/null || true)
       run_conclusion=$(printf '%s\n' "$view_json" | jq -r '.conclusion // ""' 2>/dev/null || true)
@@ -637,38 +548,13 @@ case "$verb" in
         done
       fi
       [ "$run_status" = "completed" ] \
-        || fail "timed out waiting for release-binaries.yml run #$run_id for $tag${run_url:+ ($run_url)}"
+        || fail "timed out waiting for release-binaries.yml run #$run_id for $tag ($run_url)"
       [ "$run_conclusion" = "success" ] \
-        || fail "release-binaries.yml run #$run_id for $tag concluded ${run_conclusion:-non-success}${run_url:+ ($run_url)}"
+        || fail "release-binaries.yml run #$run_id for $tag concluded ${run_conclusion:-non-success} ($run_url)"
     fi
 
-    if [ "$attributed_by_dispatch" = false ]; then
-      post_runs_json=$(gh run list --workflow release-binaries.yml --event workflow_dispatch --limit 20 --json databaseId,displayTitle,url) \
-        || fail "failed to re-verify release-binaries.yml run inventory after watching #$run_id"
-      [ -n "$post_runs_json" ] \
-        || fail "post-watch release-binaries.yml run inventory was empty"
-      post_candidates=$(filter_post_dispatch_runs "$post_runs_json") \
-        || fail "post-watch release-binaries.yml run inventory returned invalid JSON"
-      post_count=$(printf '%s\n' "$post_candidates" | jq -r 'length')
-      if [ "$post_count" -gt 1 ]; then
-        candidate_summary=$(printf '%s\n' "$post_candidates" | jq -r '[.[] | "#\(.databaseId)\(if (.url // "") != "" then " (\(.url))" else "" end)"] | join(", ")')
-        fail "multiple release-binaries.yml runs matched $tag ($candidate_summary); cannot attribute completed run #$run_id solely to this dispatch"
-      fi
-      if [ "$post_count" -eq 1 ]; then
-        post_id=$(printf '%s\n' "$post_candidates" | jq -r '.[0].databaseId // ""')
-        if [ "$post_id" != "$run_id" ]; then
-          fail "post-watch inventory reported run #$post_id instead of watched run #$run_id for $tag"
-        fi
-      fi
-    fi
-
-    if [ -n "$run_url" ]; then
-      ok "release-binaries.yml run #$run_id completed successfully for $tag: $run_url"
-      write_release_output true "workflow:$run_url" "github-release:https://github.com/inflatable-cookie/effigy/releases/tag/$tag"
-    else
-      ok "release-binaries.yml run #$run_id completed successfully for $tag"
-      write_release_output true "workflow:release-binaries.yml" "github-release:https://github.com/inflatable-cookie/effigy/releases/tag/$tag"
-    fi
+    ok "release-binaries.yml run #$run_id completed successfully for $tag: $run_url"
+    write_release_output true "workflow:$run_url" "github-release:https://github.com/inflatable-cookie/effigy/releases/tag/$tag"
     ;;
 
   check-binaries)

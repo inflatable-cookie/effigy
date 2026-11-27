@@ -1611,10 +1611,17 @@ fn publish_binaries_identifies_new_run_and_waits_for_watch_completion() {
     )
     .expect("write release input");
 
-    // 1. Default wait mode: ignores pre-dispatch run 400 and unrelated concurrent
-    //    run 402, polls until run 401 appears, and watches run 401 to completion.
-    fs::write(state_dir.join("delay_lists"), "1").expect("delay_lists");
+    // 1. Default wait mode: `gh workflow run` returns the created run URL, and
+    //    `publish-binaries` watches that exact run ID even when pre-existing
+    //    (#400) and concurrent (#402/#403) runs appear in `gh run list`.
+    fs::write(state_dir.join("pre_list_mode"), "same_tag").expect("pre_list_mode");
+    fs::write(state_dir.join("list_mode"), "concurrent_same_tag").expect("list_mode");
     fs::write(state_dir.join("watch_mode"), "success").expect("watch_mode");
+    fs::write(
+        state_dir.join("dispatch_url"),
+        "https://github.com/inflatable-cookie/effigy/actions/runs/401\n",
+    )
+    .expect("dispatch_url");
     let output_path = workspace.join("release-output-watch.json");
     let output =
         run_publish_binaries_script(repo_root, &bin_dir, &input_path, &output_path, &[], None);
@@ -1642,14 +1649,13 @@ fn publish_binaries_identifies_new_run_and_waits_for_watch_completion() {
         "must not watch old run: {calls}"
     );
     assert!(
-        !calls.contains("watch 402"),
-        "must not watch unrelated tag run: {calls}"
+        !calls.contains("watch 403"),
+        "must not watch concurrent run: {calls}"
     );
 
     // 2. Polling fallback when `gh run watch` drops mid-run before completion.
     fs::remove_file(state_dir.join("calls.log")).expect("clear calls log");
     fs::remove_file(state_dir.join("dispatched_tag")).expect("clear dispatched tag");
-    fs::write(state_dir.join("delay_lists"), "0").expect("delay_lists");
     fs::write(state_dir.join("watch_mode"), "drop_then_pass").expect("watch_mode");
     let fallback_output_path = workspace.join("release-output-fallback.json");
     let fallback = run_publish_binaries_script(
@@ -1672,13 +1678,22 @@ fn publish_binaries_identifies_new_run_and_waits_for_watch_completion() {
         "expected polling fallback to check run view 401: {fallback_calls}"
     );
 
-    // 3. Explicit `--no-wait` and `EFFIGY_RELEASE_NO_WAIT=1` skip `gh run watch`.
-    for (idx, (args, env_val)) in [(vec!["--no-wait"], None), (vec![], Some("1"))]
-        .into_iter()
-        .enumerate()
+    // 3. Explicit `--no-wait` and `EFFIGY_RELEASE_NO_WAIT=1` skip `gh run watch`,
+    //    both with a dispatch URL and when dispatch returns no URL.
+    for (idx, (args, env_val, dispatch_url)) in [
+        (
+            vec!["--no-wait"],
+            None,
+            "https://github.com/inflatable-cookie/effigy/actions/runs/401\n",
+        ),
+        (vec![], Some("1"), ""),
+    ]
+    .into_iter()
+    .enumerate()
     {
         fs::remove_file(state_dir.join("calls.log")).expect("clear calls log");
         fs::remove_file(state_dir.join("dispatched_tag")).expect("clear dispatched tag");
+        fs::write(state_dir.join("dispatch_url"), dispatch_url).expect("dispatch_url");
         let no_wait_output_path = workspace.join(format!("release-output-nowait-{idx}.json"));
         let no_wait = run_publish_binaries_script(
             repo_root,
@@ -1724,8 +1739,12 @@ fn publish_binaries_fails_when_watched_workflow_run_fails_before_verify() {
 
     let state_dir = root.join(".stub-gh");
     install_stub_gh(&home.join("bin"), &state_dir);
-    fs::write(state_dir.join("delay_lists"), "0").expect("delay_lists");
     fs::write(state_dir.join("watch_mode"), "fail").expect("watch_mode");
+    fs::write(
+        state_dir.join("dispatch_url"),
+        "https://github.com/inflatable-cookie/effigy/actions/runs/401\n",
+    )
+    .expect("dispatch_url");
 
     init_git_repo(&root);
     git_commit_all(&root, "fixture");
@@ -1772,9 +1791,9 @@ fn publish_binaries_fails_when_watched_workflow_run_fails_before_verify() {
 }
 
 #[test]
-fn publish_binaries_fails_closed_on_inventory_errors_and_concurrent_same_tag_dispatches() {
+fn publish_binaries_fails_closed_when_dispatch_returns_no_run_url() {
     let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let workspace = temp_workspace("publish-binaries-fail-closed");
+    let workspace = temp_workspace("publish-binaries-no-url");
     let bin_dir = workspace.join("bin");
     let state_dir = workspace.join("state");
     install_stub_gh(&bin_dir, &state_dir);
@@ -1786,193 +1805,39 @@ fn publish_binaries_fails_closed_on_inventory_errors_and_concurrent_same_tag_dis
     )
     .expect("write release input");
 
-    // 1. Pre-dispatch listing failure and malformed JSON must fail closed BEFORE
-    //    dispatching `workflow run` (must not fall back to `previous_id=0` and
-    //    mistake an older run #400 for the new dispatch).
-    for mode in ["fail", "malformed"] {
+    // Reproduces the exact failure mode: `gh workflow run` succeeds without a
+    // run URL while pre-dispatch #400 and competing same-tag #401 exist in
+    // `gh run list` (simulating our own dispatch delayed beyond every listing
+    // poll). Must fail closed without watching #401 or writing `committed: true`.
+    fs::write(state_dir.join("pre_list_mode"), "same_tag").expect("pre_list_mode");
+    fs::write(state_dir.join("list_mode"), "staggered_same_tag").expect("list_mode");
+    fs::write(state_dir.join("stagger_at"), "999").expect("stagger_at");
+    fs::write(state_dir.join("watch_mode"), "success").expect("watch_mode");
+
+    for (label, dispatch_stdout) in [("empty", ""), ("non_url", "dispatched without run url\n")] {
         let _ = fs::remove_file(state_dir.join("calls.log"));
         let _ = fs::remove_file(state_dir.join("dispatched_tag"));
-        fs::write(state_dir.join("pre_list_mode"), mode).expect("pre_list_mode");
-        let output_path = workspace.join(format!("release-output-{mode}.json"));
+        fs::write(state_dir.join("dispatch_url"), dispatch_stdout).expect("dispatch_url");
+        let output_path = workspace.join(format!("release-output-{label}.json"));
         let output =
             run_publish_binaries_script(repo_root, &bin_dir, &input_path, &output_path, &[], None);
         assert!(
             !output.status.success(),
-            "publish-binaries must fail closed on pre-dispatch inventory {mode}"
+            "{label}: publish-binaries must fail closed when dispatch returns no run URL"
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("did not return a workflow run URL"),
+            "{label}: expected missing run URL diagnostic on stderr, got: {stderr}"
         );
         assert!(
             !output_path.exists(),
-            "must not write release output when pre-dispatch inventory {mode}"
+            "{label}: must not write committed output without dispatch attribution"
         );
         let calls = fs::read_to_string(state_dir.join("calls.log")).expect("calls log");
         assert!(
-            !calls.contains("workflow run"),
-            "must not dispatch workflow when pre-dispatch inventory {mode}: {calls}"
-        );
-        assert!(
             !calls.contains("run watch"),
-            "must not watch any run when pre-dispatch inventory {mode}: {calls}"
+            "{label}: must not watch competing run #401 when dispatch returns no URL: {calls}"
         );
     }
-
-    // 2. Prior completed run #400 for the SAME tag `v0.2.5` + delayed new run #401:
-    //    must ignore #400 during discovery polls and wait for #401.
-    fs::remove_file(state_dir.join("calls.log")).expect("clear calls log");
-    fs::write(state_dir.join("pre_list_mode"), "same_tag").expect("pre_list_mode");
-    fs::write(state_dir.join("delay_lists"), "2").expect("delay_lists");
-    fs::write(state_dir.join("list_mode"), "normal").expect("list_mode");
-    fs::write(state_dir.join("watch_mode"), "success").expect("watch_mode");
-    let delayed_output_path = workspace.join("release-output-delayed-same-tag.json");
-    let delayed = run_publish_binaries_script(
-        repo_root,
-        &bin_dir,
-        &input_path,
-        &delayed_output_path,
-        &[],
-        None,
-    );
-    assert!(
-        delayed.status.success(),
-        "delayed same-tag dispatch failed: stdout={}, stderr={}",
-        String::from_utf8_lossy(&delayed.stdout),
-        String::from_utf8_lossy(&delayed.stderr)
-    );
-    let calls = fs::read_to_string(state_dir.join("calls.log")).expect("calls log");
-    assert!(
-        calls.contains("run watch 401 --exit-status"),
-        "expected watch on newly dispatched run 401: {calls}"
-    );
-    assert!(
-        !calls.contains("watch 400"),
-        "must not watch pre-existing same-tag run 400: {calls}"
-    );
-
-    // 3. Concurrent same-tag dispatches (#401 and #403 both for `v0.2.5` after #400):
-    //    must fail closed and refuse to guess which run belongs to this dispatch.
-    fs::remove_file(state_dir.join("calls.log")).expect("clear calls log");
-    fs::remove_file(state_dir.join("dispatched_tag")).expect("clear dispatched tag");
-    fs::write(state_dir.join("delay_lists"), "0").expect("delay_lists");
-    fs::write(state_dir.join("list_mode"), "concurrent_same_tag").expect("list_mode");
-    let concurrent_output_path = workspace.join("release-output-concurrent.json");
-    let concurrent = run_publish_binaries_script(
-        repo_root,
-        &bin_dir,
-        &input_path,
-        &concurrent_output_path,
-        &[],
-        None,
-    );
-    assert!(
-        !concurrent.status.success(),
-        "concurrent same-tag dispatches must fail closed"
-    );
-    let stderr = String::from_utf8_lossy(&concurrent.stderr);
-    assert!(
-        stderr.contains("multiple release-binaries.yml runs matched v0.2.5"),
-        "expected ambiguity diagnostic on stderr, got: {stderr}"
-    );
-    assert!(
-        !concurrent_output_path.exists(),
-        "must not write committed output on ambiguous concurrent dispatches"
-    );
-    let calls = fs::read_to_string(state_dir.join("calls.log")).expect("calls log");
-    assert!(
-        !calls.contains("run watch"),
-        "must not watch ambiguous concurrent dispatches: {calls}"
-    );
-
-    // 4. Staggered visibility during confirmation polls (first post-dispatch
-    //    listing shows only concurrent #401, second poll reveals #403): must
-    //    fail closed without watching #401 or writing `committed: true`.
-    fs::remove_file(state_dir.join("calls.log")).expect("clear calls log");
-    fs::remove_file(state_dir.join("dispatched_tag")).expect("clear dispatched tag");
-    fs::write(state_dir.join("delay_lists"), "0").expect("delay_lists");
-    fs::write(state_dir.join("list_mode"), "staggered_same_tag").expect("list_mode");
-    fs::write(state_dir.join("stagger_at"), "2").expect("stagger_at");
-    let staggered_output_path = workspace.join("release-output-staggered.json");
-    let staggered = run_publish_binaries_script(
-        repo_root,
-        &bin_dir,
-        &input_path,
-        &staggered_output_path,
-        &[],
-        None,
-    );
-    assert!(
-        !staggered.status.success(),
-        "staggered concurrent same-tag dispatch must fail closed"
-    );
-    let stderr = String::from_utf8_lossy(&staggered.stderr);
-    assert!(
-        stderr.contains("multiple release-binaries.yml runs matched v0.2.5"),
-        "expected ambiguity diagnostic on staggered stderr, got: {stderr}"
-    );
-    assert!(
-        !staggered_output_path.exists(),
-        "must not write committed output on staggered concurrent dispatches"
-    );
-    let calls = fs::read_to_string(state_dir.join("calls.log")).expect("calls log");
-    assert!(
-        !calls.contains("run watch"),
-        "must not watch concurrent #401 when staggered #403 appears: {calls}"
-    );
-
-    // 5. Staggered visibility appearing after watch starts (fourth list, during
-    //    post-watch verification): must still fail closed before writing output.
-    fs::remove_file(state_dir.join("calls.log")).expect("clear calls log");
-    fs::remove_file(state_dir.join("dispatched_tag")).expect("clear dispatched tag");
-    fs::write(state_dir.join("stagger_at"), "4").expect("stagger_at");
-    let post_stagger_output_path = workspace.join("release-output-post-stagger.json");
-    let post_stagger = run_publish_binaries_script(
-        repo_root,
-        &bin_dir,
-        &input_path,
-        &post_stagger_output_path,
-        &[],
-        None,
-    );
-    assert!(
-        !post_stagger.status.success(),
-        "post-watch staggered concurrent same-tag dispatch must fail closed"
-    );
-    assert!(
-        !post_stagger_output_path.exists(),
-        "must not write committed output when post-watch inventory shows #403"
-    );
-
-    // 6. Dispatch-specific correlation: when `gh workflow run` returns the
-    //    created run URL directly, concurrent same-tag runs in `gh run list`
-    //    do not prevent watching and attributing the exact dispatched run.
-    fs::remove_file(state_dir.join("calls.log")).expect("clear calls log");
-    fs::remove_file(state_dir.join("dispatched_tag")).expect("clear dispatched tag");
-    fs::write(state_dir.join("list_mode"), "concurrent_same_tag").expect("list_mode");
-    fs::write(
-        state_dir.join("dispatch_url"),
-        "https://github.com/inflatable-cookie/effigy/actions/runs/401\n",
-    )
-    .expect("dispatch_url");
-    let correlated_output_path = workspace.join("release-output-correlated.json");
-    let correlated = run_publish_binaries_script(
-        repo_root,
-        &bin_dir,
-        &input_path,
-        &correlated_output_path,
-        &[],
-        None,
-    );
-    assert!(
-        correlated.status.success(),
-        "dispatch-correlated run failed: stdout={}, stderr={}",
-        String::from_utf8_lossy(&correlated.stdout),
-        String::from_utf8_lossy(&correlated.stderr)
-    );
-    let parsed: Value = serde_json::from_str(
-        &fs::read_to_string(&correlated_output_path).expect("read correlated output"),
-    )
-    .expect("parse correlated output");
-    assert_eq!(parsed["committed"], true);
-    assert_eq!(
-        parsed["destinations"][0],
-        "workflow:https://github.com/inflatable-cookie/effigy/actions/runs/401"
-    );
 }
