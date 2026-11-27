@@ -13,12 +13,13 @@
 #   release:verify:install     verify-install – tagged-source install proof
 #   release:evidence:validate  evidence-validate – release asset evidence
 #   release:evidence:closeout  evidence-closeout – closeout record
-#   release:publish:binaries   publish-binaries – dispatch release-binaries.yml
+#   release:publish:binaries   publish-binaries – dispatch release-binaries.yml and wait
 #   release:check:binaries     check-binaries – idempotency probe for that target
 #   release:verify:binaries    verify-binaries – GitHub Release, Homebrew, install
 #
-# Nothing here publishes a release on its own: `publish-binaries` only
-# dispatches the existing workflow, and the rest read local artifacts or the
+# Nothing here publishes a release on its own: `publish-binaries` dispatches
+# the existing workflow and waits for it to succeed (unless `--no-wait` or
+# `EFFIGY_RELEASE_NO_WAIT=1` is set), and the rest read local artifacts or the
 # published release to check it.
 set -eu
 export LC_ALL=C
@@ -33,7 +34,7 @@ usage:
   scripts/release/checks.sh verify-install [--tag TAG] [--repo-url URL]
   scripts/release/checks.sh evidence-validate --artifacts-dir DIR [--expect-homebrew]
   scripts/release/checks.sh evidence-closeout --tag TAG --artifacts-dir DIR [--output PATH]
-  scripts/release/checks.sh publish-binaries
+  scripts/release/checks.sh publish-binaries [--no-wait]
   scripts/release/checks.sh check-binaries
   scripts/release/checks.sh verify-binaries [--repo-url URL] [--skip-homebrew]
 USAGE
@@ -472,25 +473,88 @@ case "$verb" in
     ;;
 
   publish-binaries)
+    no_wait=false
+    if [ "${EFFIGY_RELEASE_NO_WAIT:-0}" = "1" ]; then
+      no_wait=true
+    fi
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --no-wait) no_wait=true; shift ;;
+        -h|--help) usage; exit 0 ;;
+        *) usage; fail "unknown argument: $1" ;;
+      esac
+    done
     require_release_input
     tag=$(release_tag)
     command -v gh >/dev/null 2>&1 || fail "gh is required to dispatch release-binaries.yml"
-    gh workflow run release-binaries.yml -f "tag=$tag" \
+    poll_interval=${EFFIGY_RELEASE_POLL_INTERVAL:-3}
+
+    dispatch_output=$(gh workflow run release-binaries.yml -f "tag=$tag") \
       || fail "dispatching release-binaries.yml for $tag failed"
-    run_url=""
-    attempts=0
-    while [ "$attempts" -lt 10 ] && [ -z "$run_url" ]; do
-      attempts=$((attempts + 1))
-      run_url=$(gh run list --workflow release-binaries.yml --limit 1 --json url --jq '.[0].url // ""' 2>/dev/null || true)
-      [ -n "$run_url" ] || sleep 3
-    done
-    if [ -n "$run_url" ]; then
-      ok "dispatched release-binaries.yml for $tag: $run_url"
-      write_release_output true "workflow:$run_url" "github-release:https://github.com/inflatable-cookie/effigy/releases/tag/$tag"
-    else
-      ok "dispatched release-binaries.yml for $tag"
-      write_release_output true "workflow:release-binaries.yml" "github-release:https://github.com/inflatable-cookie/effigy/releases/tag/$tag"
+    if [ -n "$dispatch_output" ]; then
+      printf '%s\n' "$dispatch_output"
     fi
+
+    run_id=""
+    run_url=""
+    dispatched_url=$(printf '%s\n' "$dispatch_output" | sed -n 's|.*\(https*://[^[:space:]]*/actions/runs/[0-9][0-9]*\).*|\1|p' | head -n 1)
+    if [ -n "$dispatched_url" ]; then
+      run_id=${dispatched_url##*/}
+      case "$run_id" in
+        ''|*[!0-9]*) run_id="" ;;
+        *) run_url=$dispatched_url ;;
+      esac
+    fi
+
+    if [ "$no_wait" = true ]; then
+      if [ -n "$run_url" ]; then
+        ok "dispatched release-binaries.yml for $tag (--no-wait): $run_url"
+        write_release_output true "workflow:$run_url" "github-release:https://github.com/inflatable-cookie/effigy/releases/tag/$tag"
+      else
+        ok "dispatched release-binaries.yml for $tag (--no-wait)"
+        write_release_output true "workflow:release-binaries.yml" "github-release:https://github.com/inflatable-cookie/effigy/releases/tag/$tag"
+      fi
+      exit 0
+    fi
+
+    [ -n "$run_id" ] || fail "gh workflow run release-binaries.yml for $tag did not return a workflow run URL; cannot attribute or watch the dispatched run"
+
+    if gh run watch "$run_id" --exit-status; then
+      view_json=$(gh run view "$run_id" --json status,conclusion 2>/dev/null || true)
+      if [ -n "$view_json" ]; then
+        run_status=$(printf '%s\n' "$view_json" | jq -r '.status // ""' 2>/dev/null || true)
+        run_conclusion=$(printf '%s\n' "$view_json" | jq -r '.conclusion // ""' 2>/dev/null || true)
+        if [ "$run_status" = "completed" ] && [ -n "$run_conclusion" ] && [ "$run_conclusion" != "success" ]; then
+          fail "release-binaries.yml run #$run_id for $tag concluded $run_conclusion ($run_url)"
+        fi
+      fi
+    else
+      view_json=$(gh run view "$run_id" --json status,conclusion 2>/dev/null || true)
+      if [ -z "$view_json" ]; then
+        fail "release-binaries.yml run #$run_id for $tag failed ($run_url)"
+      fi
+      run_status=$(printf '%s\n' "$view_json" | jq -r '.status // ""' 2>/dev/null || true)
+      run_conclusion=$(printf '%s\n' "$view_json" | jq -r '.conclusion // ""' 2>/dev/null || true)
+      if [ "$run_status" != "completed" ]; then
+        poll_attempts=0
+        max_poll_attempts=${EFFIGY_RELEASE_WAIT_ATTEMPTS:-1200}
+        while [ "$poll_attempts" -lt "$max_poll_attempts" ] && [ "$run_status" != "completed" ]; do
+          poll_attempts=$((poll_attempts + 1))
+          sleep "$poll_interval"
+          view_json=$(gh run view "$run_id" --json status,conclusion 2>/dev/null || true)
+          [ -n "$view_json" ] || continue
+          run_status=$(printf '%s\n' "$view_json" | jq -r '.status // ""' 2>/dev/null || true)
+          run_conclusion=$(printf '%s\n' "$view_json" | jq -r '.conclusion // ""' 2>/dev/null || true)
+        done
+      fi
+      [ "$run_status" = "completed" ] \
+        || fail "timed out waiting for release-binaries.yml run #$run_id for $tag ($run_url)"
+      [ "$run_conclusion" = "success" ] \
+        || fail "release-binaries.yml run #$run_id for $tag concluded ${run_conclusion:-non-success} ($run_url)"
+    fi
+
+    ok "release-binaries.yml run #$run_id completed successfully for $tag: $run_url"
+    write_release_output true "workflow:$run_url" "github-release:https://github.com/inflatable-cookie/effigy/releases/tag/$tag"
     ;;
 
   check-binaries)

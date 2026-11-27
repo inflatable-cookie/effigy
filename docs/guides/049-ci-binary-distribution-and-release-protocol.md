@@ -302,10 +302,12 @@ and resolve the failure before continuing.
    - Use `effigy release run --to certify` to prepare and certify in place,
      publishing nothing.
    - Use `effigy release run` only for the irreversible publish and closeout.
-   - The Run's `binaries` task target dispatches `release-binaries.yml` with
-     the pushed tag; its `verify` task (`release:verify:binaries`) checks the
-     GitHub Release, the Homebrew tap and the tagged-source install after the
-     artifacts exist.
+   - The Run's `binaries` task target (`release:publish:binaries`) dispatches
+     `release-binaries.yml` with the pushed tag, identifies the newly dispatched
+     run, and waits for it to complete (`--no-wait` or
+     `EFFIGY_RELEASE_NO_WAIT=1` for non-blocking manual dispatch); its `verify`
+     task (`release:verify:binaries`) then checks the GitHub Release, the
+     Homebrew tap and the tagged-source install once the workflow has finished.
    - Treat the built-in release previews as the source of truth for version
      selection:
      - `effigy release status --check-gates`

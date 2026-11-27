@@ -128,18 +128,21 @@ place.
 2. `effigy release run` continues the Run from its `certify` checkpoint and
    stops at the `publish` approval checkpoint. `effigy release approve <run>`
    records the approval and continues: `publish` pushes the annotated
-   `vX.Y.Z` tag and dispatches `release-binaries.yml` through the `binaries`
-   target (`effigy release:publish:binaries` → `gh workflow run`), `verify` runs
-   `release:verify:binaries` and records the verification result, and `closeout`
-   pushes the release commit. Use it only after the operator explicitly
-   authorizes the release. An interrupted Run continues with
-   `effigy release resume <run>`; `effigy release receipt <run>` prints what it
-   recorded.
-3. Watch the dispatched `release-binaries.yml` run. A pushed tag alone does not
-   publish the binaries; the Run records the dispatch as the `binaries`
-   destination, and verification reports the GitHub Release and Homebrew
-   results. If the workflow fails, the release is published but unverified: fix
-   forward with a PATCH, never by re-tagging.
+   `vX.Y.Z` tag, dispatches `release-binaries.yml` through the `binaries`
+   target (`effigy release:publish:binaries` → `gh workflow run`), identifies
+   the newly dispatched run, and waits for it to complete before `verify` runs
+   `release:verify:binaries` and records the verification result; `closeout`
+   then pushes the release commit. Pass `--no-wait` (or set
+   `EFFIGY_RELEASE_NO_WAIT=1`) only for non-blocking manual dispatch. Use it
+   only after the operator explicitly authorizes the release. An interrupted Run
+   continues with `effigy release resume <run>`; `effigy release receipt <run>`
+   prints what it recorded.
+3. Confirm the dispatched `release-binaries.yml` run outcome. A pushed tag alone
+   does not publish the binaries; `release:publish:binaries` waits for the
+   workflow run to finish before `verify` checks the GitHub Release and
+   Homebrew results. If the workflow fails, `publish` fails before `verify`
+   (`release:check:binaries` reconciles on `effigy release resume`); once a tag
+   is pushed, fix forward with a PATCH, never by re-tagging.
 
 ## Hosted gate evidence
 

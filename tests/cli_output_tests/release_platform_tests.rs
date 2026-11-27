@@ -1420,3 +1420,424 @@ fn release_checks_verify_install_normalizes_scp_git_urls() {
         );
     }
 }
+
+/// Install a stub `gh` CLI that models pre-existing runs, a delayed newly
+/// dispatched run, `gh run watch <id> --exit-status`, and `gh run view <id>`.
+fn install_stub_gh(bin_dir: &Path, state_dir: &Path) {
+    fs::create_dir_all(bin_dir).expect("create stub bin dir");
+    fs::create_dir_all(state_dir).expect("create stub state dir");
+    let gh_path = bin_dir.join("gh");
+    let script = format!(
+        r#"#!/bin/sh
+set -eu
+state_dir="{state_dir}"
+printf '%s\n' "$*" >> "$state_dir/calls.log"
+cmd="${{1:-}}"
+sub="${{2:-}}"
+if [ "$cmd" = "workflow" ] && [ "$sub" = "run" ]; then
+  tag=""
+  shift 2
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -f)
+        case "${{2:-}}" in
+          tag=*) tag="${{2#tag=}}" ;;
+        esac
+        shift 2
+        ;;
+      *) shift ;;
+    esac
+  done
+  printf '%s\n' "$tag" > "$state_dir/dispatched_tag"
+  printf '0\n' > "$state_dir/list_after_dispatch"
+  printf '0\n' > "$state_dir/view_count"
+  printf 'in_progress\n' > "$state_dir/run_401_status"
+  printf '\n' > "$state_dir/run_401_conclusion"
+  dispatch_url="$(cat "$state_dir/dispatch_url" 2>/dev/null || true)"
+  if [ -n "$dispatch_url" ]; then
+    printf '%s\n' "$dispatch_url"
+  fi
+  exit 0
+fi
+
+if [ "$cmd" = "run" ] && [ "$sub" = "list" ]; then
+  pre_mode="$(cat "$state_dir/pre_list_mode" 2>/dev/null || printf 'other_tag')"
+  if [ ! -f "$state_dir/dispatched_tag" ]; then
+    case "$pre_mode" in
+      fail)
+        echo "gh: simulated run list failure" >&2
+        exit 1
+        ;;
+      malformed)
+        printf '{{not-json\n'
+        exit 0
+        ;;
+      same_tag)
+        printf '[{{"databaseId":400,"displayTitle":"release: v0.2.5","url":"https://github.com/inflatable-cookie/effigy/actions/runs/400"}}]\n'
+        exit 0
+        ;;
+      *)
+        printf '[{{"databaseId":400,"displayTitle":"release: v0.2.4","url":"https://github.com/inflatable-cookie/effigy/actions/runs/400"}}]\n'
+        exit 0
+        ;;
+    esac
+  fi
+  tag="$(cat "$state_dir/dispatched_tag")"
+  count="$(cat "$state_dir/list_after_dispatch")"
+  count=$((count + 1))
+  printf '%s\n' "$count" > "$state_dir/list_after_dispatch"
+  delay="$(cat "$state_dir/delay_lists" 2>/dev/null || printf '0')"
+  pre_title="release: v0.2.4"
+  if [ "$pre_mode" = "same_tag" ]; then
+    pre_title="release: $tag"
+  fi
+  if [ "$count" -le "$delay" ]; then
+    # Before the new run is visible, an older run (possibly same tag) and an unrelated tag run exist.
+    printf '[{{"databaseId":402,"displayTitle":"release: v0.2.3","url":"https://github.com/inflatable-cookie/effigy/actions/runs/402"}},{{"databaseId":400,"displayTitle":"%s","url":"https://github.com/inflatable-cookie/effigy/actions/runs/400"}}]\n' "$pre_title"
+    exit 0
+  fi
+  list_mode="$(cat "$state_dir/list_mode" 2>/dev/null || printf 'normal')"
+  if [ "$list_mode" = "concurrent_same_tag" ]; then
+    printf '[{{"databaseId":403,"displayTitle":"release: %s","url":"https://github.com/inflatable-cookie/effigy/actions/runs/403"}},{{"databaseId":401,"displayTitle":"release: %s","url":"https://github.com/inflatable-cookie/effigy/actions/runs/401"}},{{"databaseId":400,"displayTitle":"%s","url":"https://github.com/inflatable-cookie/effigy/actions/runs/400"}}]\n' "$tag" "$tag" "$pre_title"
+    exit 0
+  fi
+  if [ "$list_mode" = "staggered_same_tag" ]; then
+    stagger_at="$(cat "$state_dir/stagger_at" 2>/dev/null || printf '2')"
+    if [ "$count" -lt "$stagger_at" ]; then
+      printf '[{{"databaseId":401,"displayTitle":"release: %s","url":"https://github.com/inflatable-cookie/effigy/actions/runs/401"}},{{"databaseId":400,"displayTitle":"%s","url":"https://github.com/inflatable-cookie/effigy/actions/runs/400"}}]\n' "$tag" "$pre_title"
+    else
+      printf '[{{"databaseId":403,"displayTitle":"release: %s","url":"https://github.com/inflatable-cookie/effigy/actions/runs/403"}},{{"databaseId":401,"displayTitle":"release: %s","url":"https://github.com/inflatable-cookie/effigy/actions/runs/401"}},{{"databaseId":400,"displayTitle":"%s","url":"https://github.com/inflatable-cookie/effigy/actions/runs/400"}}]\n' "$tag" "$tag" "$pre_title"
+    fi
+    exit 0
+  fi
+  printf '[{{"databaseId":401,"displayTitle":"release: %s","url":"https://github.com/inflatable-cookie/effigy/actions/runs/401"}},{{"databaseId":402,"displayTitle":"release: v0.2.3","url":"https://github.com/inflatable-cookie/effigy/actions/runs/402"}},{{"databaseId":400,"displayTitle":"%s","url":"https://github.com/inflatable-cookie/effigy/actions/runs/400"}}]\n' "$tag" "$pre_title"
+  exit 0
+fi
+
+if [ "$cmd" = "run" ] && [ "$sub" = "watch" ]; then
+  run_id="${{3:-}}"
+  [ "$run_id" = "401" ] || exit 2
+  mode="$(cat "$state_dir/watch_mode" 2>/dev/null || printf 'success')"
+  case "$mode" in
+    success)
+      printf 'completed\n' > "$state_dir/run_401_status"
+      printf 'success\n' > "$state_dir/run_401_conclusion"
+      exit 0
+      ;;
+    fail)
+      printf 'completed\n' > "$state_dir/run_401_status"
+      printf 'failure\n' > "$state_dir/run_401_conclusion"
+      exit 1
+      ;;
+    drop_then_pass)
+      printf 'in_progress\n' > "$state_dir/run_401_status"
+      printf '\n' > "$state_dir/run_401_conclusion"
+      exit 1
+      ;;
+    *)
+      exit 2
+      ;;
+  esac
+fi
+
+if [ "$cmd" = "run" ] && [ "$sub" = "view" ]; then
+  run_id="${{3:-}}"
+  [ "$run_id" = "401" ] || exit 2
+  mode="$(cat "$state_dir/watch_mode" 2>/dev/null || printf 'success')"
+  view_count="$(cat "$state_dir/view_count" 2>/dev/null || printf '0')"
+  view_count=$((view_count + 1))
+  printf '%s\n' "$view_count" > "$state_dir/view_count"
+  if [ "$mode" = "drop_then_pass" ] && [ "$view_count" -ge 3 ]; then
+    printf 'completed\n' > "$state_dir/run_401_status"
+    printf 'success\n' > "$state_dir/run_401_conclusion"
+  fi
+  status="$(cat "$state_dir/run_401_status")"
+  conclusion="$(cat "$state_dir/run_401_conclusion")"
+  if [ -n "$conclusion" ]; then
+    printf '{{"status":"%s","conclusion":"%s"}}\n' "$status" "$conclusion"
+  else
+    printf '{{"status":"%s","conclusion":null}}\n' "$status"
+  fi
+  exit 0
+fi
+
+exit 2
+"#,
+        state_dir = state_dir.display()
+    );
+    write_executable(&gh_path, &script);
+}
+
+fn run_publish_binaries_script(
+    repo_root: &Path,
+    bin_dir: &Path,
+    input_path: &Path,
+    output_path: &Path,
+    extra_args: &[&str],
+    no_wait_env: Option<&str>,
+) -> Output {
+    let base_path = std::env::var("PATH").unwrap_or_default();
+    let path_env = format!("{}:{base_path}", bin_dir.display());
+    let mut command = Command::new("sh");
+    command
+        .arg(repo_root.join("scripts/release/checks.sh"))
+        .arg("publish-binaries")
+        .args(extra_args)
+        .current_dir(repo_root)
+        .env("PATH", path_env)
+        .env("EFFIGY_RELEASE_INPUT", input_path)
+        .env("EFFIGY_RELEASE_OUTPUT", output_path)
+        .env("EFFIGY_RELEASE_POLL_INTERVAL", "0");
+    if let Some(value) = no_wait_env {
+        command.env("EFFIGY_RELEASE_NO_WAIT", value);
+    } else {
+        command.env_remove("EFFIGY_RELEASE_NO_WAIT");
+    }
+    command.output_owned().expect("run publish-binaries")
+}
+
+#[test]
+fn publish_binaries_identifies_new_run_and_waits_for_watch_completion() {
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace = temp_workspace("publish-binaries-watch");
+    let bin_dir = workspace.join("bin");
+    let state_dir = workspace.join("state");
+    install_stub_gh(&bin_dir, &state_dir);
+
+    let input_path = workspace.join("release-input.json");
+    fs::write(
+        &input_path,
+        r#"{"identities":[{"tag":"v0.2.5","identity":"0.2.5"}]}"#,
+    )
+    .expect("write release input");
+
+    // 1. Default wait mode: `gh workflow run` returns the created run URL, and
+    //    `publish-binaries` watches that exact run ID even when pre-existing
+    //    (#400) and concurrent (#402/#403) runs appear in `gh run list`.
+    fs::write(state_dir.join("pre_list_mode"), "same_tag").expect("pre_list_mode");
+    fs::write(state_dir.join("list_mode"), "concurrent_same_tag").expect("list_mode");
+    fs::write(state_dir.join("watch_mode"), "success").expect("watch_mode");
+    fs::write(
+        state_dir.join("dispatch_url"),
+        "https://github.com/inflatable-cookie/effigy/actions/runs/401\n",
+    )
+    .expect("dispatch_url");
+    let output_path = workspace.join("release-output-watch.json");
+    let output =
+        run_publish_binaries_script(repo_root, &bin_dir, &input_path, &output_path, &[], None);
+    assert!(
+        output.status.success(),
+        "publish-binaries failed: stdout={}, stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: Value =
+        serde_json::from_str(&fs::read_to_string(&output_path).expect("read output"))
+            .expect("parse release output");
+    assert_eq!(parsed["committed"], true);
+    assert_eq!(
+        parsed["destinations"][0],
+        "workflow:https://github.com/inflatable-cookie/effigy/actions/runs/401"
+    );
+    let calls = fs::read_to_string(state_dir.join("calls.log")).expect("calls log");
+    assert!(
+        calls.contains("run watch 401 --exit-status"),
+        "expected watch on run 401: {calls}"
+    );
+    assert!(
+        !calls.contains("watch 400"),
+        "must not watch old run: {calls}"
+    );
+    assert!(
+        !calls.contains("watch 403"),
+        "must not watch concurrent run: {calls}"
+    );
+
+    // 2. Polling fallback when `gh run watch` drops mid-run before completion.
+    fs::remove_file(state_dir.join("calls.log")).expect("clear calls log");
+    fs::remove_file(state_dir.join("dispatched_tag")).expect("clear dispatched tag");
+    fs::write(state_dir.join("watch_mode"), "drop_then_pass").expect("watch_mode");
+    let fallback_output_path = workspace.join("release-output-fallback.json");
+    let fallback = run_publish_binaries_script(
+        repo_root,
+        &bin_dir,
+        &input_path,
+        &fallback_output_path,
+        &[],
+        None,
+    );
+    assert!(
+        fallback.status.success(),
+        "publish-binaries polling fallback failed: stdout={}, stderr={}",
+        String::from_utf8_lossy(&fallback.stdout),
+        String::from_utf8_lossy(&fallback.stderr)
+    );
+    let fallback_calls = fs::read_to_string(state_dir.join("calls.log")).expect("calls log");
+    assert!(
+        fallback_calls.contains("run view 401"),
+        "expected polling fallback to check run view 401: {fallback_calls}"
+    );
+
+    // 3. Explicit `--no-wait` and `EFFIGY_RELEASE_NO_WAIT=1` skip `gh run watch`,
+    //    both with a dispatch URL and when dispatch returns no URL.
+    for (idx, (args, env_val, dispatch_url)) in [
+        (
+            vec!["--no-wait"],
+            None,
+            "https://github.com/inflatable-cookie/effigy/actions/runs/401\n",
+        ),
+        (vec![], Some("1"), ""),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        fs::remove_file(state_dir.join("calls.log")).expect("clear calls log");
+        fs::remove_file(state_dir.join("dispatched_tag")).expect("clear dispatched tag");
+        fs::write(state_dir.join("dispatch_url"), dispatch_url).expect("dispatch_url");
+        let no_wait_output_path = workspace.join(format!("release-output-nowait-{idx}.json"));
+        let no_wait = run_publish_binaries_script(
+            repo_root,
+            &bin_dir,
+            &input_path,
+            &no_wait_output_path,
+            &args,
+            env_val,
+        );
+        assert!(
+            no_wait.status.success(),
+            "publish-binaries no-wait failed: {}",
+            String::from_utf8_lossy(&no_wait.stderr)
+        );
+        let calls = fs::read_to_string(state_dir.join("calls.log")).expect("calls log");
+        assert!(
+            !calls.contains("run watch"),
+            "no-wait must not call gh run watch: {calls}"
+        );
+    }
+}
+
+#[test]
+fn publish_binaries_fails_when_watched_workflow_run_fails_before_verify() {
+    let home = temp_workspace("publish-binaries-fail-home");
+    let root = temp_workspace("publish-binaries-fail-root");
+    effigy_release_project(&root, &home);
+
+    // Replace the fake dispatch with the real `checks.sh publish-binaries` and
+    // record a marker file if `release:verify:binaries` ever executes.
+    let manifest_path = root.join("effigy.toml");
+    let manifest = fs::read_to_string(&manifest_path)
+        .expect("read fixture effigy.toml")
+        .replace(
+            r#""release:publish:binaries" = { run = "sh fake-dispatch.sh" }"#,
+            r#""release:publish:binaries" = { run = "PATH=\"$HOME/bin:$PATH\" EFFIGY_RELEASE_POLL_INTERVAL=0 sh scripts/release/checks.sh publish-binaries" }"#,
+        )
+        .replace(
+            r#""release:verify:binaries" = { run = "sh fake-verify.sh" }"#,
+            r#""release:verify:binaries" = { run = "sh -c 'touch verified.txt'" }"#,
+        );
+    fs::write(&manifest_path, manifest).expect("update fixture effigy.toml");
+
+    let state_dir = root.join(".stub-gh");
+    install_stub_gh(&home.join("bin"), &state_dir);
+    fs::write(state_dir.join("watch_mode"), "fail").expect("watch_mode");
+    fs::write(
+        state_dir.join("dispatch_url"),
+        "https://github.com/inflatable-cookie/effigy/actions/runs/401\n",
+    )
+    .expect("dispatch_url");
+
+    init_git_repo(&root);
+    git_commit_all(&root, "fixture");
+    attach_bare_remote(&root);
+
+    let certified = run_release_cli(&root, &home, &["release", "run", "--to", "certify"]);
+    let certified = parse_stdout_json(&certified);
+    assert_eq!(
+        certified["result"]["receipt"]["release"]["status"], "paused",
+        "{certified}"
+    );
+
+    let paused = run_release_cli(&root, &home, &["release", "run"]);
+    let paused = parse_stdout_json(&paused);
+    assert_eq!(
+        paused["result"]["receipt"]["release"]["status"], "awaiting-approval",
+        "{paused}"
+    );
+    let run_id = paused["result"]["receipt"]["release"]["id"]
+        .as_str()
+        .expect("release id")
+        .to_owned();
+
+    let approve = run_release_cli(&root, &home, &["release", "approve", &run_id]);
+    let parsed_approve = parse_stdout_json(&approve);
+    assert!(
+        !approve.status.success(),
+        "release approve must fail when watched release-binaries.yml fails: {parsed_approve}"
+    );
+    let approve_json = serde_json::to_string(&parsed_approve).expect("serialize approve output");
+    assert!(
+        approve_json.contains("401"),
+        "expected failure output to reference watched run 401: {approve_json}"
+    );
+    let calls = fs::read_to_string(state_dir.join("calls.log")).expect("calls log");
+    assert!(
+        calls.contains("run watch 401 --exit-status"),
+        "expected release approve to watch run 401: {calls}"
+    );
+    assert!(
+        !root.join("verified.txt").exists(),
+        "verify must not run after watched publish-binaries failure"
+    );
+}
+
+#[test]
+fn publish_binaries_fails_closed_when_dispatch_returns_no_run_url() {
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace = temp_workspace("publish-binaries-no-url");
+    let bin_dir = workspace.join("bin");
+    let state_dir = workspace.join("state");
+    install_stub_gh(&bin_dir, &state_dir);
+
+    let input_path = workspace.join("release-input.json");
+    fs::write(
+        &input_path,
+        r#"{"identities":[{"tag":"v0.2.5","identity":"0.2.5"}]}"#,
+    )
+    .expect("write release input");
+
+    // Reproduces the exact failure mode: `gh workflow run` succeeds without a
+    // run URL while pre-dispatch #400 and competing same-tag #401 exist in
+    // `gh run list` (simulating our own dispatch delayed beyond every listing
+    // poll). Must fail closed without watching #401 or writing `committed: true`.
+    fs::write(state_dir.join("pre_list_mode"), "same_tag").expect("pre_list_mode");
+    fs::write(state_dir.join("list_mode"), "staggered_same_tag").expect("list_mode");
+    fs::write(state_dir.join("stagger_at"), "999").expect("stagger_at");
+    fs::write(state_dir.join("watch_mode"), "success").expect("watch_mode");
+
+    for (label, dispatch_stdout) in [("empty", ""), ("non_url", "dispatched without run url\n")] {
+        let _ = fs::remove_file(state_dir.join("calls.log"));
+        let _ = fs::remove_file(state_dir.join("dispatched_tag"));
+        fs::write(state_dir.join("dispatch_url"), dispatch_stdout).expect("dispatch_url");
+        let output_path = workspace.join(format!("release-output-{label}.json"));
+        let output =
+            run_publish_binaries_script(repo_root, &bin_dir, &input_path, &output_path, &[], None);
+        assert!(
+            !output.status.success(),
+            "{label}: publish-binaries must fail closed when dispatch returns no run URL"
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("did not return a workflow run URL"),
+            "{label}: expected missing run URL diagnostic on stderr, got: {stderr}"
+        );
+        assert!(
+            !output_path.exists(),
+            "{label}: must not write committed output without dispatch attribution"
+        );
+        let calls = fs::read_to_string(state_dir.join("calls.log")).expect("calls log");
+        assert!(
+            !calls.contains("run watch"),
+            "{label}: must not watch competing run #401 when dispatch returns no URL: {calls}"
+        );
+    }
+}

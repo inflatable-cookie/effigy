@@ -529,7 +529,9 @@ For Effigy's own binary publication, the Run's second target does the
 dispatch. `[release.targets.binaries]` is a `task` target whose publish task is
 `effigy release:publish:binaries`: it reads the certified candidate at
 `$EFFIGY_RELEASE_INPUT`, runs `gh workflow run release-binaries.yml -f
-tag=<tag>`, and records the run URL and GitHub Release as destinations. Its
+tag=<tag>`, identifies the newly dispatched run, waits for it to complete
+(unless `--no-wait` or `EFFIGY_RELEASE_NO_WAIT=1` is used), and records the run
+URL and GitHub Release as destinations. Its
 `check` task (`release:check:binaries`) reports whether the release already
 exists, and its `verify` task (`release:verify:binaries`) checks the GitHub
 Release assets, the Homebrew formula and the tagged-source install. The
