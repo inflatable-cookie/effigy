@@ -482,9 +482,11 @@ done
             "",
             "guest chmod failed"
         );
-        // The write is relayed and chmodded once. macOS may also report the
-        // truncating write as a create, which sends the watch root once; that
-        // root's echo is dropped, so it never repeats.
+        // One host write: the file is relayed and chmodded exactly once. On
+        // macOS, FSEvents can coalesce a `Create` onto a write to an existing
+        // file. `EventFilter::expand` then adds the parent, the watch root, once.
+        // The root's own chmod echo is dropped, so the root is bounded at one
+        // dispatch and never repeats.
         let root_host = real_watch.display().to_string();
         let file_host = real_watch.join("hello").display().to_string();
         let chmod_lines: Vec<String> = fs::read_to_string(&chmods)
@@ -522,6 +524,14 @@ done
                 .iter()
                 .all(|l| l == "/workspace/hello" || l.trim_end_matches('/') == "/workspace"),
             "only the file and its root may be relayed: {relayed:?}"
+        );
+        assert!(
+            relayed
+                .iter()
+                .filter(|l| l.trim_end_matches('/') == "/workspace")
+                .count()
+                <= 1,
+            "the root must not repeat: {relayed:?}"
         );
     }
 }
