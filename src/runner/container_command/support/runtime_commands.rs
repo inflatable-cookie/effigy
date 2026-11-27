@@ -71,6 +71,8 @@ pub(in crate::runner::container_command) fn stop_and_remove_containers(
             .map(|error| vec![(name.clone(), error)])
             .unwrap_or_default(),
         _ => {
+            // One stop covers the batch. The per-name retry below only removes:
+            // every container was already stopped, so a retry adds no stop.
             let stop = DockerCommand {
                 program: "docker".to_owned(),
                 args: ["stop", "-t", STOP_GRACE_SECONDS]
@@ -81,7 +83,7 @@ pub(in crate::runner::container_command) fn stop_and_remove_containers(
                 description: format!("stop {} owned containers", names.len()),
             };
             let _ = run_runtime_volume_capture(cwd, profile, &stop);
-            let remove = DockerCommand {
+            let remove = |names: &[String]| DockerCommand {
                 program: "docker".to_owned(),
                 args: ["rm", "-f"]
                     .into_iter()
@@ -90,13 +92,13 @@ pub(in crate::runner::container_command) fn stop_and_remove_containers(
                     .collect(),
                 description: format!("remove {} owned containers", names.len()),
             };
-            if run_runtime_volume_capture(cwd, profile, &remove).is_ok() {
+            if run_runtime_volume_capture(cwd, profile, &remove(names)).is_ok() {
                 return Vec::new();
             }
             names
                 .iter()
                 .filter_map(|name| {
-                    stop_and_remove_container(cwd, profile, name)
+                    run_runtime_volume_capture(cwd, profile, &remove(std::slice::from_ref(name)))
                         .err()
                         .map(|error| (name.clone(), error))
                 })

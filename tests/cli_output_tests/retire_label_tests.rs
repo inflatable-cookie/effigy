@@ -961,6 +961,13 @@ fn an_unremovable_container_in_a_batch_fails_alone_with_its_own_reason() {
         vec![format!("web-1|{project}|{}||{scope}", fixture.checkout())]
     );
     let calls = teardown_calls(&fixture);
+    position_of(&calls, "docker stop -t 2 db-1 web-1");
     position_of(&calls, "docker rm -f db-1 web-1");
+    // The retry removes the refused container alone, without another stop.
     position_of(&calls, "docker rm -f web-1");
+    let stops = calls
+        .iter()
+        .filter(|call| call.starts_with("docker stop "))
+        .count();
+    assert_eq!(stops, 1, "the batched stop is the only stop: {calls:?}");
 }
