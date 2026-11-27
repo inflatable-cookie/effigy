@@ -1041,8 +1041,15 @@ The stack relay is a supervised host process: `container down`, `reset`,
 `retire`, an idle stop and a failed `up` stop it. `effigy container status` (JSON field
 `fs_events`) and `effigy doctor` show its state, reason and targets.
 
-If the Colima profile also has `mountInotify: true`, both relays run and
-`doctor` warns. Set `mountInotify: false` at your next planned profile restart.
+Effigy's managed Colima profiles (`effigy`, `effigy-release`) default to
+`mountInotify: false` on create, recreate, or next start. On interactive hosts,
+when an already-running managed profile still has `mountInotify: true` and zero
+running containers, Effigy migrates it automatically with a clean restart before
+bring-up; it never interrupts running containers and never restarts a running
+profile from non-interactive or CI callers. If a running profile still has
+`mountInotify: true` (for example while containers are active or on a
+non-interactive host), both relays run and `doctor` warns until it switches to
+`mountInotify: false` on the next idle start or planned restart.
 For the machine-readable status shape, see [JSON payload examples](026-json-payload-examples.md#container-status-effigycontainerstatusv1).
 
 ## External Host Mounts

@@ -536,7 +536,13 @@ watcher, and it writes `<container>.json` beside it.
   `owner`, `pid` and `targets`. The field is additive to
   `effigy.container.status.v1`. `doctor` reports the same state, warns on a
   Colima profile that also sets `mountInotify: true`, and warns on an
-  unsettled stack relay run. Effigy never edits that profile setting.
+  unsettled stack relay run. Effigy's managed Colima profiles (`effigy`,
+  `effigy-release`) default to `mountInotify: false` on create, recreate, or
+  next start. On interactive hosts, when an already-running managed profile
+  still has `mountInotify: true` and 0 running containers, Effigy migrates it
+  automatically with a clean stop and restart before bring-up; it never
+  interrupts running containers and never restarts a running profile from
+  non-interactive or CI callers.
 
 ### Relay architecture and loop prevention
 

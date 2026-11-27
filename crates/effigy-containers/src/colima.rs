@@ -120,6 +120,7 @@ pub fn colima_start_command_for_profile_with_disk(
             args.push("--disk".to_string());
             args.push(disk_gib.to_string());
         }
+        args.push("--mount-inotify=false".to_string());
     }
     for server in FALLBACK_COLIMA_DNS_SERVERS {
         args.push("--dns".to_string());
@@ -244,6 +245,11 @@ fn colima_output_is_explicitly_stopped(stdout: &str, stderr: &str) -> bool {
         || stderr_lower.contains("profile does not exist")
 }
 
+/// Whether `profile` is one of Effigy's managed Colima profiles (`effigy` or `effigy-release`).
+pub fn is_managed_colima_profile(profile: &str) -> bool {
+    matches!(profile, DEFAULT_COLIMA_PROFILE | "effigy-release")
+}
+
 pub fn managed_colima_profile_resources(profile: &str) -> Option<ColimaResourcePlan> {
     let disk_gib = (profile == DEFAULT_COLIMA_PROFILE)
         .then(crate::user_global_colima_profile_disk_gib)
@@ -307,9 +313,6 @@ pub fn prepare_managed_colima_profile_name_with_disk(
     profile: &str,
     disk_gib: Option<u64>,
 ) -> Result<(), String> {
-    if managed_colima_profile_resources_with_disk(profile, disk_gib).is_none() {
-        return Ok(());
-    }
     let Some(resources) = managed_colima_profile_resources_with_disk(profile, disk_gib) else {
         return Ok(());
     };
@@ -375,6 +378,9 @@ pub fn prepare_managed_colima_profile_name_with_disk(
     // key is kept for the versions that still read it.
     root.insert(Value::String("sshAgent".to_owned()), Value::Bool(true));
     root.insert(Value::String("forwardAgent".to_owned()), Value::Bool(true));
+    // Effigy provides a scoped per-container FS-event relay, so managed
+    // profiles disable Colima's profile-wide `mountInotify` daemon.
+    root.insert(Value::String("mountInotify".to_owned()), Value::Bool(false));
     upsert_colima_platform_overrides(
         root,
         std::env::consts::OS,

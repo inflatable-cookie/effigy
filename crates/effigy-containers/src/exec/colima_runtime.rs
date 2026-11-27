@@ -264,6 +264,11 @@ fn ensure_running_managed_profile_ready(
     repo_root: &Path,
     advice_mode: ColimaAdviceMode,
 ) -> Result<ColimaProfileAction, ContainerExecError> {
+    if let Some(action) =
+        maybe_migrate_running_profile_mount_inotify(policy, repo_root, advice_mode)?
+    {
+        return Ok(action);
+    }
     if let Some(drift) = managed_colima_profile_drift(&policy.profile) {
         // Write the managed settings so the operator's own restart applies them.
         let _ = prepare_managed_colima_profile(policy);
@@ -296,6 +301,73 @@ fn ensure_running_managed_profile_ready(
         || start_colima_runtime_units(policy, repo_root),
     )?;
     Ok(ColimaProfileAction::Reused)
+}
+
+/// Migrate an already-running managed Colima profile away from global
+/// `mountInotify: true` only when running interactively and zero containers are
+/// active on that profile. Non-interactive/CI callers and profiles with running
+/// containers (or unreadable container lists) leave `colima.yaml` and the VM
+/// untouched.
+fn maybe_migrate_running_profile_mount_inotify(
+    policy: &EffectiveContainerPolicy,
+    repo_root: &Path,
+    advice_mode: ColimaAdviceMode,
+) -> Result<Option<ColimaProfileAction>, ContainerExecError> {
+    if !crate::colima::is_managed_colima_profile(&policy.profile)
+        || crate::colima_profile_mount_inotify(&policy.profile) != Some(true)
+    {
+        return Ok(None);
+    }
+    if advice_mode == ColimaAdviceMode::Automated {
+        return Ok(None);
+    }
+    if colima_profile_has_running_containers(policy, repo_root) {
+        eprintln!(
+            "[info] Colima profile `{}` is still running with global mountInotify: true; Effigy will switch it off automatically next time it starts with no running containers (or on the next planned restart)",
+            policy.profile
+        );
+        return Ok(None);
+    }
+    eprintln!(
+        "[info] upgrading Colima profile `{}` to disable global mountInotify (no running containers)…",
+        policy.profile
+    );
+    let stop = colima_stop_command(policy);
+    let stop_args: Vec<&str> = stop.args.iter().map(String::as_str).collect();
+    run_command_capture_with_timeout(
+        repo_root,
+        &stop.program,
+        &stop_args,
+        &stop.label,
+        COLIMA_STOP_TIMEOUT,
+    )?;
+    start_managed_colima_profile(policy, repo_root, ColimaProfileAction::Started).map(Some)
+}
+
+/// Returns `true` when at least one container is running on `policy.profile`,
+/// or when listing fails (fail-safe so active stacks are never interrupted).
+fn colima_profile_has_running_containers(
+    policy: &EffectiveContainerPolicy,
+    repo_root: &Path,
+) -> bool {
+    let args = colima_nerdctl_args(policy, &["ps", "-q"]);
+    let rendered = args
+        .iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    let borrowed = rendered.iter().map(String::as_str).collect::<Vec<_>>();
+    match run_command_capture_with_timeout(
+        repo_root,
+        "colima",
+        &borrowed,
+        "Colima running container check",
+        COLIMA_RUNTIME_PROBE_TIMEOUT,
+    ) {
+        Ok(output) => String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .any(|line| !line.trim().is_empty()),
+        Err(_) => true,
+    }
 }
 
 /// The only place a managed Colima profile is created or started: Effigy's
@@ -708,22 +780,27 @@ fn colima_status_output(
     )
 }
 
-fn colima_runtime_probe_args(policy: &EffectiveContainerPolicy) -> Vec<OsString> {
+fn colima_nerdctl_args(policy: &EffectiveContainerPolicy, docker_args: &[&str]) -> Vec<OsString> {
     let mut detection = ContainerBackendDetection::from_env_and_path();
     detection.backend_override = Some(BackendId::colima_nerdctl());
-    let args = [OsString::from("info")];
+    let args: Vec<OsString> = docker_args.iter().map(OsString::from).collect();
     ContainerManager::defaults()
         .runtime_process_invocation(&detection, policy.profile.as_str(), "docker", &args)
         .map(|(_, args)| args)
         .unwrap_or_else(|_| {
-            vec![
+            let mut fallback = vec![
                 OsString::from("nerdctl"),
                 OsString::from("--profile"),
                 OsString::from(policy.profile.as_str()),
                 OsString::from("--"),
-                OsString::from("info"),
-            ]
+            ];
+            fallback.extend(args);
+            fallback
         })
+}
+
+fn colima_runtime_probe_args(policy: &EffectiveContainerPolicy) -> Vec<OsString> {
+    colima_nerdctl_args(policy, &["info"])
 }
 
 fn colima_buildkit_probe_args(policy: &EffectiveContainerPolicy) -> Vec<OsString> {
@@ -1620,6 +1697,15 @@ case "$1" in
       printf '%s\n' 'failed to solve: rust:1.88-bookworm: failed to resolve source metadata for docker.io/library/rust:1.88-bookworm: dial tcp: lookup registry-1.docker.io on 192.168.5.3:53: read udp: connection refused' >&2
       exit 1
     fi
+    if printf '%s\n' "$*" | grep -q -- '-- ps -q'; then
+      if [ -f "$root/ps-fails" ]; then
+        printf 'containerd unavailable\n' >&2
+        exit 1
+      fi
+      if [ -f "$root/ps-running" ]; then
+        printf 'abc123def456\n'
+      fi
+    fi
     exit 0
     ;;
   ssh) exit 0 ;;
@@ -1979,7 +2065,7 @@ esac
         let _lock = crate::test_env_lock();
         let fixture = ManagedProfileFixture::new();
         let policy = fixture.policy();
-        const MANAGED_START: &str = "start --profile effigy --runtime containerd --ssh-agent --memory 32 --dns 1.1.1.1 --dns 8.8.8.8";
+        const MANAGED_START: &str = "start --profile effigy --runtime containerd --ssh-agent --memory 32 --mount-inotify=false --dns 1.1.1.1 --dns 8.8.8.8";
 
         // Phase 1: an absent profile is created with the managed arguments.
         let report = ensure_colima_running_report(&policy, &fixture.root).expect("create profile");
@@ -2352,6 +2438,177 @@ esac
             calls
                 .iter()
                 .any(|call| call.starts_with("status --profile effigy")),
+            "{calls:#?}"
+        );
+    }
+
+    #[test]
+    fn interactive_idle_running_managed_profile_migrates_mount_inotify_false() {
+        let _lock = crate::test_env_lock();
+        let fixture = ManagedProfileFixture::new();
+        fixture.state("listed");
+        fixture.state("running");
+        fixture.write_colima_config("memory: 32\nforwardAgent: true\nmountInotify: true\n");
+        let policy = fixture.policy();
+
+        let report = ensure_colima_running_report_with_advice_mode(
+            &policy,
+            &fixture.root,
+            ColimaAdviceMode::Interactive,
+        )
+        .expect("idle running profile should migrate");
+
+        assert!(report.started);
+        assert!(!report.profile_created_or_restarted);
+        let calls = fixture.calls();
+        assert_eq!(calls.len(), 7, "{calls:#?}");
+        assert_eq!(
+            &calls[..6],
+            [
+                "status --profile effigy",
+                "nerdctl --profile effigy -- ps -q",
+                "stop --profile effigy",
+                "start --profile effigy --runtime containerd --ssh-agent --memory 32 --mount-inotify=false --dns 1.1.1.1 --dns 8.8.8.8",
+                "nerdctl --profile effigy -- info",
+                "ssh --profile effigy -- sudo buildctl debug workers",
+            ],
+            "{calls:#?}"
+        );
+        assert!(
+            calls[6].starts_with("ssh --profile effigy -- sudo sh -c "),
+            "{calls:#?}"
+        );
+        assert_eq!(
+            crate::colima_profile_mount_inotify("effigy"),
+            Some(false),
+            "colima.yaml must be rewritten to mountInotify: false"
+        );
+        let recorded = std::fs::read_to_string(fixture.root.join("start-env"))
+            .expect("recorded start environment");
+        assert_eq!(
+            recorded.lines().next(),
+            Some(fixture.home.to_str().unwrap()),
+            "migrated start must use neutral $HOME"
+        );
+    }
+
+    #[test]
+    fn interactive_busy_or_unlisted_running_profile_skips_mount_inotify_migration() {
+        let _lock = crate::test_env_lock();
+        let original = "memory: 32\nforwardAgent: true\nmountInotify: true\n";
+
+        for marker in ["ps-running", "ps-fails"] {
+            let fixture = ManagedProfileFixture::new();
+            fixture.state("listed");
+            fixture.state("running");
+            fixture.state(marker);
+            fixture.write_colima_config(original);
+            let policy = fixture.policy();
+
+            let report = ensure_colima_running_report_with_advice_mode(
+                &policy,
+                &fixture.root,
+                ColimaAdviceMode::Interactive,
+            )
+            .expect("busy or failed ps must reuse profile without restart");
+
+            assert!(!report.started, "{marker}");
+            assert!(!report.profile_created_or_restarted, "{marker}");
+            let calls = fixture.calls();
+            assert!(
+                !calls
+                    .iter()
+                    .any(|call| call.starts_with("stop ") || call.starts_with("start ")),
+                "{marker}: must not stop or restart: {calls:#?}"
+            );
+            assert!(
+                calls.contains(&"nerdctl --profile effigy -- ps -q".to_owned()),
+                "{marker}: {calls:#?}"
+            );
+            let config = std::fs::read_to_string(fixture.home.join(".colima/effigy/colima.yaml"))
+                .expect("read config");
+            assert_eq!(
+                config, original,
+                "{marker}: colima.yaml must remain untouched"
+            );
+        }
+    }
+
+    #[test]
+    fn automated_running_profile_never_stops_or_edits_mount_inotify() {
+        let _lock = crate::test_env_lock();
+        let fixture = ManagedProfileFixture::new();
+        fixture.state("listed");
+        fixture.state("running");
+        let original = "memory: 32\nforwardAgent: true\nmountInotify: true\n";
+        fixture.write_colima_config(original);
+        let policy = fixture.policy();
+
+        let report = ensure_colima_running_report_with_advice_mode(
+            &policy,
+            &fixture.root,
+            ColimaAdviceMode::Automated,
+        )
+        .expect("automated mode must reuse profile");
+
+        assert!(!report.started);
+        assert!(!report.profile_created_or_restarted);
+        let calls = fixture.calls();
+        assert_eq!(calls.len(), 5, "{calls:#?}");
+        assert_eq!(
+            &calls[..4],
+            [
+                "status --profile effigy",
+                "list --json",
+                "nerdctl --profile effigy -- info",
+                "ssh --profile effigy -- sudo buildctl debug workers",
+            ],
+            "automated mode must not run ps -q, stop, or start: {calls:#?}"
+        );
+        assert!(
+            calls[4].starts_with("ssh --profile effigy -- sudo sh -c "),
+            "{calls:#?}"
+        );
+        let config = std::fs::read_to_string(fixture.home.join(".colima/effigy/colima.yaml"))
+            .expect("read config");
+        assert_eq!(
+            config, original,
+            "automated mode must leave colima.yaml untouched"
+        );
+    }
+
+    #[test]
+    fn running_profile_already_mount_inotify_false_skips_ps_with_zero_extra_calls() {
+        let _lock = crate::test_env_lock();
+        let fixture = ManagedProfileFixture::new();
+        fixture.state("listed");
+        fixture.state("running");
+        fixture.write_colima_config("memory: 32\nforwardAgent: true\nmountInotify: false\n");
+        let policy = fixture.policy();
+
+        let report = ensure_colima_running_report_with_advice_mode(
+            &policy,
+            &fixture.root,
+            ColimaAdviceMode::Interactive,
+        )
+        .expect("already migrated profile should reuse cleanly");
+
+        assert!(!report.started);
+        assert!(!report.profile_created_or_restarted);
+        let calls = fixture.calls();
+        assert_eq!(calls.len(), 5, "{calls:#?}");
+        assert_eq!(
+            &calls[..4],
+            [
+                "status --profile effigy",
+                "list --json",
+                "nerdctl --profile effigy -- info",
+                "ssh --profile effigy -- sudo buildctl debug workers",
+            ],
+            "must skip ps -q, stop, and start: {calls:#?}"
+        );
+        assert!(
+            calls[4].starts_with("ssh --profile effigy -- sudo sh -c "),
             "{calls:#?}"
         );
     }
