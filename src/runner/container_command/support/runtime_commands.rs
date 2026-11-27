@@ -19,6 +19,10 @@ use effigy_containers::{
 
 use crate::runner::container_command::RunnerError;
 
+/// The grace the runtime gives a container on `stop` before it kills it. Teardown
+/// runs under the Barge lease wait, so a stack must not wait out the default.
+const STOP_GRACE_SECONDS: &str = "2";
+
 /// Stop a container, then remove it (effigy#376). A forced remove of a running
 /// container is a kill the runtime's restart manager undoes for the
 /// `restart: unless-stopped` policy `up` asked the runtime for; an explicit stop is
@@ -31,7 +35,12 @@ pub(in crate::runner::container_command) fn stop_and_remove_container(
 ) -> Result<(), RunnerError> {
     let stop = DockerCommand {
         program: "docker".to_owned(),
-        args: vec!["stop".to_owned(), name.to_owned()],
+        args: vec![
+            "stop".to_owned(),
+            "-t".to_owned(),
+            STOP_GRACE_SECONDS.to_owned(),
+            name.to_owned(),
+        ],
         description: format!("stop owned container {name}"),
     };
     let _ = run_runtime_volume_capture(cwd, profile, &stop);
@@ -41,6 +50,100 @@ pub(in crate::runner::container_command) fn stop_and_remove_container(
         description: format!("remove owned container {name}"),
     };
     run_runtime_volume_capture(cwd, profile, &remove).map(|_| ())
+}
+
+/// Stop and remove several containers of one profile, each under the effigy#376
+/// rule. One `stop` and one `rm -f` cover the batch, so the runtime stops them
+/// concurrently; the stop still runs before the removal, so no
+/// `restart: unless-stopped` container is revived. When the batched removal is
+/// refused, every container is retried on its own, so each one that still fails
+/// carries its own runtime reason and its removed siblings are not masked.
+/// Returns the containers that could not be removed, each with its error.
+pub(in crate::runner::container_command) fn stop_and_remove_containers(
+    cwd: &Path,
+    profile: &str,
+    names: &[String],
+) -> Vec<(String, RunnerError)> {
+    match names {
+        [] => Vec::new(),
+        [name] => stop_and_remove_container(cwd, profile, name)
+            .err()
+            .map(|error| vec![(name.clone(), error)])
+            .unwrap_or_default(),
+        _ => {
+            let stop = DockerCommand {
+                program: "docker".to_owned(),
+                args: ["stop", "-t", STOP_GRACE_SECONDS]
+                    .into_iter()
+                    .map(str::to_owned)
+                    .chain(names.iter().cloned())
+                    .collect(),
+                description: format!("stop {} owned containers", names.len()),
+            };
+            let _ = run_runtime_volume_capture(cwd, profile, &stop);
+            let remove = DockerCommand {
+                program: "docker".to_owned(),
+                args: ["rm", "-f"]
+                    .into_iter()
+                    .map(str::to_owned)
+                    .chain(names.iter().cloned())
+                    .collect(),
+                description: format!("remove {} owned containers", names.len()),
+            };
+            if run_runtime_volume_capture(cwd, profile, &remove).is_ok() {
+                return Vec::new();
+            }
+            names
+                .iter()
+                .filter_map(|name| {
+                    stop_and_remove_container(cwd, profile, name)
+                        .err()
+                        .map(|error| (name.clone(), error))
+                })
+                .collect()
+        }
+    }
+}
+
+/// Remove several named objects of one kind on one profile with one command,
+/// such as `volume rm <a> <b>` or `network rm <a> <b>`. A batch the runtime
+/// refuses is retried one name at a time, so each object that still fails
+/// carries its own reason. Returns the names that failed, each with its error.
+pub(in crate::runner::container_command) fn remove_named_batch(
+    cwd: &Path,
+    profile: &str,
+    kind_args: &[&str],
+    names: &[String],
+) -> Vec<(String, RunnerError)> {
+    let command = |names: &[String]| DockerCommand {
+        program: "docker".to_owned(),
+        args: kind_args
+            .iter()
+            .map(|arg| (*arg).to_owned())
+            .chain(names.iter().cloned())
+            .collect(),
+        description: format!("remove {} owned {}", names.len(), kind_args[0]),
+    };
+    match names {
+        [] => Vec::new(),
+        [name] => run_runtime_volume_capture(cwd, profile, &command(names))
+            .err()
+            .map(|error| vec![(name.clone(), error)])
+            .unwrap_or_default(),
+        _ => {
+            if run_runtime_volume_capture(cwd, profile, &command(names)).is_ok() {
+                return Vec::new();
+            }
+            names
+                .iter()
+                .filter_map(|name| {
+                    run_runtime_volume_capture(cwd, profile, &command(std::slice::from_ref(name)))
+                        .err()
+                        .map(|error| (name.clone(), error))
+                })
+                .collect()
+        }
+    }
 }
 
 /// Remove only volumes whose labels prove this environment owns them, on its
