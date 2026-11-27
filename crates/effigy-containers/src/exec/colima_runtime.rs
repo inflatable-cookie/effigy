@@ -1,6 +1,9 @@
+use nix::errno::Errno;
+use nix::fcntl::{Flock, FlockArg};
 use serde_json::Value as JsonValue;
 use std::ffi::OsString;
-use std::path::Path;
+use std::fs::{self, File, OpenOptions};
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -157,6 +160,183 @@ pub struct ColimaEnsureReport {
     pub profile_created_or_restarted: bool,
 }
 
+/// Held shared advisory lock guarding a Colima profile against concurrent idle
+/// `mountInotify` stop/restart while a container bring-up or Compose activation is
+/// in flight.
+pub struct ColimaProfileBringupGuard {
+    _lock: Option<Flock<File>>,
+}
+
+impl std::fmt::Debug for ColimaProfileBringupGuard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ColimaProfileBringupGuard")
+            .field("locked", &self._lock.is_some())
+            .finish()
+    }
+}
+
+impl ColimaProfileBringupGuard {
+    fn empty() -> Self {
+        Self { _lock: None }
+    }
+}
+
+fn colima_profile_lifecycle_lock_path(profile: &str) -> Option<PathBuf> {
+    let home = crate::runtime::dns::colima_home_dir()?;
+    let is_plain_safe = !profile.is_empty()
+        && profile != "."
+        && profile != ".."
+        && !profile.starts_with('.')
+        && profile
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'));
+    let filename = if is_plain_safe {
+        format!("{profile}.lock")
+    } else {
+        let sanitized: String = profile
+            .chars()
+            .map(|ch| {
+                if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_') {
+                    ch
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        let stem = if sanitized.is_empty() {
+            "profile".to_owned()
+        } else {
+            sanitized
+        };
+        let mut hash: u64 = 0xcbf29ce484222325;
+        for &byte in profile.as_bytes() {
+            hash ^= u64::from(byte);
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+        format!("{stem}-{hash:016x}.lock")
+    };
+    Some(home.join(".effigy-profile-locks").join(filename))
+}
+
+fn open_profile_lifecycle_lock_file(profile: &str) -> Result<Option<File>, ContainerExecError> {
+    let Some(path) = colima_profile_lifecycle_lock_path(profile) else {
+        return Ok(None);
+    };
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| ContainerExecError::Failure {
+            command: "Colima profile lock".to_owned(),
+            code: None,
+            stdout: String::new(),
+            stderr: format!(
+                "cannot create Colima profile lock directory `{}`: {error}",
+                parent.display()
+            ),
+        })?;
+    }
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)
+        .map_err(|error| ContainerExecError::Failure {
+            command: "Colima profile lock".to_owned(),
+            code: None,
+            stdout: String::new(),
+            stderr: format!(
+                "cannot open Colima profile lock `{}`: {error}",
+                path.display()
+            ),
+        })?;
+    Ok(Some(file))
+}
+
+fn acquire_shared_profile_lock(profile: &str) -> Result<Option<Flock<File>>, ContainerExecError> {
+    let Some(mut file) = open_profile_lifecycle_lock_file(profile)? else {
+        return Ok(None);
+    };
+    loop {
+        match Flock::lock(file, FlockArg::LockShared) {
+            Ok(lock) => return Ok(Some(lock)),
+            Err((returned, Errno::EINTR)) => file = returned,
+            Err((_, errno)) => {
+                return Err(ContainerExecError::Failure {
+                    command: "Colima profile lock".to_owned(),
+                    code: None,
+                    stdout: String::new(),
+                    stderr: format!(
+                        "cannot acquire shared lock for Colima profile `{profile}`: {errno}"
+                    ),
+                });
+            }
+        }
+    }
+}
+
+fn try_acquire_exclusive_profile_lock(
+    profile: &str,
+) -> Result<Option<Flock<File>>, ContainerExecError> {
+    let Some(mut file) = open_profile_lifecycle_lock_file(profile)? else {
+        return Ok(None);
+    };
+    loop {
+        match Flock::lock(file, FlockArg::LockExclusiveNonblock) {
+            Ok(lock) => return Ok(Some(lock)),
+            Err((returned, Errno::EINTR)) => file = returned,
+            Err((_, errno)) if errno == Errno::EAGAIN || errno == Errno::EWOULDBLOCK => {
+                return Ok(None);
+            }
+            Err((_, errno)) => {
+                return Err(ContainerExecError::Failure {
+                    command: "Colima profile lock".to_owned(),
+                    code: None,
+                    stdout: String::new(),
+                    stderr: format!(
+                        "cannot acquire exclusive lock for Colima profile `{profile}`: {errno}"
+                    ),
+                });
+            }
+        }
+    }
+}
+
+fn downgrade_exclusive_lock_to_shared(
+    profile: &str,
+    lock: Flock<File>,
+) -> Result<Flock<File>, ContainerExecError> {
+    loop {
+        match lock.relock(FlockArg::LockShared) {
+            Ok(()) => return Ok(lock),
+            Err(Errno::EINTR) => continue,
+            Err(errno) => {
+                return Err(ContainerExecError::Failure {
+                    command: "Colima profile lock".to_owned(),
+                    code: None,
+                    stdout: String::new(),
+                    stderr: format!(
+                        "cannot downgrade lock for Colima profile `{profile}`: {errno}"
+                    ),
+                });
+            }
+        }
+    }
+}
+
+/// Acquire a shared Colima profile lock across container bring-up / Compose
+/// activation so a concurrent interactive invocation cannot stop the VM between
+/// `ps -q` and `colima stop`.
+pub fn acquire_colima_profile_bringup_guard(
+    policy: &EffectiveContainerPolicy,
+    repo_root: &Path,
+) -> Result<ColimaProfileBringupGuard, ContainerExecError> {
+    if resolve_compose_backend_for_repo(repo_root, policy) != ComposeBackend::ColimaNerdctl {
+        return Ok(ColimaProfileBringupGuard::empty());
+    }
+    Ok(ColimaProfileBringupGuard {
+        _lock: acquire_shared_profile_lock(&policy.profile)?,
+    })
+}
+
 pub fn ensure_colima_running(
     policy: &EffectiveContainerPolicy,
     repo_root: &Path,
@@ -166,7 +346,7 @@ pub fn ensure_colima_running(
 
 /// The one entry point for a managed Colima profile: create it when it does not
 /// exist and start it when stopped. A running profile is never stopped or
-/// restarted here: other checkouts' stacks share it.
+/// restarted here unless interactive idle `mountInotify` migration applies.
 pub fn ensure_colima_running_report(
     policy: &EffectiveContainerPolicy,
     repo_root: &Path,
@@ -179,13 +359,23 @@ fn ensure_colima_running_report_with_advice_mode(
     repo_root: &Path,
     advice_mode: ColimaAdviceMode,
 ) -> Result<ColimaEnsureReport, ContainerExecError> {
-    let action = ensure_colima_profile_running(policy, repo_root, advice_mode)?;
+    let (report, _guard) =
+        ensure_colima_running_report_for_bringup_with_advice_mode(policy, repo_root, advice_mode)?;
+    Ok(report)
+}
+
+fn ensure_colima_running_report_for_bringup_with_advice_mode(
+    policy: &EffectiveContainerPolicy,
+    repo_root: &Path,
+    advice_mode: ColimaAdviceMode,
+) -> Result<(ColimaEnsureReport, ColimaProfileBringupGuard), ContainerExecError> {
+    let (action, guard) = ensure_colima_profile_running(policy, repo_root, advice_mode)?;
     let report = ColimaEnsureReport {
         started: action != ColimaProfileAction::Reused,
         profile_created_or_restarted: action.recreates_profile(),
     };
     maintain_health_check_pid_files(policy, repo_root);
-    Ok(report)
+    Ok((report, guard))
 }
 
 /// What the one managed-profile entry point did to reach a running profile.
@@ -222,22 +412,84 @@ fn maintain_health_check_pid_files(policy: &EffectiveContainerPolicy, repo_root:
     }
 }
 
+enum EnsureProfileLock {
+    Exclusive {
+        lock: Flock<File>,
+    },
+    Shared {
+        lock: Option<Flock<File>>,
+        contended: bool,
+    },
+}
+
+fn acquire_profile_lock_for_ensure(
+    policy: &EffectiveContainerPolicy,
+    advice_mode: ColimaAdviceMode,
+) -> Result<EnsureProfileLock, ContainerExecError> {
+    let wants_migration = advice_mode == ColimaAdviceMode::Interactive
+        && crate::colima::is_managed_colima_profile(&policy.profile)
+        && crate::colima_profile_mount_inotify(&policy.profile) == Some(true);
+    if wants_migration {
+        if let Some(lock) = try_acquire_exclusive_profile_lock(&policy.profile)? {
+            return Ok(EnsureProfileLock::Exclusive { lock });
+        }
+        let lock = acquire_shared_profile_lock(&policy.profile)?;
+        return Ok(EnsureProfileLock::Shared {
+            lock,
+            contended: true,
+        });
+    }
+    let lock = acquire_shared_profile_lock(&policy.profile)?;
+    Ok(EnsureProfileLock::Shared {
+        lock,
+        contended: false,
+    })
+}
+
 fn ensure_colima_profile_running(
     policy: &EffectiveContainerPolicy,
     repo_root: &Path,
     advice_mode: ColimaAdviceMode,
-) -> Result<ColimaProfileAction, ContainerExecError> {
-    if colima_is_running_for_start(policy, repo_root, advice_mode)? {
-        return ensure_running_managed_profile_ready(policy, repo_root, advice_mode);
-    }
-    // A profile that is not running is either stopped or gone. Only the
-    // inventory can tell them apart, and both take the same managed start; the
-    // user is told which one it was.
-    if colima_profile_exists(policy, repo_root)? {
-        start_managed_colima_profile(policy, repo_root, ColimaProfileAction::Started)
-    } else {
-        // First use, or the user deleted it.
-        start_managed_colima_profile(policy, repo_root, ColimaProfileAction::Created)
+) -> Result<(ColimaProfileAction, ColimaProfileBringupGuard), ContainerExecError> {
+    match acquire_profile_lock_for_ensure(policy, advice_mode)? {
+        EnsureProfileLock::Exclusive { lock } => {
+            let action = if colima_is_running_for_start(policy, repo_root, advice_mode)? {
+                ensure_running_managed_profile_ready_inner(
+                    policy,
+                    repo_root,
+                    advice_mode,
+                    true,
+                    false,
+                )?
+            } else if colima_profile_exists(policy, repo_root)? {
+                start_managed_colima_profile(policy, repo_root, ColimaProfileAction::Started)?
+            } else {
+                start_managed_colima_profile(policy, repo_root, ColimaProfileAction::Created)?
+            };
+            let shared = downgrade_exclusive_lock_to_shared(&policy.profile, lock)?;
+            Ok((
+                action,
+                ColimaProfileBringupGuard {
+                    _lock: Some(shared),
+                },
+            ))
+        }
+        EnsureProfileLock::Shared { lock, contended } => {
+            let action = if colima_is_running_for_start(policy, repo_root, advice_mode)? {
+                ensure_running_managed_profile_ready_inner(
+                    policy,
+                    repo_root,
+                    advice_mode,
+                    false,
+                    contended,
+                )?
+            } else if colima_profile_exists(policy, repo_root)? {
+                start_managed_colima_profile(policy, repo_root, ColimaProfileAction::Started)?
+            } else {
+                start_managed_colima_profile(policy, repo_root, ColimaProfileAction::Created)?
+            };
+            Ok((action, ColimaProfileBringupGuard { _lock: lock }))
+        }
     }
 }
 
@@ -255,36 +507,109 @@ fn colima_profile_exists(
         .any(|entry| entry.name == policy.profile))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MountInotifyMigration {
+    /// `mountInotify` is already false/missing or the profile is unmanaged.
+    NotNeeded,
+    /// Profile was cleanly stopped and restarted with `mountInotify: false`.
+    Migrated,
+    /// `mountInotify: true` is live, and migration was deferred (automated mode,
+    /// running containers, failed `ps -q`, or concurrent bring-up lock).
+    Deferred,
+}
+
 /// A running profile is only reusable when it carries Effigy's managed
 /// settings. Observed drift warns once and names the deliberate command: the
 /// profile is shared with every other checkout's stacks, so Effigy never stops
-/// or restarts it, and the user's profile is never deleted.
+/// or restarts it (except idle interactive `mountInotify: true` migration), and
+/// the user's profile is never deleted.
+#[cfg_attr(not(test), allow(dead_code))]
 fn ensure_running_managed_profile_ready(
     policy: &EffectiveContainerPolicy,
     repo_root: &Path,
     advice_mode: ColimaAdviceMode,
 ) -> Result<ColimaProfileAction, ContainerExecError> {
-    if let Some(action) =
-        maybe_migrate_running_profile_mount_inotify(policy, repo_root, advice_mode)?
-    {
-        return Ok(action);
+    let wants_migration = advice_mode == ColimaAdviceMode::Interactive
+        && crate::colima::is_managed_colima_profile(&policy.profile)
+        && crate::colima_profile_mount_inotify(&policy.profile) == Some(true);
+    if wants_migration {
+        if let Some(_lock) = try_acquire_exclusive_profile_lock(&policy.profile)? {
+            return ensure_running_managed_profile_ready_inner(
+                policy,
+                repo_root,
+                advice_mode,
+                true,
+                false,
+            );
+        }
+        return ensure_running_managed_profile_ready_inner(
+            policy,
+            repo_root,
+            advice_mode,
+            false,
+            true,
+        );
     }
-    if let Some(drift) = managed_colima_profile_drift(&policy.profile) {
-        // Write the managed settings so the operator's own restart applies them.
-        let _ = prepare_managed_colima_profile(policy);
-        eprintln!("[warn] {}", drift.warning(&policy.profile));
+    ensure_running_managed_profile_ready_inner(policy, repo_root, advice_mode, false, false)
+}
+
+fn ensure_running_managed_profile_ready_inner(
+    policy: &EffectiveContainerPolicy,
+    repo_root: &Path,
+    advice_mode: ColimaAdviceMode,
+    exclusive_held: bool,
+    contended: bool,
+) -> Result<ColimaProfileAction, ContainerExecError> {
+    let migration = maybe_migrate_running_profile_mount_inotify(
+        policy,
+        repo_root,
+        advice_mode,
+        exclusive_held,
+        contended,
+    )?;
+    if migration == MountInotifyMigration::Migrated {
+        return Ok(ColimaProfileAction::Started);
+    }
+    if migration == MountInotifyMigration::NotNeeded {
+        if let Some(drift) = managed_colima_profile_drift(&policy.profile) {
+            // Write the managed settings so the operator's own restart applies them.
+            let _ = prepare_managed_colima_profile(policy);
+            eprintln!("[warn] {}", drift.warning(&policy.profile));
+        }
+    } else if let Some(drift) = managed_colima_profile_drift(&policy.profile) {
+        // Migration is deferred while global `mountInotify: true` is live: never
+        // call `prepare_managed_colima_profile`, which would rewrite `colima.yaml`
+        // to `mountInotify: false` without restarting the VM and silence `doctor`.
+        match drift {
+            crate::colima::ManagedColimaProfileDrift::SshAgentForwardingDisabled => eprintln!(
+                "[warn] Colima profile `{}` is running without SSH agent forwarding while global mountInotify: true migration is deferred; leaving colima.yaml untouched. Restart it deliberately with `colima restart {}`.",
+                policy.profile, policy.profile
+            ),
+            crate::colima::ManagedColimaProfileDrift::MemoryBelowPlan {
+                actual_gib,
+                planned_gib,
+            } => eprintln!(
+                "[warn] Colima profile `{}` is running with {actual_gib}GiB RAM (requires {planned_gib}GiB) while global mountInotify: true migration is deferred; leaving colima.yaml untouched. Restart it deliberately with `colima restart {}`.",
+                policy.profile, policy.profile
+            ),
+        }
     }
     if let Some(resources) = managed_colima_profile_resources(&policy.profile) {
         if let Some(entry) = colima_profile_entry(repo_root, &policy.profile) {
             let planned_bytes = resources.memory_gib.saturating_mul(1024 * 1024 * 1024);
             if entry.memory < planned_bytes {
                 let actual_gib = (entry.memory / (1024 * 1024 * 1024)).max(1);
+                let config_note = if migration == MountInotifyMigration::Deferred {
+                    "Effigy left colima.yaml untouched while global mountInotify: true is active and did not restart the VM."
+                } else {
+                    "Effigy wrote the managed settings and did not restart the VM."
+                };
                 return Err(ContainerExecError::Failure {
                     command: "Colima profile resources".to_owned(),
                     code: None,
                     stdout: String::new(),
                     stderr: format!(
-                        "Colima profile `{}` is running with {actual_gib}GiB RAM (requires {planned_gib}GiB)\nEffigy wrote the managed settings and did not restart the VM.\nnext: restart it deliberately with `colima restart {}`",
+                        "Colima profile `{}` is running with {actual_gib}GiB RAM (requires {planned_gib}GiB)\n{config_note}\nnext: restart it deliberately with `colima restart {}`",
                         policy.profile,
                         policy.profile,
                         planned_gib = resources.memory_gib
@@ -304,29 +629,39 @@ fn ensure_running_managed_profile_ready(
 }
 
 /// Migrate an already-running managed Colima profile away from global
-/// `mountInotify: true` only when running interactively and zero containers are
-/// active on that profile. Non-interactive/CI callers and profiles with running
-/// containers (or unreadable container lists) leave `colima.yaml` and the VM
-/// untouched.
+/// `mountInotify: true` only when running interactively, holding the exclusive
+/// profile lifecycle lock, and zero containers are active on that profile.
+/// Automated callers, concurrent bring-ups, and profiles with running containers
+/// (or unreadable container lists) defer migration and leave `colima.yaml` and
+/// the VM untouched.
 fn maybe_migrate_running_profile_mount_inotify(
     policy: &EffectiveContainerPolicy,
     repo_root: &Path,
     advice_mode: ColimaAdviceMode,
-) -> Result<Option<ColimaProfileAction>, ContainerExecError> {
+    exclusive_held: bool,
+    contended: bool,
+) -> Result<MountInotifyMigration, ContainerExecError> {
     if !crate::colima::is_managed_colima_profile(&policy.profile)
         || crate::colima_profile_mount_inotify(&policy.profile) != Some(true)
     {
-        return Ok(None);
+        return Ok(MountInotifyMigration::NotNeeded);
     }
     if advice_mode == ColimaAdviceMode::Automated {
-        return Ok(None);
+        return Ok(MountInotifyMigration::Deferred);
+    }
+    if contended || !exclusive_held {
+        eprintln!(
+            "[info] Colima profile `{}` is still running with global mountInotify: true; deferring migration while another container bring-up is active",
+            policy.profile
+        );
+        return Ok(MountInotifyMigration::Deferred);
     }
     if colima_profile_has_running_containers(policy, repo_root) {
         eprintln!(
             "[info] Colima profile `{}` is still running with global mountInotify: true; Effigy will switch it off automatically next time it starts with no running containers (or on the next planned restart)",
             policy.profile
         );
-        return Ok(None);
+        return Ok(MountInotifyMigration::Deferred);
     }
     eprintln!(
         "[info] upgrading Colima profile `{}` to disable global mountInotify (no running containers)…",
@@ -341,7 +676,8 @@ fn maybe_migrate_running_profile_mount_inotify(
         &stop.label,
         COLIMA_STOP_TIMEOUT,
     )?;
-    start_managed_colima_profile(policy, repo_root, ColimaProfileAction::Started).map(Some)
+    start_managed_colima_profile(policy, repo_root, ColimaProfileAction::Started)?;
+    Ok(MountInotifyMigration::Migrated)
 }
 
 /// Returns `true` when at least one container is running on `policy.profile`,
@@ -607,6 +943,17 @@ pub fn ensure_runtime_backend_running(
     Ok(ensure_runtime_backend_running_report(policy, repo_root)?.started)
 }
 
+/// [`ensure_runtime_backend_running`] returning a shared bring-up guard that
+/// stays held across container admission and `compose up`, preventing an idle
+/// `mountInotify` migration from stopping the VM mid-bring-up.
+pub fn ensure_runtime_backend_running_for_bringup(
+    policy: &EffectiveContainerPolicy,
+    repo_root: &Path,
+) -> Result<(bool, ColimaProfileBringupGuard), ContainerExecError> {
+    let (report, guard) = ensure_runtime_backend_running_report_for_bringup(policy, repo_root)?;
+    Ok((report.started, guard))
+}
+
 /// [`ensure_runtime_backend_running`] with the profile transition reported, so
 /// a caller holding a container admission can tell that the profile it was
 /// recorded against was created or restarted.
@@ -614,6 +961,15 @@ pub fn ensure_runtime_backend_running_report(
     policy: &EffectiveContainerPolicy,
     repo_root: &Path,
 ) -> Result<ColimaEnsureReport, ContainerExecError> {
+    Ok(ensure_runtime_backend_running_report_for_bringup(policy, repo_root)?.0)
+}
+
+/// [`ensure_runtime_backend_running_report`] returning a shared bring-up guard
+/// that stays held across container admission and `compose up`.
+pub fn ensure_runtime_backend_running_report_for_bringup(
+    policy: &EffectiveContainerPolicy,
+    repo_root: &Path,
+) -> Result<(ColimaEnsureReport, ColimaProfileBringupGuard), ContainerExecError> {
     match resolve_compose_backend_for_repo(repo_root, policy) {
         ComposeBackend::Docker => {
             let output = run_runtime_command_capture_for_policy_allow_failure(
@@ -622,7 +978,10 @@ pub fn ensure_runtime_backend_running_report(
                 &[OsString::from("ps")],
             )?;
             if output.status.success() {
-                Ok(ColimaEnsureReport::default())
+                Ok((
+                    ColimaEnsureReport::default(),
+                    ColimaProfileBringupGuard::empty(),
+                ))
             } else {
                 let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
                 let raw_stderr = String::from_utf8_lossy(&output.stderr).into_owned();
@@ -649,7 +1008,11 @@ pub fn ensure_runtime_backend_running_report(
                 })
             }
         }
-        ComposeBackend::ColimaNerdctl => ensure_colima_running_report(policy, repo_root),
+        ComposeBackend::ColimaNerdctl => ensure_colima_running_report_for_bringup_with_advice_mode(
+            policy,
+            repo_root,
+            colima_advice_mode(),
+        ),
     }
 }
 
@@ -1691,7 +2054,16 @@ case "$1" in
   start)
     printf '%s\n' "$PWD" "${TMPDIR-unset}" "${TMP-unset}" "${TEMP-unset}" "$PATH" "$HOME" "$COLIMA_HOME" "$SSH_AUTH_SOCK" > "$root/start-env"
     : > "$root/running"; : > "$root/listed"; printf 'started\n' ;;
-  stop) if [ ! -f "$root/stop-stays-running" ]; then rm -f "$root/running"; fi; printf 'stopped\n' ;;
+  stop)
+    if [ -f "$root/pause-on-stop" ]; then
+      : > "$root/stop-entered"
+      n=0
+      while [ ! -f "$root/release-stop" ] && [ "$n" -lt 250 ]; do
+        n=$((n + 1))
+        sleep 0.02
+      done
+    fi
+    if [ ! -f "$root/stop-stays-running" ]; then rm -f "$root/running"; fi; printf 'stopped\n' ;;
   nerdctl)
     if [ -f "$root/offline" ]; then
       printf '%s\n' 'failed to solve: rust:1.88-bookworm: failed to resolve source metadata for docker.io/library/rust:1.88-bookworm: dial tcp: lookup registry-1.docker.io on 192.168.5.3:53: read udp: connection refused' >&2
@@ -1829,6 +2201,10 @@ esac
                 .lines()
                 .map(str::to_owned)
                 .collect()
+        }
+
+        fn clear_calls(&self) {
+            let _ = std::fs::remove_file(self.root.join("colima-calls"));
         }
     }
 
@@ -2611,6 +2987,246 @@ esac
             calls[4].starts_with("ssh --profile effigy -- sudo sh -c "),
             "{calls:#?}"
         );
+
+        // Missing config (`None`) and unmanaged profile (`custom` even with
+        // `mountInotify: true`) also skip ps -q, stop, and start.
+        std::fs::remove_file(fixture.home.join(".colima/effigy/colima.yaml"))
+            .expect("remove config");
+        fixture.clear_calls();
+        let missing_report = ensure_colima_running_report_with_advice_mode(
+            &policy,
+            &fixture.root,
+            ColimaAdviceMode::Interactive,
+        )
+        .expect("missing config reuses without migration calls");
+        assert!(!missing_report.started);
+        assert!(
+            !fixture.calls().iter().any(|call| call.contains("ps -q")
+                || call.starts_with("stop ")
+                || call.starts_with("start ")),
+            "missing config must skip migration calls: {:#?}",
+            fixture.calls()
+        );
+
+        let mut unmanaged = fixture.policy();
+        unmanaged.profile = "custom".to_owned();
+        let unmanaged_cfg = "memory: 4\nmountInotify: true\n";
+        fixture.write_colima_profile_config("custom", unmanaged_cfg);
+        fixture.clear_calls();
+        let unmanaged_report = ensure_colima_running_report_with_advice_mode(
+            &unmanaged,
+            &fixture.root,
+            ColimaAdviceMode::Interactive,
+        )
+        .expect("unmanaged profile reuses without migration calls");
+        assert!(!unmanaged_report.started);
+        assert!(
+            !fixture.calls().iter().any(|call| call.contains("ps -q")
+                || call.starts_with("stop ")
+                || call.starts_with("start ")),
+            "unmanaged profile must skip migration calls: {:#?}",
+            fixture.calls()
+        );
+        assert_eq!(
+            std::fs::read_to_string(fixture.home.join(".colima/custom/colima.yaml"))
+                .expect("read unmanaged config"),
+            unmanaged_cfg
+        );
+    }
+
+    #[test]
+    fn deferred_mount_inotify_migration_preserves_colima_yaml_on_concurrent_drift() {
+        let _lock = crate::test_env_lock();
+
+        // Concurrent SSH-agent drift (`forwardAgent: false`) with `mountInotify: true`:
+        // automated mode and interactive busy/failed ps-q must NOT rewrite `colima.yaml`.
+        let drifted_ssh = "memory: 32\nforwardAgent: false\nmountInotify: true\n";
+        for (mode, marker) in [
+            (ColimaAdviceMode::Automated, None),
+            (ColimaAdviceMode::Interactive, Some("ps-running")),
+            (ColimaAdviceMode::Interactive, Some("ps-fails")),
+        ] {
+            let fixture = ManagedProfileFixture::new();
+            fixture.state("listed");
+            fixture.state("running");
+            if let Some(marker) = marker {
+                fixture.state(marker);
+            }
+            fixture.write_colima_config(drifted_ssh);
+            let policy = fixture.policy();
+
+            let report =
+                ensure_colima_running_report_with_advice_mode(&policy, &fixture.root, mode)
+                    .expect("deferred migration with concurrent SSH drift reuses safely");
+
+            assert!(!report.started, "{mode:?} {marker:?}");
+            assert!(!report.profile_created_or_restarted, "{mode:?} {marker:?}");
+            assert_eq!(
+                std::fs::read_to_string(fixture.home.join(".colima/effigy/colima.yaml"))
+                    .expect("read config"),
+                drifted_ssh,
+                "{mode:?} {marker:?}: deferred migration must preserve live mountInotify: true and not rewrite colima.yaml"
+            );
+            assert_eq!(
+                crate::colima_profile_mount_inotify("effigy"),
+                Some(true),
+                "{mode:?} {marker:?}: doctor must still observe mountInotify: true"
+            );
+        }
+
+        // Concurrent memory-floor drift (`memory: 2` + `mountInotify: true`):
+        // automated mode refuses on RAM floor without rewriting `colima.yaml`.
+        let fixture = ManagedProfileFixture::new();
+        fixture.state("listed");
+        fixture.state("running");
+        fixture.state("under-floor");
+        let drifted_mem = "memory: 2\nforwardAgent: true\nmountInotify: true\n";
+        fixture.write_colima_config(drifted_mem);
+        let policy = fixture.policy();
+
+        let error = ensure_running_managed_profile_ready(
+            &policy,
+            &fixture.root,
+            ColimaAdviceMode::Automated,
+        )
+        .expect_err("under-floor RAM still refuses when migration is deferred");
+        assert!(
+            error.to_string().contains("running with 2GiB RAM"),
+            "{error}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(fixture.home.join(".colima/effigy/colima.yaml"))
+                .expect("read config"),
+            drifted_mem,
+            "memory-floor refusal during deferred migration must leave colima.yaml untouched"
+        );
+    }
+
+    #[test]
+    fn concurrent_bringup_guard_prevents_interactive_mount_inotify_stop() {
+        let _lock = crate::test_env_lock();
+        let fixture = ManagedProfileFixture::new();
+        fixture.state("listed");
+        fixture.state("running");
+        let original = "memory: 32\nforwardAgent: true\nmountInotify: true\n";
+        fixture.write_colima_config(original);
+        let policy = fixture.policy();
+
+        // Simulate another checkout holding the shared bring-up guard between
+        // `ensure_runtime_backend_running` and `compose up` (0 containers visible yet).
+        let bringup_guard = acquire_colima_profile_bringup_guard(&policy, &fixture.root)
+            .expect("acquire shared bring-up guard");
+
+        let report = ensure_colima_running_report_with_advice_mode(
+            &policy,
+            &fixture.root,
+            ColimaAdviceMode::Interactive,
+        )
+        .expect("interactive ensure should defer while another bring-up holds guard");
+
+        assert!(!report.started);
+        assert!(!report.profile_created_or_restarted);
+        let calls = fixture.calls();
+        assert!(
+            !calls.iter().any(|call| call.contains("ps -q")
+                || call.starts_with("stop ")
+                || call.starts_with("start ")),
+            "contended bring-up lock must defer without stopping or restarting: {calls:#?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(fixture.home.join(".colima/effigy/colima.yaml"))
+                .expect("read config"),
+            original,
+            "contended bring-up lock must leave colima.yaml untouched"
+        );
+        drop(bringup_guard);
+    }
+
+    #[test]
+    fn interactive_migration_serializes_concurrent_bringup_until_restart_completes() {
+        let _lock = crate::test_env_lock();
+        let fixture = ManagedProfileFixture::new();
+        fixture.state("listed");
+        fixture.state("running");
+        fixture.state("pause-on-stop");
+        fixture.write_colima_config("memory: 32\nforwardAgent: true\nmountInotify: true\n");
+        let policy = fixture.policy();
+        let root = fixture.root.clone();
+
+        let (tx_entered, rx_entered) = std::sync::mpsc::channel();
+        let (tx_done, rx_done) = std::sync::mpsc::channel();
+        let policy_worker = policy.clone();
+        let root_worker = root.clone();
+
+        let migrator = std::thread::spawn(move || {
+            let report = ensure_colima_running_report_with_advice_mode(
+                &policy_worker,
+                &root_worker,
+                ColimaAdviceMode::Interactive,
+            );
+            let _ = tx_done.send(report);
+        });
+
+        // Wait until the migrator holds the exclusive lock inside `colima stop`.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !root.join("stop-entered").is_file() {
+            assert!(
+                Instant::now() < deadline,
+                "migrator never reached colima stop"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        // Start a concurrent automated bring-up on the same profile; it must block
+        // on the shared profile lock until migration finishes `colima start`, rather
+        // than proceeding while `colima stop` is stopping the VM.
+        let policy_bringup = policy.clone();
+        let root_bringup = root.clone();
+        let bringup = std::thread::spawn(move || {
+            let _ = tx_entered.send(());
+            ensure_colima_running_report_with_advice_mode(
+                &policy_bringup,
+                &root_bringup,
+                ColimaAdviceMode::Automated,
+            )
+        });
+
+        rx_entered.recv().expect("bring-up thread started");
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(
+            rx_done.try_recv().is_err(),
+            "migrator should still be paused inside stop"
+        );
+        // Verify the concurrent bring-up has NOT issued `status` or `info` yet while stop is paused.
+        let calls_while_paused = fixture.calls();
+        assert_eq!(
+            calls_while_paused,
+            [
+                "status --profile effigy",
+                "nerdctl --profile effigy -- ps -q",
+                "stop --profile effigy",
+            ],
+            "concurrent bring-up must wait behind exclusive migration lock: {calls_while_paused:#?}"
+        );
+
+        // Release `colima stop` so migration completes `prepare` + `colima start`.
+        fixture.state("release-stop");
+        let mig_report = rx_done
+            .recv_timeout(Duration::from_secs(5))
+            .expect("migrator finishes")
+            .expect("migrator succeeds");
+        assert!(mig_report.started);
+        migrator.join().expect("migrator thread");
+
+        let bringup_report = bringup
+            .join()
+            .expect("bring-up thread")
+            .expect("concurrent bring-up succeeds after migration");
+        assert!(
+            !bringup_report.started,
+            "concurrent bring-up should reuse the freshly migrated VM"
+        );
+        assert_eq!(crate::colima_profile_mount_inotify("effigy"), Some(false));
     }
 
     fn test_policy() -> EffectiveContainerPolicy {

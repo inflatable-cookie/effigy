@@ -8,8 +8,8 @@ use crate::runner::container_command::support::ensure_shared_services_observed;
 use crate::runner::container_command::{secret_env, steps, RunnerError};
 use effigy_containers::compose::{resolve_compose_backend_for_repo, ComposeBackend};
 use effigy_containers::exec::{
-    colima_profile_warnings, ensure_runtime_backend_running, inspect_colima_ssh_agent_socket,
-    SshAgentSocketHealth,
+    colima_profile_warnings, ensure_runtime_backend_running_for_bringup,
+    inspect_colima_ssh_agent_socket, SshAgentSocketHealth,
 };
 use effigy_containers::{
     effective_attach_mode, load_container_policy_for_creation_observed,
@@ -135,7 +135,8 @@ fn prepare_container_up_with_loader(
     emit_warning_lines(&warnings);
     let attach_mode = effective_attach_mode(&policy, attach, detach);
     operation.preparation_step = Some("runtime");
-    let colima_started = ensure_runtime_backend_running(&policy, repo_root)?;
+    let (colima_started, colima_bringup_guard) =
+        ensure_runtime_backend_running_for_bringup(&policy, repo_root)?;
     emit_ssh_agent_socket_warning(&policy, repo_root);
     operation.preparation_step = Some("mounts");
     effigy_containers::policy::mounts::prepare_container_mount_sources(&policy)?;
@@ -182,6 +183,7 @@ fn prepare_container_up_with_loader(
         handover_notes: Vec::new(),
         workspace_mount_decisions,
         up_plan,
+        _colima_bringup_guard: colima_bringup_guard,
     })
 }
 

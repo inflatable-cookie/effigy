@@ -5,7 +5,8 @@ use std::ffi::OsString;
 use std::path::Path;
 
 use effigy_containers::exec::{
-    ensure_runtime_backend_running, run_compose_capture_with_env_owner, RetainedComposeOwner,
+    ensure_runtime_backend_running_for_bringup, run_compose_capture_with_env_owner,
+    RetainedComposeOwner,
 };
 use effigy_containers::{load_container_exec_working_dir, EffectiveContainerPolicy};
 
@@ -39,7 +40,8 @@ pub(in crate::runner) fn prepare_container_exec_runtime(
     start: StartPolicy<'_>,
 ) -> Result<(), RunnerError> {
     validate_policy_runtime(repo_root, policy)?;
-    let _runtime_started = ensure_runtime_backend_running(policy, repo_root)?;
+    let (_runtime_started, _colima_bringup_guard) =
+        ensure_runtime_backend_running_for_bringup(policy, repo_root)?;
     let working_dir = load_container_exec_working_dir(repo_root, container_name)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let mut bring_up = None;

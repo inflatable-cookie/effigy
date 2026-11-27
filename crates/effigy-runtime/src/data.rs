@@ -816,8 +816,8 @@ where
         ))
     })?;
 
-    let colima_started =
-        effigy_containers::exec::ensure_runtime_backend_running(&policy, repo_root)
+    let (colima_started, _colima_bringup_guard) =
+        effigy_containers::exec::ensure_runtime_backend_running_for_bringup(&policy, repo_root)
             .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     let shared_service_notes = ensure_shared_services_running(&policy)?;
     let (creation_policy, workspace_mount_decisions) =

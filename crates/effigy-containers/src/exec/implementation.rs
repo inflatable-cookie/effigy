@@ -305,6 +305,8 @@ pub fn run_compose_capture_with_env(
     label: &str,
     env: &[(String, OsString)],
 ) -> Result<Output, ContainerExecError> {
+    let _bringup_guard =
+        super::colima_runtime::acquire_colima_profile_bringup_guard(policy, repo_root)?;
     let (program, args) = compose_invocation_for_repo(repo_root, policy, args);
     run_compose_invocation_capture_with_env(repo_root, OsStr::new(program), &args, label, env)
 }
@@ -852,6 +854,8 @@ pub fn run_compose_capture_with_env_owner(
     deadline: Instant,
     owner: &mut super::retained::RetainedComposeOwner<'_, '_>,
 ) -> Result<Output, ContainerExecError> {
+    let _bringup_guard =
+        super::colima_runtime::acquire_colima_profile_bringup_guard(policy, repo_root)?;
     let (program, args) = compose_invocation_for_repo(repo_root, policy, args);
     run_compose_invocation_capture_owner(
         repo_root,
@@ -907,6 +911,8 @@ pub fn run_compose_invocation_streaming_with_env_owner(
     deadline: Instant,
     owner: &mut super::retained::RetainedComposeOwner<'_, '_>,
 ) -> Result<Output, ContainerExecError> {
+    let _bringup_guard =
+        super::colima_runtime::acquire_colima_profile_bringup_guard(policy, repo_root)?;
     if crate::policy::render::vm_interpolation_required(program, env) {
         return super::retained::detached(
             repo_root,
@@ -953,6 +959,8 @@ pub fn run_compose_invocation_streaming_with_env(
     stop_requested: Option<&std::sync::atomic::AtomicBool>,
     on_line: &mut dyn FnMut(&str),
 ) -> Result<Output, ContainerExecError> {
+    let _bringup_guard =
+        super::colima_runtime::acquire_colima_profile_bringup_guard(policy, repo_root)?;
     let program = program.to_string_lossy();
     match run_detached_command_streaming_with_env(
         repo_root,
