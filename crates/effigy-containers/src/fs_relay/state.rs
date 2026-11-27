@@ -181,6 +181,15 @@ pub fn clear_dead_fs_relay_record(repo_root: &Path, container: &str) {
     }
 }
 
+/// Whether a stack-owned relay has published its record for `container` and
+/// its process is alive. Whatever state the relay reports, it is up.
+pub fn stack_relay_published(repo_root: &Path, container: &str) -> bool {
+    matches!(
+        read_fs_relay_record(repo_root, container),
+        Ok(Some(record)) if record.owner == RelayOwner::Stack && process_alive(record.pid)
+    )
+}
+
 fn any_stream_reconnecting(repo_root: &Path, container: &str) -> bool {
     let Ok(entries) = fs::read_dir(stream_state_dir(repo_root, container)) else {
         return false;

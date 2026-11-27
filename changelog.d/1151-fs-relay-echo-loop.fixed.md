@@ -1,0 +1,1 @@
+The stack file-event relay no longer loops on macOS, where the guest's own `chmod` echoed back as a host event and re-sent the same file every ~300 ms. An event whose path still matches the fingerprint of its last send is now dropped. `container up --detach` also waits briefly for the relay to publish, so `container status` right after it reports the relay as running.
