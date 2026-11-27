@@ -1,0 +1,1 @@
+Checkout lease sweeps now retain `OwnerEnded` leases when a checkout's parent directory is missing or an empty `/Volumes/<name>` mount stub, avoiding teardown of stacks on temporarily unmounted volumes.
