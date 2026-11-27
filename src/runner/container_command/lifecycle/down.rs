@@ -157,27 +157,6 @@ fn validate_running_profile(
     )))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn down_names_non_containerd_runtime_for_explicit_profile() {
-        let info = effigy_containers::exec::ColimaProfileInfo {
-            status: "Running".to_owned(),
-            runtime: Some("docker".to_owned()),
-        };
-
-        let error = validate_running_profile("default", Some(&info))
-            .expect_err("Docker profiles cannot be read through nerdctl");
-
-        assert!(error
-            .to_string()
-            .contains("profile `default` uses the `docker` runtime"));
-        assert!(error.to_string().contains("requires a containerd profile"));
-    }
-}
-
 pub(in crate::runner::container_command) fn run_container_down_command(
     repo_override: Option<std::path::PathBuf>,
     name: Option<&str>,
@@ -280,4 +259,25 @@ pub(in crate::runner) fn release_managed_environment(
         environment::stop_hook_exempting(Operation::Down, Some(run)),
     )
     .map_err(RunnerError::from)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn down_names_non_containerd_runtime_for_explicit_profile() {
+        let info = effigy_containers::exec::ColimaProfileInfo {
+            status: "Running".to_owned(),
+            runtime: Some("docker".to_owned()),
+        };
+
+        let error = validate_running_profile("default", Some(&info))
+            .expect_err("Docker profiles cannot be read through nerdctl");
+
+        assert!(error
+            .to_string()
+            .contains("profile `default` uses the `docker` runtime"));
+        assert!(error.to_string().contains("requires a containerd profile"));
+    }
 }
