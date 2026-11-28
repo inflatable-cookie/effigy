@@ -325,7 +325,7 @@ fn custody_fixture_candidates_cover_cargo_build_unit_layout() {
     let executable = fixture
         .path()
         .join(profile)
-        .join("build/effigy-release/0123456789abcdef/release-test");
+        .join("build/effigy-release/0123456789abcdef/out/release-test");
     std::fs::create_dir_all(executable.parent().expect("unit directory"))
         .expect("create unit directory");
     std::fs::write(&executable, "test harness").expect("write harness");

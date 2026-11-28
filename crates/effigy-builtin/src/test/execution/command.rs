@@ -256,7 +256,7 @@ mod tests {
         let executable = fixture
             .path()
             .join(profile)
-            .join("build/effigy-builtin/0123456789abcdef/effigy-test-harness");
+            .join("build/effigy-builtin/0123456789abcdef/out/effigy-test-harness");
         std::fs::create_dir_all(executable.parent().expect("unit directory"))
             .expect("create unit directory");
         std::fs::write(&executable, "test harness").expect("write harness");

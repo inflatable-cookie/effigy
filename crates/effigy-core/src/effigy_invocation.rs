@@ -114,10 +114,30 @@ pub fn cargo_profile_dir(executable: &Path) -> Option<&Path> {
 }
 
 fn cargo_profile_dir_for<'a>(executable: &'a Path, profile: &str) -> Option<&'a Path> {
-    executable
-        .ancestors()
-        .skip(1)
-        .find(|ancestor| ancestor.file_name().is_some_and(|name| name == profile))
+    executable.ancestors().skip(1).find(|ancestor| {
+        ancestor.file_name().is_some_and(|name| name == profile)
+            && is_cargo_test_executable(executable, ancestor)
+    })
+}
+
+fn is_cargo_test_executable(executable: &Path, profile_dir: &Path) -> bool {
+    let Ok(relative) = executable.strip_prefix(profile_dir) else {
+        return false;
+    };
+    let components: Vec<_> = relative
+        .components()
+        .map(|component| component.as_os_str().to_str())
+        .collect();
+    match components.as_slice() {
+        [Some("deps"), Some(_)] => true,
+        [Some("build"), Some(_unit), Some(hash), Some(_)] => is_cargo_unit_hash(hash),
+        [Some("build"), Some(_unit), Some(hash), Some("out"), Some(_)] => is_cargo_unit_hash(hash),
+        _ => false,
+    }
+}
+
+fn is_cargo_unit_hash(hash: &str) -> bool {
+    hash.len() == 16 && hash.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 /// Render one resolved source, failing with an actionable message when the
@@ -208,6 +228,34 @@ mod tests {
     }
 
     #[test]
+    fn installed_executable_below_profile_named_directory_resolves_to_itself() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let executable = dir.path().join("release/bin/effigy");
+        std::fs::create_dir_all(executable.parent().expect("bin directory")).expect("mkdir");
+        std::fs::write(&executable, "installed Effigy").expect("write installed binary");
+        let profile_binary = dir.path().join("release/effigy");
+        std::fs::write(&profile_binary, "different Effigy").expect("write profile binary");
+
+        let source = resolve_source_with_profile(None, &executable, dir.path(), "release");
+
+        assert_eq!(source, InvocationSource::CurrentExe(executable));
+        assert_eq!(
+            cargo_profile_dir_for(&dir.path().join("release/bin/effigy"), "release"),
+            None
+        );
+    }
+
+    #[test]
+    fn current_cargo_test_harness_has_a_recognized_profile_layout() {
+        let executable = std::env::current_exe().expect("test executable");
+        assert!(
+            cargo_profile_dir(&executable).is_some(),
+            "unrecognized Cargo test executable layout: {}",
+            executable.display()
+        );
+    }
+
+    #[test]
     fn deps_layout_selects_profile_or_isolated_target_fallback() {
         // Pinned against an isolated fallback base, never the ambient
         // checkout `target/` or a shared Oxide output: a missing fallback
@@ -252,7 +300,7 @@ mod tests {
     fn build_unit_layout_selects_the_profile_binary() {
         let dir = tempfile::tempdir().expect("tempdir");
         let profile = dir.path().join(CARGO_PROFILE);
-        let unit = profile.join("build/effigy/0123456789abcdef");
+        let unit = profile.join("build/effigy/0123456789abcdef/out");
         std::fs::create_dir_all(&unit).expect("mkdir build unit");
         let exe = unit.join("effigy-test-harness");
         std::fs::write(&exe, "harness").expect("write harness");
@@ -277,7 +325,7 @@ mod tests {
             .path()
             .join("slot")
             .join(profile)
-            .join("build/effigy/0123456789abcdef");
+            .join("build/effigy/0123456789abcdef/out");
         std::fs::create_dir_all(&unit).expect("mkdir build unit");
         let exe = unit.join("effigy-test-harness");
         std::fs::write(&exe, "harness").expect("write harness");
