@@ -143,13 +143,13 @@ const GUEST_FORWARDED_AGENT_GLOB: &str = "/tmp/ssh-*/agent.*";
 /// Outcome of repairing the forwarded SSH-agent symlink inside a running VM.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SshAgentSymlinkRepair {
-    /// The forwarded path was absent or a broken symlink and now points at a
-    /// live guest agent socket.
+    /// The forwarded path was a broken symlink, or absent, and now resolves to
+    /// a live guest agent socket.
     Repaired { source: String },
-    /// The forwarded path already holds a live socket. Nothing was changed.
+    /// The forwarded path already resolves to a live socket. Nothing was changed.
     AlreadyLive,
-    /// The forwarded path holds something that is neither a socket nor a
-    /// symlink. Effigy never replaces it.
+    /// The forwarded path exists and is not a symlink to a socket, or is a
+    /// symlink to something other than a broken link. Effigy never replaces it.
     Foreign,
     /// No live forwarded agent socket exists in the guest to link to.
     NoLiveAgent,
@@ -157,60 +157,55 @@ pub enum SshAgentSymlinkRepair {
     Failed,
 }
 
-/// Points where a concurrent writer could land between the repair's check and
-/// its change. Production passes the shell no-op `:` at both points. The race
-/// tests put a competing socket there to prove the repair never clobbers it.
+/// A point where a concurrent writer could land between the repair's check and
+/// its change. Production passes the shell no-op `:`. The race tests put a
+/// competing socket there to prove the repair never displaces it.
 #[derive(Debug, Clone, Copy)]
 struct RepairRaceHooks<'a> {
-    /// Runs after a broken symlink is seen and before it is moved aside.
-    before_move: &'a str,
-    /// Runs after the forwarded path is cleared and before the link is made.
+    /// Runs after every check, immediately before the one conditional `ln -s`.
     before_link: &'a str,
 }
 
-const NO_RACE_HOOKS: RepairRaceHooks<'static> = RepairRaceHooks {
-    before_move: ":",
-    before_link: ":",
-};
+const NO_RACE_HOOKS: RepairRaceHooks<'static> = RepairRaceHooks { before_link: ":" };
 
 /// Repair script run inside the VM. It prints exactly one verdict line.
 ///
-/// It never overwrites what it did not create. A live socket or a regular file
-/// at the forwarded path is left as it is. A broken symlink is moved aside with
-/// `mv -n` and checked before removal, so a socket that appears in the window
-/// is restored rather than deleted. The link itself is made with `ln -s`
-/// without `-f`, which fails if anything now exists at the path. `privilege`
-/// prefixes the root-only commands: `sudo ` inside the VM, empty for fixtures.
+/// It never moves or removes an existing entry. The only mutation is one
+/// `ln -s` without `-f`, which creates a new name and fails if anything already
+/// occupies it. The forwarded path itself is never touched:
+///
+/// - Absent path: the link is created at the forwarded path.
+/// - Broken symlink to an absolute target: the link is created at that missing
+///   target, so the forwarded path resolves through a chain to the live socket
+///   and its bytes stay as they were.
+///
+/// A live socket, a regular file, or a symlink to an existing non-socket is left
+/// as it is. `privilege` prefixes the root-only commands: `sudo ` inside the VM,
+/// empty for fixture runs.
 fn ssh_agent_symlink_repair_script(
     forwarded: &str,
     candidates: &str,
     privilege: &str,
     hooks: RepairRaceHooks<'_>,
 ) -> String {
-    let RepairRaceHooks {
-        before_move,
-        before_link,
-    } = hooks;
+    let RepairRaceHooks { before_link } = hooks;
     format!(
         "src={forwarded}; \
          if [ -S \"$src\" ]; then echo live; exit 0; fi; \
-         if [ -e \"$src\" ] && [ ! -L \"$src\" ]; then echo foreign; exit 0; fi; \
+         if [ -e \"$src\" ]; then echo foreign; exit 0; fi; \
          live=; for s in {candidates}; do if [ -S \"$s\" ]; then live=$s; break; fi; done; \
          if [ -z \"$live\" ]; then echo no-live-agent; exit 0; fi; \
-         {privilege}mkdir -p \"$(dirname \"$src\")\" || exit 1; \
          if [ -L \"$src\" ]; then \
-           {before_move}; \
-           stale=\"$src.effigy-stale.$$\"; \
-           {privilege}mv -n \"$src\" \"$stale\" || exit 1; \
-           if [ -L \"$stale\" ] && [ ! -S \"$stale\" ]; then \
-             {privilege}rm -f \"$stale\"; \
-           else \
-             {privilege}mv -n \"$stale\" \"$src\"; \
-             if [ -S \"$src\" ]; then echo live; else echo foreign; fi; exit 0; \
-           fi; \
-         fi; \
-         {before_link}; \
-         {privilege}ln -s \"$live\" \"$src\" && [ -S \"$src\" ] && echo \"repaired $live\" || echo failed"
+           target=$(readlink \"$src\"); \
+           case \"$target\" in /*) ;; *) echo failed; exit 0 ;; esac; \
+           mkdir -p \"$(dirname \"$target\")\" || exit 1; \
+           {before_link}; \
+           ln -s \"$live\" \"$target\" && [ -S \"$src\" ] && echo \"repaired $live\" || echo failed; \
+         else \
+           {privilege}mkdir -p \"$(dirname \"$src\")\" || exit 1; \
+           {before_link}; \
+           {privilege}ln -s \"$live\" \"$src\" && [ -S \"$src\" ] && echo \"repaired $live\" || echo failed; \
+         fi"
     )
 }
 
@@ -299,37 +294,104 @@ fn repair_colima_ssh_agent_symlink_with(
     )))
 }
 
-/// What `container up` does with the forwarded socket once the repair has run.
+/// The host agent socket's path as the workspace service mounts it.
+const HOST_SSH_AGENT_TARGET: &str = "/run/host-services/ssh-auth.sock";
+
+/// Whether the policy's primary workspace service mounts the host SSH agent.
+///
+/// The workspace mount rewrite writes that mount into the primary service's
+/// volumes when forwarding is on, so the rendered compose answers it directly.
+/// Forwarding defaults to on, so a policy whose render cannot be read counts as
+/// mounted.
+pub fn policy_mounts_host_ssh_agent(policy: &EffectiveContainerPolicy) -> bool {
+    let Some(render) = policy.render.as_ref() else {
+        return true;
+    };
+    rendered_dir_mounts_host_ssh_agent(&render.path, &policy.primary_service).unwrap_or(true)
+}
+
+/// Scan the rendered compose documents in `dir` for the primary service.
+/// `None` when no document defines the service.
+fn rendered_dir_mounts_host_ssh_agent(dir: &Path, service: &str) -> Option<bool> {
+    let entries = std::fs::read_dir(dir).ok()?;
+    let mut defined = false;
+    let mut mounted = false;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !matches!(
+            path.extension().and_then(|ext| ext.to_str()),
+            Some("yml" | "yaml")
+        ) {
+            continue;
+        }
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        if let Some(mount) = compose_service_mounts_host_ssh_agent(&content, service) {
+            defined = true;
+            mounted |= mount;
+        }
+    }
+    defined.then_some(mounted)
+}
+
+/// Whether one rendered compose document mounts the host SSH agent on
+/// `service`. `None` when the document does not define the service.
+fn compose_service_mounts_host_ssh_agent(content: &str, service: &str) -> Option<bool> {
+    let document: serde_yaml::Value = serde_yaml::from_str(content).ok()?;
+    let definition = document.get("services")?.get(service)?;
+    let Some(volumes) = definition
+        .get("volumes")
+        .and_then(|value| value.as_sequence())
+    else {
+        return Some(false);
+    };
+    Some(volumes.iter().any(|volume| match volume {
+        serde_yaml::Value::String(text) => {
+            text.split(':').any(|part| part == HOST_SSH_AGENT_TARGET)
+        }
+        serde_yaml::Value::Mapping(_) => {
+            volume.get("target").and_then(|value| value.as_str()) == Some(HOST_SSH_AGENT_TARGET)
+        }
+        _ => false,
+    }))
+}
+
+/// What `container up` does with the forwarded socket.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SshAgentSocketOutcome {
     /// Bring-up continues. `relinked` names the live socket when Effigy
     /// repaired the link.
     Proceed { relinked: Option<String> },
-    /// Bring-up continues with this warning. The workspace may still fail to
-    /// mount, but its containers are not left half-created.
-    Warn(String),
-    /// Bring-up stops. The dangling link would fail the workspace mount and
-    /// strand its containers in `Created`.
+    /// Bring-up stops. The workspace mounts the host agent, which cannot be
+    /// used, so its containers would be stranded in `Created`.
     Refuse(String),
 }
 
-/// Decide what a broken forwarded socket means for `container up`, given the
-/// probe verdict and the repair attempt. Only a dangling link that cannot be
-/// repaired refuses. An absent socket keeps the warning, since forwarding was
-/// never set up for it.
-pub fn ssh_agent_socket_outcome(
+/// Decide `container up`'s outcome for the host SSH-agent socket.
+///
+/// Workloads that do not mount the agent never probe or repair the shared VM,
+/// so their bring-up is unaffected. For a mounting workload, a broken socket is
+/// repaired when a live guest agent exists, and otherwise refuses. The probe
+/// and the repair run lazily, so they only happen when they are needed.
+pub fn ssh_agent_bring_up_decision(
     profile: &str,
-    health: SshAgentSocketHealth,
-    repair: &Result<SshAgentSymlinkRepair, String>,
+    mounts_agent: bool,
+    probe: impl FnOnce() -> SshAgentSocketHealth,
+    repair: impl FnOnce() -> Result<SshAgentSymlinkRepair, String>,
     advice_mode: ColimaAdviceMode,
 ) -> SshAgentSocketOutcome {
+    if !mounts_agent {
+        return SshAgentSocketOutcome::Proceed { relinked: None };
+    }
+    let health = probe();
     if !health.is_broken() {
         return SshAgentSocketOutcome::Proceed { relinked: None };
     }
-    match repair {
+    match repair() {
         Ok(SshAgentSymlinkRepair::Repaired { source }) => {
             return SshAgentSocketOutcome::Proceed {
-                relinked: Some(source.clone()),
+                relinked: Some(source),
             };
         }
         Ok(SshAgentSymlinkRepair::AlreadyLive) => {
@@ -339,8 +401,7 @@ pub fn ssh_agent_socket_outcome(
     }
     let detail = match health {
         SshAgentSocketHealth::Stale => "is stale (the host SSH-agent socket rotated)",
-        SshAgentSocketHealth::Absent => "is not set up",
-        _ => "is unavailable",
+        _ => "is not set up",
     };
     let fix = match advice_mode {
         ColimaAdviceMode::Interactive => {
@@ -350,22 +411,18 @@ pub fn ssh_agent_socket_outcome(
             colima_profile_recovery_advice(profile, ColimaAdviceMode::Automated)
         }
     };
-    let message = format!(
-        "workspace SSH-agent forwarding {detail} on colima profile `{profile}`. The \
-         workspace container can fail to start with `mkdir /run/host-services/ssh-auth.sock: \
-         file exists`. {fix}"
-    );
-    match health {
-        SshAgentSocketHealth::Stale => SshAgentSocketOutcome::Refuse(format!(
-            "{message} Effigy did not start the workspace: no live guest agent socket could replace the dangling link."
-        )),
-        _ => SshAgentSocketOutcome::Warn(message),
-    }
+    SshAgentSocketOutcome::Refuse(format!(
+        "workspace SSH-agent forwarding {detail} on colima profile `{profile}`. The workspace \
+         mounts the host agent at {HOST_SSH_AGENT_TARGET}, and its container cannot start without \
+         a live socket there. Effigy did not start the workspace: no live guest agent socket \
+         could be linked. {fix}"
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
 
     #[test]
     fn classifies_probe_output() {
@@ -479,89 +536,92 @@ mod tests {
         run_repair_with(root, colima, forwarded, NO_RACE_HOOKS).expect("repair command runs")
     }
 
-    fn no_stale_leftovers(forwarded: &Path) {
-        let dir = forwarded.parent().expect("forwarded parent");
-        for entry in std::fs::read_dir(dir).expect("forwarded dir") {
-            let name = entry.expect("dir entry").file_name();
-            assert!(
-                !name.to_string_lossy().contains("effigy-stale"),
-                "repair left a moved-aside entry behind: {name:?}"
-            );
-        }
+    /// A live guest agent under `root/ssh-abc/`, kept alive by the returned listener.
+    fn live_guest_agent(root: &Path) -> (std::path::PathBuf, std::os::unix::net::UnixListener) {
+        std::fs::create_dir_all(root.join("ssh-abc")).expect("agent dir");
+        let live = root.join("ssh-abc/agent.1");
+        let listener = std::os::unix::net::UnixListener::bind(&live).expect("live guest agent");
+        (live, listener)
+    }
+
+    /// Whether `path` resolves, through any symlinks, to a socket.
+    fn is_socket(path: &Path) -> bool {
+        use std::os::unix::fs::FileTypeExt;
+        std::fs::metadata(path)
+            .map(|meta| meta.file_type().is_socket())
+            .unwrap_or(false)
     }
 
     #[test]
-    fn repair_links_a_live_guest_agent_in_place_without_restarting_the_vm() {
-        use std::os::unix::fs::FileTypeExt;
+    fn repair_links_an_absent_path_to_a_live_guest_agent_in_place() {
         let root = tempfile::tempdir().expect("repair fixture");
         let forwarded = root.path().join("run/host-services/ssh-auth.sock");
-        let agent_dir = root.path().join("ssh-abc");
-        std::fs::create_dir_all(&agent_dir).expect("agent dir");
-        let live = agent_dir.join("agent.1");
-        let _agent = std::os::unix::net::UnixListener::bind(&live).expect("live agent socket");
+        let (live, _agent) = live_guest_agent(root.path());
         let colima = fake_colima(root.path());
 
-        // Absent path: the missing parent is created and the link points at the live agent.
+        // The missing parent is created and the link points at the live agent.
         assert_eq!(
             run_repair(root.path(), &colima, &forwarded),
             SshAgentSymlinkRepair::Repaired {
                 source: live.to_string_lossy().into_owned()
             }
         );
-        assert!(std::fs::metadata(&forwarded)
-            .expect("forwarded path resolves")
-            .file_type()
-            .is_socket());
-
-        // Broken symlink left by a rotated agent: relinked in place.
-        std::fs::remove_file(&forwarded).expect("drop repaired link");
-        std::os::unix::fs::symlink(root.path().join("gone.sock"), &forwarded)
-            .expect("dangling link");
-        assert!(matches!(
-            run_repair(root.path(), &colima, &forwarded),
-            SshAgentSymlinkRepair::Repaired { .. }
-        ));
-        assert!(std::fs::metadata(&forwarded)
-            .expect("relinked path resolves")
-            .file_type()
-            .is_socket());
-        no_stale_leftovers(&forwarded);
+        assert!(is_socket(&forwarded));
 
         // Only the guest `ssh` ran; the fake binary would have failed any other verb.
         let calls = std::fs::read_to_string(root.path().join("calls")).expect("call log");
-        assert_eq!(calls.lines().count(), 2);
+        assert_eq!(calls.lines().count(), 1);
         assert!(calls
             .lines()
             .all(|line| line.starts_with("ssh --profile effigy -- sh -c")));
     }
 
     #[test]
-    fn repair_never_replaces_a_live_socket_or_a_regular_file() {
-        use std::os::unix::fs::FileTypeExt;
+    fn repair_redirects_a_broken_link_without_touching_the_forwarded_path() {
         let root = tempfile::tempdir().expect("repair fixture");
         let forwarded = root.path().join("run/host-services/ssh-auth.sock");
         std::fs::create_dir_all(forwarded.parent().expect("parent")).expect("forwarded dir");
-        let agent_dir = root.path().join("ssh-abc");
-        std::fs::create_dir_all(&agent_dir).expect("agent dir");
-        let _agent = std::os::unix::net::UnixListener::bind(agent_dir.join("agent.1"))
-            .expect("live guest agent");
+        let missing_target = root.path().join("ssh-old/agent.9");
+        std::os::unix::fs::symlink(&missing_target, &forwarded).expect("broken link");
+        let (live, _agent) = live_guest_agent(root.path());
         let colima = fake_colima(root.path());
 
-        // A live socket already at the forwarded path is left exactly as it is.
+        assert_eq!(
+            run_repair(root.path(), &colima, &forwarded),
+            SshAgentSymlinkRepair::Repaired {
+                source: live.to_string_lossy().into_owned()
+            }
+        );
+        // The forwarded path is the same symlink it was; the missing target is
+        // now a link to the live agent, so the chain resolves to a socket.
+        assert_eq!(
+            std::fs::read_link(&forwarded).expect("forwarded link"),
+            missing_target
+        );
+        assert!(is_socket(&forwarded));
+        assert!(is_socket(&missing_target));
+    }
+
+    #[test]
+    fn repair_never_replaces_a_live_socket_or_a_non_socket_entry() {
+        let root = tempfile::tempdir().expect("repair fixture");
+        let forwarded = root.path().join("run/host-services/ssh-auth.sock");
+        std::fs::create_dir_all(forwarded.parent().expect("parent")).expect("forwarded dir");
+        let (_live, _agent) = live_guest_agent(root.path());
+        let colima = fake_colima(root.path());
+
+        // A live socket at the forwarded path is left exactly as it is.
         let live_forwarded =
             std::os::unix::net::UnixListener::bind(&forwarded).expect("live forwarded socket");
         assert_eq!(
             run_repair(root.path(), &colima, &forwarded),
             SshAgentSymlinkRepair::AlreadyLive
         );
-        assert!(std::fs::symlink_metadata(&forwarded)
-            .expect("forwarded path")
-            .file_type()
-            .is_socket());
-
-        // A regular file at the forwarded path is not a broken link, so it stays too.
+        assert!(is_socket(&forwarded));
         drop(live_forwarded);
         std::fs::remove_file(&forwarded).expect("drop forwarded socket");
+
+        // A regular file is never replaced.
         std::fs::write(&forwarded, "not a socket").expect("regular file");
         assert_eq!(
             run_repair(root.path(), &colima, &forwarded),
@@ -571,6 +631,20 @@ mod tests {
             .expect("forwarded path")
             .file_type()
             .is_file());
+        std::fs::remove_file(&forwarded).expect("drop regular file");
+
+        // A symlink to an existing non-socket is not a broken link, so it stays.
+        let existing = root.path().join("existing.txt");
+        std::fs::write(&existing, "not a socket").expect("existing target");
+        std::os::unix::fs::symlink(&existing, &forwarded).expect("symlink to a file");
+        assert_eq!(
+            run_repair(root.path(), &colima, &forwarded),
+            SshAgentSymlinkRepair::Foreign
+        );
+        assert_eq!(
+            std::fs::read_link(&forwarded).expect("forwarded link"),
+            existing
+        );
     }
 
     #[test]
@@ -589,52 +663,32 @@ mod tests {
         assert!(std::fs::symlink_metadata(&forwarded).is_err());
     }
 
-    /// A competing writer lands a live socket on the forwarded path after the
-    /// repair decided the path was free. The link must fail rather than
-    /// replace it.
     #[test]
-    fn repair_loses_cleanly_to_a_socket_that_lands_before_the_link() {
-        use std::os::unix::fs::FileTypeExt;
-        let root = tempfile::tempdir().expect("repair fixture");
-        let forwarded = root.path().join("run/host-services/ssh-auth.sock");
-        std::fs::create_dir_all(root.path().join("ssh-abc")).expect("agent dir");
-        let _agent = std::os::unix::net::UnixListener::bind(root.path().join("ssh-abc/agent.1"))
-            .expect("live guest agent");
-        let racer = root.path().join("racer.sock");
-        let _racer = std::os::unix::net::UnixListener::bind(&racer).expect("competing socket");
-        let colima = fake_colima(root.path());
-        let land_racer = format!("mv '{}' '{}'", racer.display(), forwarded.display());
-
-        // Absent path: the competing socket arrives between the check and `ln`.
-        let outcome = run_repair_with(
-            root.path(),
-            &colima,
-            &forwarded,
-            RepairRaceHooks {
-                before_move: ":",
-                before_link: &land_racer,
-            },
-        )
-        .expect("repair command runs");
-        assert_eq!(outcome, SshAgentSymlinkRepair::Failed);
-        assert!(std::fs::symlink_metadata(&forwarded)
-            .expect("competing socket")
-            .file_type()
-            .is_socket());
-    }
-
-    /// A broken symlink is moved aside and removed; a competing socket that
-    /// lands after that must still survive the link step.
-    #[test]
-    fn repair_loses_cleanly_to_a_socket_that_lands_after_a_broken_link_is_cleared() {
-        use std::os::unix::fs::FileTypeExt;
+    fn repair_refuses_a_relative_broken_link_target() {
         let root = tempfile::tempdir().expect("repair fixture");
         let forwarded = root.path().join("run/host-services/ssh-auth.sock");
         std::fs::create_dir_all(forwarded.parent().expect("parent")).expect("forwarded dir");
-        std::os::unix::fs::symlink(root.path().join("gone.sock"), &forwarded).expect("broken link");
-        std::fs::create_dir_all(root.path().join("ssh-abc")).expect("agent dir");
-        let _agent = std::os::unix::net::UnixListener::bind(root.path().join("ssh-abc/agent.1"))
-            .expect("live guest agent");
+        std::os::unix::fs::symlink("gone.sock", &forwarded).expect("relative broken link");
+        let (_live, _agent) = live_guest_agent(root.path());
+        let colima = fake_colima(root.path());
+
+        assert_eq!(
+            run_repair(root.path(), &colima, &forwarded),
+            SshAgentSymlinkRepair::Failed
+        );
+        assert_eq!(
+            std::fs::read_link(&forwarded).expect("forwarded link"),
+            Path::new("gone.sock")
+        );
+    }
+
+    /// A competing writer fills the absent forwarded path between the repair's
+    /// check and its link. The link must fail and the writer's socket survive.
+    #[test]
+    fn repair_loses_cleanly_when_a_socket_fills_an_absent_path_first() {
+        let root = tempfile::tempdir().expect("repair fixture");
+        let forwarded = root.path().join("run/host-services/ssh-auth.sock");
+        let (_live, _agent) = live_guest_agent(root.path());
         let racer = root.path().join("racer.sock");
         let _racer = std::os::unix::net::UnixListener::bind(&racer).expect("competing socket");
         let colima = fake_colima(root.path());
@@ -645,31 +699,60 @@ mod tests {
             &colima,
             &forwarded,
             RepairRaceHooks {
-                before_move: ":",
                 before_link: &land_racer,
             },
         )
         .expect("repair command runs");
         assert_eq!(outcome, SshAgentSymlinkRepair::Failed);
-        assert!(std::fs::symlink_metadata(&forwarded)
-            .expect("competing socket")
-            .file_type()
-            .is_socket());
-        no_stale_leftovers(&forwarded);
+        assert!(is_socket(&forwarded), "the competing socket is intact");
     }
 
-    /// A competing socket replaces the broken link between the check and the
-    /// move aside. The repair must restore that socket, not delete it.
+    /// A competing writer fills the missing link target between the check and
+    /// the link. The conditional link fails, and the writer's socket survives.
     #[test]
-    fn repair_restores_a_socket_that_replaces_a_broken_link_mid_repair() {
-        use std::os::unix::fs::FileTypeExt;
+    fn repair_loses_cleanly_when_a_socket_fills_the_redirect_target_first() {
         let root = tempfile::tempdir().expect("repair fixture");
         let forwarded = root.path().join("run/host-services/ssh-auth.sock");
         std::fs::create_dir_all(forwarded.parent().expect("parent")).expect("forwarded dir");
-        std::os::unix::fs::symlink(root.path().join("gone.sock"), &forwarded).expect("broken link");
-        std::fs::create_dir_all(root.path().join("ssh-abc")).expect("agent dir");
-        let _agent = std::os::unix::net::UnixListener::bind(root.path().join("ssh-abc/agent.1"))
-            .expect("live guest agent");
+        let missing_target = root.path().join("ssh-old/agent.9");
+        std::os::unix::fs::symlink(&missing_target, &forwarded).expect("broken link");
+        let (_live, _agent) = live_guest_agent(root.path());
+        std::fs::create_dir_all(missing_target.parent().expect("target dir")).expect("target dir");
+        let racer = root.path().join("racer.sock");
+        let _racer = std::os::unix::net::UnixListener::bind(&racer).expect("competing socket");
+        let colima = fake_colima(root.path());
+        let land_racer = format!("mv '{}' '{}'", racer.display(), missing_target.display());
+
+        let outcome = run_repair_with(
+            root.path(),
+            &colima,
+            &forwarded,
+            RepairRaceHooks {
+                before_link: &land_racer,
+            },
+        )
+        .expect("repair command runs");
+        assert_eq!(outcome, SshAgentSymlinkRepair::Failed);
+        assert!(is_socket(&missing_target), "the competing socket is intact");
+        assert_eq!(
+            std::fs::read_link(&forwarded).expect("forwarded link"),
+            missing_target,
+            "the forwarded link is unchanged"
+        );
+    }
+
+    /// A competing writer replaces the forwarded broken link with its own live
+    /// socket between the check and the link. The repair must not displace that
+    /// socket: the forwarded path keeps it, and the repair never reports the
+    /// writer's socket as its own change.
+    #[test]
+    fn repair_never_displaces_a_socket_that_replaces_the_broken_link_mid_repair() {
+        let root = tempfile::tempdir().expect("repair fixture");
+        let forwarded = root.path().join("run/host-services/ssh-auth.sock");
+        std::fs::create_dir_all(forwarded.parent().expect("parent")).expect("forwarded dir");
+        let missing_target = root.path().join("ssh-old/agent.9");
+        std::os::unix::fs::symlink(&missing_target, &forwarded).expect("broken link");
+        let (_live, _agent) = live_guest_agent(root.path());
         let racer = root.path().join("racer.sock");
         let _racer = std::os::unix::net::UnixListener::bind(&racer).expect("competing socket");
         let colima = fake_colima(root.path());
@@ -680,17 +763,15 @@ mod tests {
             &colima,
             &forwarded,
             RepairRaceHooks {
-                before_move: &swap_racer,
-                before_link: ":",
+                before_link: &swap_racer,
             },
         )
         .expect("repair command runs");
-        assert_eq!(outcome, SshAgentSymlinkRepair::AlreadyLive);
-        assert!(std::fs::symlink_metadata(&forwarded)
-            .expect("restored socket")
-            .file_type()
-            .is_socket());
-        no_stale_leftovers(&forwarded);
+        assert!(
+            !matches!(outcome, SshAgentSymlinkRepair::Failed),
+            "the path resolves to the competing socket: {outcome:?}"
+        );
+        assert!(is_socket(&forwarded), "the competing socket is intact");
     }
 
     #[test]
@@ -768,89 +849,134 @@ mod tests {
     }
 
     #[test]
-    fn outcome_proceeds_when_the_repair_or_the_socket_is_healthy() {
+    fn compose_mount_detection_follows_the_primary_service_only() {
+        let mounted = "services:\n  workspace:\n    volumes:\n      - /run/host-services/ssh-auth.sock:/run/host-services/ssh-auth.sock\n";
         assert_eq!(
-            ssh_agent_socket_outcome(
-                "effigy",
-                SshAgentSocketHealth::Healthy,
-                &Ok(SshAgentSymlinkRepair::Failed),
-                ColimaAdviceMode::Interactive,
-            ),
-            SshAgentSocketOutcome::Proceed { relinked: None }
+            compose_service_mounts_host_ssh_agent(mounted, "workspace"),
+            Some(true)
+        );
+        let long_form = "services:\n  workspace:\n    volumes:\n      - type: bind\n        source: /x\n        target: /run/host-services/ssh-auth.sock\n";
+        assert_eq!(
+            compose_service_mounts_host_ssh_agent(long_form, "workspace"),
+            Some(true)
+        );
+        // An opted-out workspace, and a sidecar that mounts the socket, both do not mount it.
+        let opted_out = "services:\n  workspace:\n    volumes:\n      - /x:/y\n";
+        assert_eq!(
+            compose_service_mounts_host_ssh_agent(opted_out, "workspace"),
+            Some(false)
+        );
+        let sidecar_only = "services:\n  workspace:\n    image: x\n  tools:\n    volumes:\n      - /run/host-services/ssh-auth.sock:/run/host-services/ssh-auth.sock\n";
+        assert_eq!(
+            compose_service_mounts_host_ssh_agent(sidecar_only, "workspace"),
+            Some(false)
         );
         assert_eq!(
-            ssh_agent_socket_outcome(
-                "effigy",
-                SshAgentSocketHealth::Stale,
-                &Ok(SshAgentSymlinkRepair::Repaired {
-                    source: "/tmp/ssh-x/agent.1".to_owned()
-                }),
-                ColimaAdviceMode::Automated,
-            ),
+            compose_service_mounts_host_ssh_agent(mounted, "absent"),
+            None
+        );
+    }
+
+    #[test]
+    fn opted_out_workload_never_probes_or_repairs_the_shared_vm() {
+        let outcome = ssh_agent_bring_up_decision(
+            "effigy",
+            false,
+            || panic!("an opted-out workload must not probe the VM socket"),
+            || panic!("an opted-out workload must not repair the VM socket"),
+            ColimaAdviceMode::Automated,
+        );
+        assert_eq!(outcome, SshAgentSocketOutcome::Proceed { relinked: None });
+    }
+
+    #[test]
+    fn healthy_mounting_workload_proceeds_without_a_repair() {
+        let outcome = ssh_agent_bring_up_decision(
+            "effigy",
+            true,
+            || SshAgentSocketHealth::Healthy,
+            || panic!("a healthy socket must not be repaired"),
+            ColimaAdviceMode::Automated,
+        );
+        assert_eq!(outcome, SshAgentSocketOutcome::Proceed { relinked: None });
+    }
+
+    #[test]
+    fn mounting_workload_with_a_repairable_socket_proceeds_with_the_relink() {
+        let outcome = ssh_agent_bring_up_decision(
+            "effigy",
+            true,
+            || SshAgentSocketHealth::Stale,
+            || {
+                Ok(SshAgentSymlinkRepair::Repaired {
+                    source: "/tmp/ssh-x/agent.1".to_owned(),
+                })
+            },
+            ColimaAdviceMode::Automated,
+        );
+        assert_eq!(
+            outcome,
             SshAgentSocketOutcome::Proceed {
                 relinked: Some("/tmp/ssh-x/agent.1".to_owned())
             }
         );
-        assert_eq!(
-            ssh_agent_socket_outcome(
-                "effigy",
-                SshAgentSocketHealth::Stale,
-                &Ok(SshAgentSymlinkRepair::AlreadyLive),
-                ColimaAdviceMode::Automated,
-            ),
-            SshAgentSocketOutcome::Proceed { relinked: None }
-        );
     }
 
     #[test]
-    fn outcome_refuses_a_dangling_link_with_no_live_agent_and_advice_by_caller() {
-        let interactive = ssh_agent_socket_outcome(
+    fn mounting_workload_refuses_when_the_socket_is_absent_and_no_agent_exists() {
+        let repairs = Cell::new(0);
+        let outcome = ssh_agent_bring_up_decision(
             "effigy",
-            SshAgentSocketHealth::Stale,
-            &Ok(SshAgentSymlinkRepair::NoLiveAgent),
+            true,
+            || SshAgentSocketHealth::Absent,
+            || {
+                repairs.set(repairs.get() + 1);
+                Ok(SshAgentSymlinkRepair::NoLiveAgent)
+            },
             ColimaAdviceMode::Interactive,
         );
-        let SshAgentSocketOutcome::Refuse(message) = interactive else {
-            panic!("a dangling link with no live agent refuses");
+        assert_eq!(repairs.get(), 1);
+        let SshAgentSocketOutcome::Refuse(message) = outcome else {
+            panic!("an absent socket the workspace mounts refuses");
         };
-        assert!(message.contains("Effigy did not start the workspace"));
-        assert!(message.contains("colima restart effigy"));
-
-        let automated = ssh_agent_socket_outcome(
-            "effigy",
-            SshAgentSocketHealth::Stale,
-            &Ok(SshAgentSymlinkRepair::NoLiveAgent),
-            ColimaAdviceMode::Automated,
+        assert!(
+            message.contains("Effigy did not start the workspace"),
+            "{message}"
         );
-        let SshAgentSocketOutcome::Refuse(message) = automated else {
-            panic!("a dangling link with no live agent refuses");
-        };
-        assert!(message.contains("report the degraded profile to the host operator"));
-        assert!(!message.contains("colima restart"));
-        assert!(!message.contains("colima stop"));
-
-        // A repair that could not run also leaves the dangling link in place.
-        assert!(matches!(
-            ssh_agent_socket_outcome(
-                "effigy",
-                SshAgentSocketHealth::Stale,
-                &Err("colima ssh exited unsuccessfully".to_owned()),
-                ColimaAdviceMode::Automated,
-            ),
-            SshAgentSocketOutcome::Refuse(_)
-        ));
+        assert!(message.contains("colima restart effigy"), "{message}");
     }
 
     #[test]
-    fn outcome_only_warns_for_an_absent_socket_without_a_live_agent() {
-        assert!(matches!(
-            ssh_agent_socket_outcome(
+    fn mounting_workload_refusal_for_non_interactive_callers_never_suggests_stop_or_restart() {
+        for health in [SshAgentSocketHealth::Stale, SshAgentSocketHealth::Absent] {
+            let outcome = ssh_agent_bring_up_decision(
                 "effigy",
-                SshAgentSocketHealth::Absent,
-                &Ok(SshAgentSymlinkRepair::NoLiveAgent),
+                true,
+                || health,
+                || Ok(SshAgentSymlinkRepair::NoLiveAgent),
                 ColimaAdviceMode::Automated,
-            ),
-            SshAgentSocketOutcome::Warn(message) if message.contains("is not set up")
-        ));
+            );
+            let SshAgentSocketOutcome::Refuse(message) = outcome else {
+                panic!("a mounting workload refuses without a live agent: {health:?}");
+            };
+            assert!(
+                message.contains("report the degraded profile to the host operator"),
+                "{message}"
+            );
+            assert!(!message.contains("colima restart"), "{message}");
+            assert!(!message.contains("colima stop"), "{message}");
+        }
+    }
+
+    #[test]
+    fn mounting_workload_refuses_when_the_repair_cannot_run() {
+        let outcome = ssh_agent_bring_up_decision(
+            "effigy",
+            true,
+            || SshAgentSocketHealth::Stale,
+            || Err("colima ssh exited unsuccessfully".to_owned()),
+            ColimaAdviceMode::Automated,
+        );
+        assert!(matches!(outcome, SshAgentSocketOutcome::Refuse(_)));
     }
 }

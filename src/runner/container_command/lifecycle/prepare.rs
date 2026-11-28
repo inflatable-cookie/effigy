@@ -9,8 +9,8 @@ use crate::runner::container_command::{secret_env, steps, RunnerError};
 use effigy_containers::compose::{resolve_compose_backend_for_repo, ComposeBackend};
 use effigy_containers::exec::{
     colima_advice_mode, colima_profile_warnings, ensure_runtime_backend_running_for_bringup,
-    inspect_colima_ssh_agent_socket, repair_colima_ssh_agent_symlink, ssh_agent_socket_outcome,
-    ContainerExecError, SshAgentSocketOutcome,
+    inspect_colima_ssh_agent_socket, policy_mounts_host_ssh_agent, repair_colima_ssh_agent_symlink,
+    ssh_agent_bring_up_decision, ContainerExecError, SshAgentSocketOutcome,
 };
 use effigy_containers::{
     effective_attach_mode, load_container_policy_for_creation_observed,
@@ -204,27 +204,27 @@ fn emit_warning_lines(warnings: &[String]) {
 /// Pre-empt the cryptic nerdctl `mkdir /run/host-services/ssh-auth.sock: file
 /// exists` crash. On a long-running colima VM the forwarded host SSH-agent
 /// socket can go stale (the host agent socket rotated), leaving a dangling
-/// symlink that the workspace container cannot bind-mount. We check the socket
-/// once colima is up and, if it is broken, warn with the exact remediation so
-/// the operator fixes it instead of decoding a runtime error (g08.017).
+/// symlink that the workspace container cannot bind-mount. Only a workspace that
+/// mounts the agent is checked. For it, a broken socket is repaired in place
+/// when a live guest agent exists, and otherwise the bring-up refuses before
+/// compose strands its containers (g08.017).
 fn emit_ssh_agent_socket_warning(
     policy: &EffectiveContainerPolicy,
     repo_root: &Path,
 ) -> Result<(), RunnerError> {
-    // The probe runs inside the VM via `colima ssh`; only meaningful for the
-    // colima backend.
+    // The probe and the repair run inside the VM via `colima ssh`; only
+    // meaningful for the colima backend.
     if resolve_compose_backend_for_repo(repo_root, policy) != ComposeBackend::ColimaNerdctl {
         return Ok(());
     }
-    let health = inspect_colima_ssh_agent_socket(policy, repo_root);
-    if !health.is_broken() {
-        return Ok(());
-    }
-    // A broken forwarded path is repaired in place when the guest has a live
-    // agent socket. The VM is not restarted. The outcome decides whether the
-    // bring-up continues, warns, or refuses.
-    let repair = repair_colima_ssh_agent_symlink(&policy.profile, repo_root);
-    match ssh_agent_socket_outcome(&policy.profile, health, &repair, colima_advice_mode()) {
+    let outcome = ssh_agent_bring_up_decision(
+        &policy.profile,
+        policy_mounts_host_ssh_agent(policy),
+        || inspect_colima_ssh_agent_socket(policy, repo_root),
+        || repair_colima_ssh_agent_symlink(&policy.profile, repo_root),
+        colima_advice_mode(),
+    );
+    match outcome {
         SshAgentSocketOutcome::Proceed { relinked } => {
             if let Some(source) = relinked {
                 eprintln!(
@@ -232,10 +232,6 @@ fn emit_ssh_agent_socket_warning(
                     policy.profile
                 );
             }
-            Ok(())
-        }
-        SshAgentSocketOutcome::Warn(message) => {
-            emit_warning_lines(&[message]);
             Ok(())
         }
         SshAgentSocketOutcome::Refuse(message) => {
