@@ -1018,23 +1018,13 @@ pub(crate) fn serve(config: serde_json::Value, input: &mut impl Read) -> Result<
         .is_some_and(super::park::GroupInventory::proved_empty);
     let pin_closed = closure.closed || pin_is_closed(&mut watch);
     let unproved = !(groups_empty && pin_closed) && (residue || !pin_closed);
-    if closure.owner_lost || unproved {
-        // Record only what is true: custody closed (`interrupted`) or it did
-        // not (`unknown`, with residue). This also covers an unproved closure
-        // whose owner has not yet been observed gone: never success, never a
-        // process identity, no signal or reclaim authority.
-        record_owner_loss(
-            &config,
-            coordinates.as_ref(),
-            pin_closed && groups_empty,
-            if pin_closed && groups_empty {
-                "interrupted"
-            } else {
-                "unknown"
-            },
-        );
-    }
     if unproved {
+        // Record only what is true: custody closed (`interrupted`) or it did
+        // not (`unknown`, with residue). Publish the unknown row before
+        // parking; the park loop drops the gates before its final settled row.
+        // Never success, never a process identity, no signal or reclaim
+        // authority.
+        record_owner_loss(&config, coordinates.as_ref(), false, "unknown");
         // Retain exclusion with this verified holder. The park loop re-proves
         // emptiness and polls `effigy run release` (effigy#1034). A provably
         // empty group settles as interrupted; a release request with an empty
@@ -1043,6 +1033,11 @@ pub(crate) fn serve(config: serde_json::Value, input: &mut impl Read) -> Result<
         return Ok(());
     }
     drop(gates); // positive delegated closure; no numeric replay
+    if closure.owner_lost {
+        // With proved custody, publish the terminal row only after releasing
+        // the gate, so readers cannot observe conflicting live-gate evidence.
+        record_owner_loss(&config, coordinates.as_ref(), true, "interrupted");
+    }
     if let Some(error) = protocol_error {
         return Err(error);
     }

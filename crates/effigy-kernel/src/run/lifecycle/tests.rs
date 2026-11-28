@@ -2101,6 +2101,35 @@ fn check_foreground_owner_loss(pin_held: bool, owner_end: OwnerEnd, followup: Pa
     }
     // The owner's own guard close sends its registration EOF.
     drop(owner_pipe);
+    if !pin_held {
+        // Observe the terminal row while the guard is settling, then check the
+        // gate at that same observation. A row must never become visible while
+        // the run still holds its checkout gate.
+        let deadline = Instant::now() + Duration::from_secs(20);
+        let mut observed = false;
+        while Instant::now() < deadline {
+            let reader = match Store::read(&cx.operation().observe().unwrap(), &root) {
+                Observed::Verified(reader, _) => reader,
+                other => panic!("the foreground journal remains readable: {other:?}"),
+            };
+            if matches!(
+                super::super::terminal_record(&reader, run),
+                Observed::Verified(Some(_), _)
+            ) {
+                assert!(
+                    matches!(
+                        crate::gate::Gate::probe(&cx.operation().observe().unwrap(), &root, &owner),
+                        Observed::Verified(crate::gate::GateState::Free, _)
+                    ),
+                    "the interrupted terminal row is visible only after gate release"
+                );
+                observed = true;
+                break;
+            }
+            std::thread::yield_now();
+        }
+        assert!(observed, "the guard publishes the interrupted terminal row");
+    }
     if pin_held {
         // An unproved closure retains exclusion: the guard records the
         // unknown outcome and stays alive holding the gate. It must not
