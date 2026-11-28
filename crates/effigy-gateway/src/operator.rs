@@ -1393,6 +1393,7 @@ mod tests {
         assert_eq!(settled.run, Some(id));
     }
 
+    #[ignore = "requires EFFIGY_EXECUTABLE; run effigy test:focused -- -p effigy-gateway"]
     #[test]
     fn up_and_restart_recover_interrupted_runs_with_stale_identity_files() {
         if nix::unistd::Uid::effective().is_root() {
@@ -1400,12 +1401,8 @@ mod tests {
             eprintln!("skipping standard gateway lifecycle test: root is unsupported");
             return;
         }
-        let Some(executable) = std::env::var_os("EFFIGY_EXECUTABLE") else {
-            eprintln!(
-                "skipping gateway CLI recovery test: run it through `effigy test:focused` to provide EFFIGY_EXECUTABLE"
-            );
-            return;
-        };
+        let executable = std::env::var_os("EFFIGY_EXECUTABLE")
+            .expect("focused selector provides the checkout Effigy executable");
         let (home, mut config, interrupted_id) = interrupted_gateway_fixture();
         let dns_port = available_dns_port();
         config.dns.bind_addr = ([127, 0, 0, 1], dns_port).into();
