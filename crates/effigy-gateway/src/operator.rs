@@ -1400,9 +1400,13 @@ mod tests {
             eprintln!("skipping standard gateway lifecycle test: root is unsupported");
             return;
         }
+        let Some(executable) = std::env::var_os("EFFIGY_EXECUTABLE") else {
+            eprintln!(
+                "skipping gateway CLI recovery test: run it through `effigy test:focused` to provide EFFIGY_EXECUTABLE"
+            );
+            return;
+        };
         let (home, mut config, interrupted_id) = interrupted_gateway_fixture();
-        let executable = std::env::var_os("EFFIGY_EXECUTABLE")
-            .expect("focused selector provides the checkout Effigy executable");
         let dns_port = available_dns_port();
         config.dns.bind_addr = ([127, 0, 0, 1], dns_port).into();
         config.proxy.bind_addr = ([127, 0, 0, 1], available_tcp_port()).into();
