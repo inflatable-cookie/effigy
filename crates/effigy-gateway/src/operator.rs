@@ -558,12 +558,12 @@ fn up_with_executable_observed(
     if before.status != "stopped" {
         match recover_interrupted_gateway(config, before.run)? {
             GatewayRecovery::Settled(settled) => before = settled,
-            GatewayRecovery::Live if before.status == "unknown" => {
+            GatewayRecovery::Live(_) if before.status == "unknown" => {
                 return Err(error(
                     "the gateway owner is live or held; refusing to bypass kernel custody or start a replacement",
                 ));
             }
-            GatewayRecovery::Live => {
+            GatewayRecovery::Live(_) => {
                 note_reused_gateway_build(&before);
                 return Ok(before);
             }
@@ -789,15 +789,15 @@ pub fn down_observed(config: &GatewayConfig, report: &dyn Fn(StopPhase)) -> io::
     if current.status == "stopped" {
         return Ok(current);
     }
-    match recover_interrupted_gateway(config, current.run)? {
+    let live_run = match recover_interrupted_gateway(config, current.run)? {
         GatewayRecovery::Settled(settled) => return Ok(settled),
         GatewayRecovery::ClosedIncomplete => {
             return Err(error(current.reason.unwrap_or_else(|| {
                 "gateway cleanup is incomplete for a closed run; inspect and acknowledge its recorded residue after verifying affected processes are gone".into()
             })));
         }
-        GatewayRecovery::Live => {}
-    }
+        GatewayRecovery::Live(id) => id,
+    };
     let op = context(Duration::from_secs(15), EffectClass::Mutate);
     let cx = op.effects().map_err(error)?;
     let root = StateRoot::runtime_machine_effects(&cx, home(config)?).map_err(error)?;
@@ -806,7 +806,9 @@ pub fn down_observed(config: &GatewayConfig, report: &dyn Fn(StopPhase)) -> io::
         observed(Store::read(&observe, &root))?.ok_or_else(|| error("missing gateway store"))?;
     let (id, generation) =
         observed(reader.latest_run(&owner()))?.ok_or_else(|| error("missing gateway run"))?;
-    if current.run.is_some_and(|observed| observed != id) {
+    // Unknown status has no run id; recovery positively observed the live run
+    // above, so compare that generation with the fresh latest run before stop.
+    if live_run != id || current.run.is_some_and(|observed| observed != id) {
         return Err(error("gateway generation changed; retry down"));
     }
     report(StopPhase::Requested);
@@ -855,7 +857,7 @@ pub fn down_observed(config: &GatewayConfig, report: &dyn Fn(StopPhase)) -> io::
 
 enum GatewayRecovery {
     Settled(Status),
-    Live,
+    Live(RunId),
     ClosedIncomplete,
 }
 
@@ -883,12 +885,19 @@ fn recover_interrupted_gateway(
             let settled = settle_interrupted_run(config, &op, &cx, &root, id)?;
             Ok(GatewayRecovery::Settled(settled))
         }
-        Some(RunStatus::Live(_)) => Ok(GatewayRecovery::Live),
+        Some(RunStatus::Live(_)) => Ok(GatewayRecovery::Live(id)),
         Some(RunStatus::Closed {
             complete: false, ..
         }) => Ok(GatewayRecovery::ClosedIncomplete),
         Some(RunStatus::Closed { complete: true, .. }) => {
-            Ok(GatewayRecovery::Settled(status(config)?))
+            let settled = status(config)?;
+            if settled.status != "stopped" || settled.run != Some(id) {
+                return Err(error(format!(
+                    "closed gateway run {id} is not verified stopped (status `{}`); refusing to replace or report it settled",
+                    settled.status
+                )));
+            }
+            Ok(GatewayRecovery::Settled(settled))
         }
         None => Err(error("missing gateway run during interrupted-run recovery")),
     }
@@ -1291,6 +1300,8 @@ mod tests {
                 std::fs::Permissions::from_mode(0o700),
             )
             .unwrap();
+            // The fixture's absolute path exceeds sockaddr_un's limit; bind
+            // through a short alias into the private fixture directory.
             let alias = tempfile::Builder::new()
                 .prefix("effigy-gateway-socket-")
                 .tempdir_in("/tmp")
@@ -1398,7 +1409,6 @@ mod tests {
         config.proxy.tls_bind_addr = Some(([127, 0, 0, 1], available_tcp_port()).into());
         let op = context(Duration::from_secs(10), EffectClass::Mutate);
         let cx = op.effects().unwrap();
-        let cleanup = op.cleanup(Duration::from_secs(5)).unwrap();
         let root = StateRoot::runtime_machine_effects(&cx, home.path()).unwrap();
         let stale_control_socket = run::control_socket_path(&root, &owner(), interrupted_id);
         assert!(stale_control_socket.exists());
@@ -1458,6 +1468,14 @@ mod tests {
         std::fs::remove_file(control_socket).unwrap();
         let unobserved = status(&config).unwrap();
         assert_eq!(unobserved.status, "unknown");
+        let replacement = up_with_executable(&config, Path::new("/not/launched"))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            replacement.contains("owner is live or held"),
+            "{replacement}"
+        );
+        assert_eq!(status(&config).unwrap().status, "unknown");
         let stopped = down(&config).unwrap();
         assert_eq!(stopped.status, "stopped");
         assert!(!config.pid_file_path.exists());
@@ -1473,9 +1491,13 @@ mod tests {
         }
 
         let restarted_id = run_id().unwrap();
+        let restart_op = context(Duration::from_secs(10), EffectClass::Mutate);
+        let restart_cx = restart_op.effects().unwrap();
+        let restart_cleanup = restart_op.cleanup(Duration::from_secs(5)).unwrap();
+        let restart_root = StateRoot::runtime_machine_effects(&restart_cx, home.path()).unwrap();
         let interrupted = run::Run::begin(
-            &cx,
-            &root,
+            &restart_cx,
+            &restart_root,
             &invocation(owner()),
             run::BeginOpts {
                 id: restarted_id,
@@ -1484,7 +1506,7 @@ mod tests {
                 next: next(),
                 custody: None,
             },
-            &cleanup,
+            &restart_cleanup,
             &mut Adapter,
         )
         .unwrap();
@@ -1550,14 +1572,34 @@ mod tests {
         );
     }
 
-    #[test]
-    fn closed_incomplete_gateway_status_points_to_acknowledgement() {
-        let (_home, config) = closed_incomplete_gateway_fixture();
-        let closed = status(&config).unwrap();
+    fn assert_closed_incomplete_gateway_status(config: &GatewayConfig) {
+        let closed = status(config).unwrap();
         assert_eq!(closed.status, "unknown");
         let reason = closed.reason.unwrap();
         assert!(reason.contains("closed run"), "{reason}");
         assert!(reason.contains("effigy run acknowledge <run>"), "{reason}");
+    }
+
+    #[test]
+    fn up_and_down_refuse_closed_incomplete_gateway_residue() {
+        let (_home, config) = closed_incomplete_gateway_fixture();
+        assert_closed_incomplete_gateway_status(&config);
+
+        let up_error = up_with_executable(&config, Path::new("/not/launched"))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            up_error.contains("effigy run acknowledge <run>"),
+            "{up_error}"
+        );
+        assert_closed_incomplete_gateway_status(&config);
+
+        let down_error = down(&config).unwrap_err().to_string();
+        assert!(
+            down_error.contains("effigy run acknowledge <run>"),
+            "{down_error}"
+        );
+        assert_closed_incomplete_gateway_status(&config);
     }
 
     #[test]
@@ -1595,7 +1637,7 @@ mod tests {
         assert_eq!(reused.run, before.run);
         assert!(matches!(
             recover_interrupted_gateway(&config, before.run).unwrap(),
-            GatewayRecovery::Live
+            GatewayRecovery::Live(_)
         ));
         drop(run);
     }
