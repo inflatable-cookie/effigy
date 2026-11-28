@@ -113,8 +113,7 @@ guarded estimate reaches the 3900-byte budget. An option-less primary-service
 `tmpfs` list is a modelled mount input: each absolute path counts as a
 writable tmpfs row beside the merged volume mounts, with the literal `tmpfs`
 source and the `noexec,nosuid,nodev` mode nerdctl applies to `--tmpfs`, so
-Effigy's own generated php-fpm secret runtime (`/run/effigy/secrets`) is
-admissible and its bytes are budgeted. A
+generated service tmpfs mounts are admissible and their bytes are budgeted. A
 `tmpfs` mapping form or an option-carrying entry (`/path:size=…`), unsupported
 volume syntax, and the known unmodelled service mount contributors (`extends`,
 `configs`, `secrets`, and `volumes_from`), and referenced top-level

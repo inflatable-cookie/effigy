@@ -43,6 +43,13 @@ replaces a file and never follows a symlink. Effigy never repairs a host bind
 by recursively changing its ownership.
 
 
+## Container secret runtime files
+
+With `secrets.delivery = "runtime-files"`, generated stacks mount staged secret
+files read-only before the primary service starts. They survive container
+restarts and are removed on teardown. See the [secrets guide](075-secrets-and-vault-guide.md)
+for configuration and refresh behavior.
+
 ## Start Here
 
 Shortest path:

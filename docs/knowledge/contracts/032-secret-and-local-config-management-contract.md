@@ -315,6 +315,11 @@ Injection rules:
   key, the reason and the fix, and recorded under `warnings` in the bring-up's
   JSON envelope; required keys still fail the bring-up, and no bring-up writes
   an empty runtime secret file
+- generated runtime-file delivery stages owner-only files under the ignored
+  `.effigy/runtime/secrets/<environment>/` before Compose starts, and mounts
+  that directory read-only at the configured runtime path. Refreshes replace
+  the files, restarts retain them, and teardown removes them. Secret values
+  never enter generated Compose
 - container operations unlock `targets = ["containers"]` values only when the
   selected operation starts a runtime (`container up`); read, exec, logs,
   stats, reset, and teardown stay secret-free. Reset tears down runtime

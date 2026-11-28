@@ -52,6 +52,9 @@ pub(super) fn run_container_retire(
     let owned = inventory.owned_by(&checkout_label, scope, &declared);
     let mut kept = inventory.unlabelled_kept(&owned.projects);
     if owned.resources.is_empty() && kept.is_empty() {
+        if scope.is_none() {
+            cleanup_retired_secrets(&checkout, None)?;
+        }
         let outcome = RetireOutcome::default();
         return Ok(render_container_report(
             retire_report(Some(&checkout_label), &outcome),
@@ -69,9 +72,70 @@ pub(super) fn run_container_retire(
     crate::runner::fs_relay::stop_checkout_stack_relays(&checkout, &owned.projects, None);
     let mut outcome = retire_owned(&checkout, &owned.resources, keep_data)?;
     return_retired_leases(&inventory, &outcome);
+    if outcome.failed.is_empty() {
+        let projects = if let Some(scope) = scope {
+            inventory
+                .labelled
+                .iter()
+                .filter(|entry| {
+                    same_path(&entry.checkout, &checkout_label)
+                        && entry.scope.as_deref().map(str::trim) == Some(scope.trim())
+                })
+                .filter_map(|entry| entry.project.clone())
+                .collect()
+        } else {
+            owned.projects.clone()
+        };
+        cleanup_retired_secrets(&checkout, scope.map(|_| &projects))?;
+    }
     outcome.kept.splice(0..0, kept.drain(..));
     outcome.gateway = release_gateway(&checkout_label)?;
     finish(outcome, Some(&checkout_label), output_json)
+}
+
+fn cleanup_retired_secrets(
+    checkout: &Path,
+    projects: Option<&BTreeSet<String>>,
+) -> Result<(), RunnerError> {
+    let root = checkout.join(".effigy/runtime/secrets");
+    let entries = match std::fs::read_dir(&root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(RunnerError::task_invocation(format!(
+                "read secret runtime directories: {error}"
+            )))
+        }
+    };
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            RunnerError::task_invocation(format!("read secret runtime entry: {error}"))
+        })?;
+        if !entry
+            .file_type()
+            .map_err(|error| {
+                RunnerError::task_invocation(format!("inspect secret runtime entry: {error}"))
+            })?
+            .is_dir()
+        {
+            continue;
+        }
+        let project = match std::fs::read_to_string(entry.path().join(".project")) {
+            Ok(project) => project,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(RunnerError::task_invocation(format!(
+                    "read secret runtime identity: {error}"
+                )))
+            }
+        };
+        if projects.is_none_or(|projects| projects.contains(&project)) {
+            std::fs::remove_dir_all(entry.path()).map_err(|error| {
+                RunnerError::task_invocation(format!("remove secret runtime files: {error}"))
+            })?;
+        }
+    }
+    Ok(())
 }
 
 /// Return the Barge lease of every project this retirement removed from a
@@ -702,6 +766,29 @@ fn observation_cwd(checkout: &Path) -> PathBuf {
 mod tests {
     use super::*;
     use effigy_gateway::endpoint_store::EndpointStore;
+
+    #[test]
+    fn retirement_removes_only_selected_project_secret_directories_even_after_manifest_removal() {
+        let checkout = tempfile::tempdir().expect("checkout");
+        let root = checkout.path().join(".effigy/runtime/secrets");
+        for (name, project) in [("removed", "project-a"), ("other", "project-b")] {
+            let dir = root.join(name);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join(".project"), project).unwrap();
+            std::fs::write(dir.join("runtime.env"), "secret").unwrap();
+        }
+        std::fs::write(root.join("local.env"), "unrelated").unwrap();
+        cleanup_retired_secrets(
+            checkout.path(),
+            Some(&BTreeSet::from(["project-a".to_owned()])),
+        )
+        .unwrap();
+        assert!(!root.join("removed").exists());
+        assert!(root.join("other/runtime.env").exists());
+        cleanup_retired_secrets(checkout.path(), None).unwrap();
+        assert!(!root.join("other").exists());
+        assert!(root.join("local.env").exists());
+    }
 
     /// A lease is returned only for a stack that lost its last container.
     #[test]

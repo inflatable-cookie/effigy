@@ -168,6 +168,17 @@ fn run_container_up_inner(
             &plan.policy,
             retention,
             |run, effect, deadline| {
+                if let Err(error) =
+                    crate::runner::container_command::secret_env::stage_container_secret_runtime(
+                        repo_root,
+                        &plan.policy,
+                        &plan.secret_runtime,
+                    )
+                {
+                    let message = error.to_string();
+                    *detached_failure.borrow_mut() = Some(error);
+                    return Err(BackendError::Failed(message));
+                }
                 applied.set(true);
                 match run_container_up_compose(
                     &plan,
@@ -295,6 +306,13 @@ fn run_container_up_inner(
                 };
             }
         };
+        if !bring_up.holders.is_empty() {
+            crate::runner::container_command::secret_env::stage_container_secret_runtime(
+                repo_root,
+                &plan.policy,
+                &plan.secret_runtime,
+            )?;
+        }
         environment::refuse_held_detached_mounts(
             &bring_up,
             &plan.policy,

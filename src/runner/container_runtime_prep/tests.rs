@@ -496,6 +496,53 @@ fn runtime_compose_up_stage_propagates_a_compose_failure() {
 }
 
 #[test]
+fn task_apply_stages_runtime_secrets_before_compose_and_preserves_failed_apply() {
+    use effigy_manifest::ManifestContainerSecretDelivery::RuntimeFiles;
+    let repo = tempfile::tempdir().expect("checkout");
+    let root = repo.path();
+    let mut policy = test_policy(root.join("compose.yml"));
+    policy.repo_root = root.to_path_buf();
+    policy.compose_source = EffectiveComposeSource::Generated;
+    policy.secret_delivery = RuntimeFiles;
+    let secret = || {
+        resolved_runtime(
+            vec![("TOKEN".to_owned(), OsString::from("startup-value"))],
+            RuntimeFiles,
+        )
+    };
+    let apply = |fail| {
+        run_task_apply(
+            root,
+            &policy,
+            false,
+            |_| Ok(Vec::new()),
+            |_, _| Ok(secret()),
+            |_, _, _, _, env| {
+                assert!(env.is_empty());
+                assert!(std::fs::read_to_string(
+                    root.join(".effigy/runtime/secrets/web/runtime.json")
+                )
+                .unwrap()
+                .contains("startup-value"));
+                if fail {
+                    Err(RunnerError::task_invocation("compose failed"))
+                } else {
+                    Ok(())
+                }
+            },
+        )
+    };
+    apply(false).expect("apply");
+    assert!(root
+        .join(".effigy/runtime/secrets/web/runtime.env")
+        .exists());
+    apply(true).expect_err("failed apply");
+    assert!(root
+        .join(".effigy/runtime/secrets/web/runtime.json")
+        .exists());
+}
+
+#[test]
 fn task_apply_starts_shared_services_and_delivers_secrets_before_the_one_apply() {
     let repo_root = Path::new("/tmp/demo-repo");
     let policy = test_policy(PathBuf::from("docker-compose.yml"));
