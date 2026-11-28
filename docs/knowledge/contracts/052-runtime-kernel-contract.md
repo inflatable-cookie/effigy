@@ -322,10 +322,14 @@ complete in-memory effects, positive completion of every descendant, and the
 exact backup’s successful exit. Incidental pre-exec fork copies cannot retain
 a completely settled run; failed, unknown or unconfirmed custody never enables
 that release. Child completion propagates only after the same descendant
-closure proof. Owner EOF or terminal HUP/INT/TERM makes the guard stop the retained
-group within the cleanup budget, using the same positive evidence as the
-owner, then exit. While cleanup runs it keeps the owner gate held; it never
-unlocks on owner EOF alone. The owner similarly keeps custody if its guard dies.
+closure proof. Terminal HUP/INT/TERM are handled by the foreground owner and
+supervisor signal router, which settles the run and closes the guard's owner
+pin. The memory guard is launched with `setsid` in its own session so it
+survives owner terminal death; it settles after owner loss or pin closure, using
+the same positive group evidence as the owner. The detached guard ignores
+HUP/INT/TERM sent directly to it; those signals do not request group cleanup.
+While cleanup runs it keeps the owner gate held; it never unlocks on owner EOF
+alone. The owner similarly keeps custody if its guard dies.
 
 Process-group membership alone does not guarantee OS termination on owner
 SIGKILL. The terminal's HUP and the memory guard are the normal crash path,
