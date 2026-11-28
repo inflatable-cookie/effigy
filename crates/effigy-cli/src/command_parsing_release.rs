@@ -23,6 +23,7 @@ where
         "approve" => parse_release_approve(args),
         "decide" | "decision" => parse_release_decide(args),
         "receipt" => parse_release_receipt(args),
+        "abort" => parse_release_abort(args),
         "validate" => Err(CliParseError::InvalidArguments(
             "`effigy release validate` is retired in v0.15: Effigy's own release metadata check is the repo task `effigy release:metadata`, which the `metadata` certify gate runs. A project keeps its own checks in `[tasks]` wired as `[release.gates]` or a target's `verify` (contract 054 §4.4). See the v0.15.0 Removed entry in CHANGELOG.md".to_owned(),
         )),
@@ -293,6 +294,43 @@ where
 
     Ok(Command::Release(ReleaseArgs {
         subcommand: ReleaseSubcommand::Decide { run, published },
+        repo_override: common.repo_override,
+        output_json: common.output_json,
+    }))
+}
+
+/// `effigy release abort [<run>] [--yes]`: the Run is optional, and defaults to
+/// this checkout's active release Run. `--yes` confirms the discard.
+fn parse_release_abort<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut common = CommonArgs::default();
+    let mut run: Option<String> = None;
+    let mut yes = false;
+
+    while let Some(arg) = args.next() {
+        match common.take(&arg, &mut args, HelpTopic::Release)? {
+            CommonFlag::Help(topic) => return Ok(Command::Help(topic)),
+            CommonFlag::Consumed => continue,
+            CommonFlag::Unclaimed => {}
+        }
+        match arg.as_str() {
+            "--yes" => yes = true,
+            other if other.starts_with('-') => return Err(unknown_argument(other)),
+            other => {
+                if run.replace(other.to_owned()).is_some() {
+                    return Err(CliParseError::InvalidArguments(
+                        "`effigy release abort` takes at most one release Run id".to_owned(),
+                    ));
+                }
+            }
+        }
+    }
+
+    Ok(Command::Release(ReleaseArgs {
+        subcommand: ReleaseSubcommand::Abort { run, yes },
         repo_override: common.repo_override,
         output_json: common.output_json,
     }))

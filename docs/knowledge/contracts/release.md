@@ -232,6 +232,10 @@ and it forwards no subcommand of its own. The Run's `validate` stage refuses a
 dirty tree, and `prepare` rolls the tree back when a write, a lockfile sync or
 the commit fails, so the selector leaves either a completed
 prepare-and-certify checkpoint or the pre-prepare tree.
+A Run that failed before any publish is discarded with
+`effigy release abort --yes`, which clears its checkpoint and release state. It
+refuses any Run with a published, failed or unknown destination, or a pushed
+release commit (contract 054 §5).
 `effigy --plan release:run` is the runner's no-write task plan. The whole
 operation runs inside one admission; nested heavy gate work runs inside it
 instead of queueing again. Publishing is a separate, explicitly authorized

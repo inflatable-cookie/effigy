@@ -25,7 +25,7 @@ use effigy_kernel::id::{
 use effigy_kernel::observe::{AbsenceProof, Observed, UnknownReason};
 use effigy_kernel::outcome::Invocation;
 use effigy_kernel::root::StateRoot;
-use effigy_kernel::run::{BeginOpts, Fence, Reconciled, Run, SettlementAdapter};
+use effigy_kernel::run::{BeginOpts, Effect, Fence, Reconciled, Run, RunStatus, SettlementAdapter};
 use effigy_kernel::store::{Store, StoreReader};
 
 use super::receipt::ReleaseReceipt;
@@ -213,6 +213,14 @@ pub struct ReleaseState {
 }
 
 impl ReleaseState {
+    /// The owner's release directory: the record, its receipt and the candidate.
+    pub fn directory(&self) -> PathBuf {
+        self.candidate_dir
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_default()
+    }
+
     pub fn for_owner(state_root: &Path, owner: &ResourceId) -> Self {
         let directory = state_root
             .join(RELEASE_STATE_DIR)
@@ -403,6 +411,43 @@ impl ReleaseSession {
             )
             .map_err(storage_error)?;
         Ok(ReleaseState::for_owner(self.root.path(), &self.owner))
+    }
+
+    /// The release's state, addressed through this session's state root.
+    pub fn state_for_owner(&self) -> ReleaseState {
+        ReleaseState::for_owner(self.root.path(), &self.owner)
+    }
+
+    /// The effects one invocation journalled, read under the owner gate. An
+    /// abort checks them before it discards anything.
+    pub fn journal_effects(&self, id: RunId) -> Result<Vec<Effect>, ReleaseError> {
+        let observe = self
+            .cx
+            .child(Duration::from_secs(30))
+            .operation()
+            .observe()
+            .map_err(|_| {
+                ReleaseError::TaskInvocation("release state observation needs a deadline".into())
+            })?;
+        let root = match StateRoot::checkout_observe(&observe, &location(&self.repo_root)) {
+            Observed::Verified(root, _) => root,
+            Observed::Absent(_) | Observed::Unknown(_) => {
+                return Err(storage_error("the release journal is unreadable"))
+            }
+        };
+        let reader = match Store::read(&observe, &root) {
+            Observed::Verified(reader, _) => reader,
+            Observed::Absent(_) | Observed::Unknown(_) => {
+                return Err(storage_error("the release journal is unreadable"))
+            }
+        };
+        match effigy_kernel::run::status(&observe, &root, &reader, id, next_invocation()) {
+            Observed::Verified(status, _) => Ok(settlement_and_effects(status).1),
+            Observed::Unknown(reason) => {
+                Err(storage_error(format!("release Run status: {reason}")))
+            }
+            Observed::Absent(_) => Err(storage_error("release Run is missing from the journal")),
+        }
     }
 
     /// The checkpoint pointer the kernel engine record carries.
@@ -598,6 +643,8 @@ pub enum ReleaseSettlement {
 pub struct ReleaseObservation {
     pub record: ReleaseRecord,
     pub settlement: ReleaseSettlement,
+    /// The effects the invocation journalled. Only a closed invocation has them.
+    pub run_effects: Vec<Effect>,
 }
 
 /// Read a release's record without opening the state root for effects.
@@ -680,8 +727,12 @@ pub fn read_release_observation(
             }
             let record = state.read_record()?.ok_or_else(|| storage_error(format!(
                 "release {} has a checkpoint but its record is missing; preserving the journal for recovery", checkpoint.release_id)))?;
-            let settlement = settlement_of(&observe, &root, &reader, &record)?;
-            Ok(Some(ReleaseObservation { record, settlement }))
+            let (settlement, run_effects) = settlement_of(&observe, &root, &reader, &record)?;
+            Ok(Some(ReleaseObservation {
+                record,
+                settlement,
+                run_effects,
+            }))
         }
         None => Ok(None),
     }
@@ -713,13 +764,24 @@ fn settlement_of(
     root: &StateRoot,
     reader: &StoreReader,
     record: &ReleaseRecord,
-) -> Result<ReleaseSettlement, ReleaseError> {
+) -> Result<(ReleaseSettlement, Vec<Effect>), ReleaseError> {
     let id = record.run_id.parse::<RunId>().map_err(storage_error)?;
     match effigy_kernel::run::status(observe, root, reader, id, next_invocation()) {
-        Observed::Verified(status, _) => Ok(settlement_from(&status)),
+        Observed::Verified(status, _) => Ok(settlement_and_effects(status)),
         Observed::Unknown(reason) => Err(storage_error(format!("release Run status: {reason}"))),
         Observed::Absent(_) => Err(storage_error("release Run is missing from the journal")),
     }
+}
+
+/// The settlement a journal status reports, with the effects a closed
+/// invocation journalled.
+fn settlement_and_effects(status: RunStatus) -> (ReleaseSettlement, Vec<Effect>) {
+    let settlement = settlement_from(&status);
+    let effects = match status {
+        RunStatus::Closed { effects, .. } => effects,
+        RunStatus::Live(_) | RunStatus::Interrupted { .. } => Vec::new(),
+    };
+    (settlement, effects)
 }
 
 fn settlement_from(status: &effigy_kernel::run::RunStatus) -> ReleaseSettlement {

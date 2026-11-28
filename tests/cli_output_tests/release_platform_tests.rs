@@ -750,6 +750,64 @@ fn release_run_refuses_a_dirty_tree_and_names_the_run_for_an_unknown_id() {
     assert!(message.contains("release Run is"), "got: {message}");
 }
 
+/// `effigy release abort` through the CLI: a Run that fails its certify gate
+/// is unpublished, so the abort refuses without `--yes`, then discards it and
+/// reports the prepared commit it left on HEAD in the abort payload.
+#[test]
+fn release_abort_discards_an_unpublished_failed_run_through_the_cli() {
+    let root = temp_workspace("release-abort");
+    writable_release_project(&root);
+    let manifest = fs::read_to_string(root.join("effigy.toml")).expect("manifest");
+    fs::write(
+        root.join("effigy.toml"),
+        manifest.replace(
+            "certify = \"sh -c 'grep -q",
+            "certify = \"sh -c 'exit 3; grep -q",
+        ),
+    )
+    .expect("fail the certify gate");
+    init_git_repo(&root);
+    git_commit_all(&root, "fixture");
+    attach_bare_remote(&root);
+    let home = temp_workspace("release-abort-home");
+
+    let output = run_release_cli(&root, &home, &["release", "run"]);
+    let parsed = parse_stdout_json(&output);
+    assert!(!output.status.success(), "{parsed}");
+    assert_eq!(
+        parsed["error"]["details"]["receipt"]["release"]["status"], "failed",
+        "{parsed}"
+    );
+
+    // Without --yes the abort checks its gates and discards nothing.
+    let output = run_release_cli(&root, &home, &["release", "abort"]);
+    let parsed = parse_stdout_json(&output);
+    assert!(!output.status.success(), "{parsed}");
+    let message = parsed["error"]["message"].as_str().unwrap_or_default();
+    assert!(message.contains("--yes"), "got: {message}");
+
+    let output = run_release_cli(&root, &home, &["release", "abort", "--yes"]);
+    let parsed = parse_stdout_json(&output);
+    assert!(output.status.success(), "{parsed}");
+    let result = &parsed["result"];
+    assert_eq!(result["schema"], "effigy.release.abort.v1", "{parsed}");
+    assert_eq!(result["status"], "discarded");
+    assert_eq!(result["prepared_commit"]["on_head"], true, "{parsed}");
+    assert_eq!(result["prepared_commit"]["pushed"], false, "{parsed}");
+    let hint = result["reset_hint"].as_str().unwrap_or_default();
+    assert!(hint.starts_with("git reset --keep "), "got: {hint}");
+
+    // The Run is gone: no receipt, and no release to name.
+    let output = run_release_cli(&root, &home, &["release", "receipt"]);
+    let parsed = parse_stdout_json(&output);
+    assert!(!output.status.success(), "{parsed}");
+    let message = parsed["error"]["message"].as_str().unwrap_or_default();
+    assert!(
+        message.contains("there is no release Run"),
+        "got: {message}"
+    );
+}
+
 /// A release project whose only destination is a project task that reports an
 /// unknown publish outcome, so the Run needs an operator decision (054 §7).
 fn decision_release_project(root: &Path) {

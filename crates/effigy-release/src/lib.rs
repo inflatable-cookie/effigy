@@ -26,18 +26,20 @@ pub use prepare_helpers::{
     suggested_bump,
 };
 pub use run::{
-    new_run_id, parse_release_task_output, read_release_observation_for_root, read_release_record,
-    read_release_task_output, release_home, release_input_value, release_owner,
-    release_receipt_for_run, release_run_payload, render_release_receipt_json,
-    render_release_receipt_text, render_release_run_json, run_release, run_release_with_observer,
-    settle_release, sha256_bytes, verify_artifact_digests, GitEffects, RecordApproval,
-    RecordArtifact, RecordArtifactFile, RecordCheckpoint, RecordDecision, RecordDestination,
-    RecordGate, RecordIdentity, RecordTarget, RecordTargetState, RecordVerification, ReleaseAction,
-    ReleaseCheckpoint, ReleaseEffects, ReleaseReceipt, ReleaseRecord, ReleaseRunOutcome,
-    ReleaseRunRequest, ReleaseRunStatus, ReleaseSession, ReleaseStage, ReleaseState,
-    ReleaseTaskOutput, ReleaseTaskSubject, ReportsOnly, TargetDecision, TaskRequest, TaskResponse,
-    RELEASE_INPUT_ENV, RELEASE_OUTPUT_ENV, RELEASE_RECEIPT_SCHEMA, RELEASE_RECORD_SCHEMA,
-    RELEASE_TASK_INPUT_SCHEMA, RELEASE_TASK_OUTPUT_SCHEMA,
+    abort_release, new_run_id, parse_release_task_output, read_release_observation_for_root,
+    read_release_record, read_release_task_output, release_home, release_input_value,
+    release_owner, release_receipt_for_run, release_run_payload, render_release_abort_json,
+    render_release_abort_text, render_release_receipt_json, render_release_receipt_text,
+    render_release_run_json, run_release, run_release_with_observer, settle_release, sha256_bytes,
+    verify_artifact_digests, GitEffects, PreparedCommit, RecordApproval, RecordArtifact,
+    RecordArtifactFile, RecordCheckpoint, RecordDecision, RecordDestination, RecordGate,
+    RecordIdentity, RecordTarget, RecordTargetState, RecordVerification, ReleaseAbortReport,
+    ReleaseAction, ReleaseCheckpoint, ReleaseEffects, ReleaseReceipt, ReleaseRecord,
+    ReleaseRunOutcome, ReleaseRunRequest, ReleaseRunStatus, ReleaseSession, ReleaseStage,
+    ReleaseState, ReleaseTaskOutput, ReleaseTaskSubject, ReportsOnly, TargetDecision, TaskRequest,
+    TaskResponse, RELEASE_ABORT_SCHEMA, RELEASE_INPUT_ENV, RELEASE_OUTPUT_ENV,
+    RELEASE_RECEIPT_SCHEMA, RELEASE_RECORD_SCHEMA, RELEASE_TASK_INPUT_SCHEMA,
+    RELEASE_TASK_OUTPUT_SCHEMA,
 };
 
 pub use effigy_changelog::BumpKind;

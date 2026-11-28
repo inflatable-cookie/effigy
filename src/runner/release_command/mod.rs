@@ -3,9 +3,10 @@ use std::path::Path;
 use effigy_cli::{ReleaseArgs, ReleaseSubcommand};
 use effigy_release::{
     load_release_config, release_gate_run_payload, release_plan_payload, release_run_payload,
-    release_status_payload, render_release_gate_run_text, render_release_pipeline_plan_text,
-    render_release_receipt_json, render_release_receipt_text, render_release_status_text,
-    ReleaseAction, ReleaseRunOutcome, ReleaseStage, TargetDecision,
+    release_status_payload, render_release_abort_json, render_release_abort_text,
+    render_release_gate_run_text, render_release_pipeline_plan_text, render_release_receipt_json,
+    render_release_receipt_text, render_release_status_text, ReleaseAction, ReleaseRunOutcome,
+    ReleaseStage, TargetDecision,
 };
 
 use super::command_context::resolve_active_repo_root;
@@ -153,6 +154,16 @@ pub(super) fn run_release(args: ReleaseArgs) -> Result<String, RunnerError> {
                 return Ok(render_release_receipt_json(&receipt));
             }
             Ok(render_release_receipt_text(&receipt))
+        }
+        ReleaseSubcommand::Abort { run, yes } => {
+            let home = effigy_release::release_home()?;
+            let report =
+                effigy_release::abort_release(&home, &resolved.resolved_root, run.as_deref(), yes)?;
+            if args.output_json {
+                Ok(render_release_abort_json(&report))
+            } else {
+                Ok(render_release_abort_text(&report))
+            }
         }
     }
 }

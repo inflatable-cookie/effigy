@@ -817,6 +817,12 @@ pub enum ReleaseSubcommand {
     Receipt {
         run: Option<String>,
     },
+    /// `effigy release abort [<run>] [--yes]`: discard an unpublished failed
+    /// Run and its local release state. `yes` confirms the discard.
+    Abort {
+        run: Option<String>,
+        yes: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
