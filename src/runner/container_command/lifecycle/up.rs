@@ -232,6 +232,7 @@ fn run_container_up_inner(
                             )
                         },
                         |mounts| {
+                            crate::runner::environment::ensure_mount_repair_unheld(&plan.policy)?;
                             eprintln!("[info] detached named-volume mount(s) {}; recreating service `{}` to reattach them while preserving named volumes", mounts.join(", "), plan.policy.primary_service);
                             let args = detached_recreate_args(&plan.policy)?;
                             let invocation = effigy_runtime::container_manager::compose_invocation_plan_from_args(
@@ -294,6 +295,11 @@ fn run_container_up_inner(
                 };
             }
         };
+        environment::refuse_held_detached_mounts(
+            &bring_up,
+            &plan.policy,
+            plan.requested_container.as_deref(),
+        )?;
         compose_steps
             .borrow()
             .finish_unfinished(true, "the runtime reported the stack as reconciled");

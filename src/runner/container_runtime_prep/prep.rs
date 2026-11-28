@@ -7,14 +7,15 @@ use crate::runner::container_command::support::reconcile_primary_service_tcp_ali
 use crate::runner::error::RunnerError;
 
 use super::binding::ensure_primary_service_binding;
-use super::host_mounts::prepare_host_bind_mount_dirs;
+use super::host_mounts::prepare_host_bind_mount_dirs_with_protected_volumes;
 
 pub(super) fn prepare_runtime_mounts_stage(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<(), RunnerError> {
     effigy_containers::policy::mounts::prepare_container_mount_sources(policy)?;
-    prepare_host_bind_mount_dirs(repo_root, policy)
+    let protect = !crate::runner::environment::host_mountpoints_may_be_prepared(repo_root, policy);
+    prepare_host_bind_mount_dirs_with_protected_volumes(repo_root, policy, protect)
 }
 
 /// The one apply, for a task's own stack preparation: the same invocation and

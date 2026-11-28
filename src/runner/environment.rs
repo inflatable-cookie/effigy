@@ -275,6 +275,7 @@ pub(in crate::runner) struct BringUp {
     /// unproven outcome; only the sealed workspace route can attribute IDs.
     /// `None` when the environment was held and no apply ran.
     pub(in crate::runner) creation: Option<CreationOutcome>,
+    pub(in crate::runner) holders: Vec<RunId>,
 }
 
 /// The retention a task's ensure gives a stack it starts.
@@ -308,7 +309,11 @@ pub(in crate::runner) fn reconcile(
         &ctx,
         &env,
         up(repo_root, policy, &backend, retention),
-        apply,
+        || {
+            prepare_isolated_mount_points(repo_root, policy)
+                .map_err(|error| BackendError::Failed(error.to_string()))?;
+            apply()
+        },
     )
     .map_err(error)?;
     finish_reconcile(policy, &env, outcome)
@@ -337,7 +342,26 @@ pub(in crate::runner) fn reconcile_owned(
         &ctx,
         &env,
         up(repo_root, policy, &backend, retention),
-        apply,
+        |run, effect, deadline| {
+            // Q-011 permits ordinary applies when holders are unreadable, but
+            // a workspace with named volumes may need an automatic recreation.
+            // Prove its holder set before any Compose up can replace it.
+            if policy.workspace_user.is_some()
+                && effigy_containers::load_workspace_ownership_plan(policy)
+                    .map_err(|error| BackendError::NotStarted(error.to_string()))?
+                    .targets
+                    .iter()
+                    .any(|target| {
+                        target.mount_kind == effigy_containers::WorkspaceMountKind::NamedVolume
+                    })
+            {
+                ensure_mount_repair_unheld(policy)
+                    .map_err(|error| BackendError::NotStarted(error.to_string()))?;
+            }
+            prepare_isolated_mount_points(repo_root, policy)
+                .map_err(|error| BackendError::Failed(error.to_string()))?;
+            apply(run, effect, deadline)
+        },
     )
     .map_err(error)?;
     finish_reconcile(policy, &env, outcome)
@@ -366,7 +390,19 @@ fn prepare_apply(repo_root: &Path, policy: &EffectiveContainerPolicy) -> Result<
     // The exact-identity inventory still removes owned containers a profile
     // transition left unusable, so the apply recreates rather than collides.
     let _running = running(repo_root, policy)?;
-    // A bind-mounted directory that does not exist yet cannot be mounted.
+    Ok(())
+}
+
+fn prepare_isolated_mount_points(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<(), RunnerError> {
+    // A running service may have lost a nested mount. Its host path is not
+    // safe to inspect or recreate; Compose will reattach the volume instead.
+    if !host_mountpoints_may_be_prepared(repo_root, policy) {
+        return Ok(());
+    }
+    // A fresh stack needs its bind-mounted mount points before creation.
     effigy_containers::exec::ensure_isolated_mount_host_points(repo_root, policy)
         .map(|_| ())
         .map_err(|error| {
@@ -398,11 +434,97 @@ fn finish_reconcile(
         ),
         Applied::Reconciled => {}
     }
+    let holders = match outcome.applied {
+        Applied::HeldByRuns(holders) => holders,
+        _ => Vec::new(),
+    };
     Ok(BringUp {
         env: env.clone(),
         repo_root: policy.repo_root.clone(),
         creation: outcome.creation,
+        holders,
     })
+}
+
+/// Only a complete, empty running inventory permits touching isolated host paths.
+pub(in crate::runner) fn host_mountpoints_may_be_prepared(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> bool {
+    let deadline = Instant::now() + INVENTORY_BUDGET;
+    let Ok(rows) =
+        effigy_containers::exec::list_compose_containers_for_policy_including_stopped_with_deadline(
+            repo_root,
+            policy,
+            Some(deadline),
+        )
+    else {
+        return false;
+    };
+    !rows.iter().any(|row| {
+        row.project_name.as_deref() == Some(policy.project_name.as_str()) && row.status.is_running()
+    })
+}
+
+/// A held environment cannot be recreated to repair a detached mount.
+pub(in crate::runner) fn refuse_held_detached_mounts(
+    bring_up: &BringUp,
+    policy: &EffectiveContainerPolicy,
+    container_name: Option<&str>,
+) -> Result<(), RunnerError> {
+    if bring_up.holders.is_empty() {
+        return Ok(());
+    }
+    match crate::runner::workspace_command::permissions::verify_workspace_named_volumes(
+        &bring_up.repo_root,
+        policy,
+        container_name,
+    ) {
+        Err(RunnerError::DetachedNamedVolumes { mounts, detail }) => {
+            let holders = bring_up
+                .holders
+                .iter()
+                .map(|run| format!("run {run}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            Err(RunnerError::DetachedNamedVolumes {
+                mounts,
+                detail: format!(
+                    "{detail}\nautomatic repair will run after active holders release: {holders}"
+                ),
+            })
+        }
+        result => result,
+    }
+}
+
+/// The Env gate prevents new attachments while the repair checks its holders.
+pub(in crate::runner) fn ensure_mount_repair_unheld(
+    policy: &EffectiveContainerPolicy,
+) -> Result<(), RunnerError> {
+    let ctx = context(&policy.repo_root)?;
+    let env = env_ref(policy)?;
+    let holders = match EnvRecord::read(&ctx.observe(), ctx.root, &env.resource) {
+        Observed::Verified(record, _) => record.holders,
+        _ => return Err(RunnerError::task_invocation(
+            "cannot verify active environment holders; automatic named-volume repair is deferred",
+        )),
+    };
+    match holders {
+        Observed::Verified(holders, _) if holders.is_empty() => Ok(()),
+        Observed::Absent(_) => Ok(()),
+        Observed::Verified(holders, _) => Err(RunnerError::task_invocation(format!(
+            "automatic named-volume repair is deferred until active holders release: {}",
+            holders
+                .iter()
+                .map(|holder| format!("run {}", holder.run))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))),
+        Observed::Unknown(_) => Err(RunnerError::task_invocation(
+            "cannot verify active environment holders; automatic named-volume repair is deferred",
+        )),
+    }
 }
 
 /// The activation run: publishes the generation and attaches `holders`.

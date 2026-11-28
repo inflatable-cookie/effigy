@@ -10,11 +10,21 @@ use effigy_containers::EffectiveContainerPolicy;
 
 use crate::runner::error::RunnerError;
 
+#[cfg(test)]
 pub(super) fn prepare_host_bind_mount_dirs(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<(), RunnerError> {
+    prepare_host_bind_mount_dirs_with_protected_volumes(repo_root, policy, false)
+}
+
+pub(super) fn prepare_host_bind_mount_dirs_with_protected_volumes(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    protect_named_volumes: bool,
+) -> Result<(), RunnerError> {
     let runtime_data_root = repo_root.join(".effigy/runtime/data");
+    let mut documents = Vec::new();
     for compose_file in &policy.compose_files {
         // A Compose input this preparation cannot read or parse is not a stack
         // whose bind mounts were prepared: applying it would start services
@@ -34,10 +44,65 @@ pub(super) fn prepare_host_bind_mount_dirs(
                 compose_file.display()
             ))
         })?;
-        let Some(services) = yaml.get("services").and_then(|s| s.as_mapping()) else {
+        documents.push(yaml);
+    }
+    let mut protected = Vec::new();
+    if protect_named_volumes {
+        // Compose overlays can split a service's bind and named volume across
+        // files. Conservatively protect every matching bind across the closure.
+        let volumes = documents
+            .iter()
+            .filter_map(|doc| doc.get("services").and_then(|s| s.as_mapping()))
+            .flat_map(|services| services.values())
+            .filter_map(|service| service.get("volumes").and_then(|v| v.as_sequence()))
+            .flatten()
+            .collect::<Vec<_>>();
+        let binds = volumes
+            .iter()
+            .filter_map(|volume| {
+                if let Some(spec) = volume.as_str() {
+                    return bind_mount_root(repo_root, spec);
+                }
+                if volume.get("type").and_then(|v| v.as_str()) != Some("bind") {
+                    return None;
+                }
+                let source = Path::new(volume.get("source")?.as_str()?);
+                let target = volume.get("target")?.as_str()?;
+                (source.is_absolute() && source.starts_with(repo_root))
+                    .then(|| (source.to_path_buf(), target.to_owned()))
+            })
+            .collect::<Vec<_>>();
+        for volume in volumes {
+            let target = if let Some(spec) = volume.as_str() {
+                if parse_bind_mount_host_path(spec).is_some() {
+                    continue;
+                }
+                let Some((_, target, _)) = parse_mount_parts(spec) else {
+                    continue;
+                };
+                target
+            } else if volume.get("type").and_then(|v| v.as_str()) == Some("volume") {
+                let Some(target) = volume.get("target").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                target
+            } else {
+                continue;
+            };
+            for (source, bind_target) in &binds {
+                if let Ok(suffix) = Path::new(target).strip_prefix(Path::new(bind_target)) {
+                    if !suffix.as_os_str().is_empty() {
+                        protected.push(source.join(suffix));
+                    }
+                }
+            }
+        }
+    }
+    for document in &documents {
+        let Some(services) = document.get("services").and_then(|s| s.as_mapping()) else {
             continue;
         };
-        for (_service_name, service_value) in services {
+        for service_value in services.values() {
             let Some(volumes) = service_value.get("volumes").and_then(|v| v.as_sequence()) else {
                 continue;
             };
@@ -51,6 +116,12 @@ pub(super) fn prepare_host_bind_mount_dirs(
                     continue;
                 };
                 for host_path in candidate_host_mount_paths(repo_root, spec, &bind_roots) {
+                    if protected
+                        .iter()
+                        .any(|path| host_path.starts_with(path) || path.starts_with(&host_path))
+                    {
+                        continue;
+                    }
                     if let Some(extension) = host_path.extension() {
                         let ext_str = extension.to_string_lossy();
                         if matches!(

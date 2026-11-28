@@ -198,16 +198,26 @@ whose configuration changed, mounts included ([053](053-environment-reconciler-c
 mounts against the live mount table. If one is detached, `container up` and
 routed task activation recreate only the primary service once with
 `--force-recreate --no-deps`, preserving volumes, then verify again. A live
-holder prevents the apply and the existing refusal remains in force. A second
-failure refuses. Exec and doctor report detached mounts without recreating the
-container or inspecting the host directory underneath.
+holder prevents the apply; a detached mount then refuses with the holder's run
+ID and asks the caller to retry after release. If holder evidence is unreadable,
+activation with named volumes refuses before Compose can replace the service. A
+second mount verification failure refuses. Exec and doctor report detached
+mounts without recreating the container or inspecting the host directory
+underneath. Checkout state itself is
+stored under `.effigy/state`: a detached volume at that path still overlaps the
+host journal, which activation accesses before it can perform mount verification.
 
 An isolated volume overlays a directory inside the checkout, so its host mount
-point must exist. Up and routed-task preparation create a missing host
-mount-point directory for a named volume of the primary service nested under
-the working directory (the isolated `target` and `node_modules` trees) before
-the apply. A non-directory or symlink at that path refuses; creation never
-replaces a file and never follows a link, and the refusal names
+point must exist for a fresh stack. Before a cold apply, preparation creates a
+missing host mount-point directory for a named volume of the primary service
+nested under the working directory (the isolated `target` and `node_modules`
+trees). If any project container is running, or the inventory is unavailable,
+isolated mountpoint creation is skipped. Task bind-mount preparation excludes
+named-volume host paths and their ancestors from permission widening: a
+detached mount could expose the host directory underneath. Earlier media-source
+validation can still inspect a configured media source that overlaps one of
+these paths. A non-directory or symlink at a cold mount point refuses; creation
+never replaces a file and never follows a link, and the refusal names
 `oxide outputs adopt` as the fix, because an Oxide output link on an isolated
 path is the shape that meets it. This is a host-side preparation step, not
 permission repair: it changes no ownership or mode.

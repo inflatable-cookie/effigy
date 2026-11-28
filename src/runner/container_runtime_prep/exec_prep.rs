@@ -49,7 +49,7 @@ pub(in crate::runner) fn prepare_container_exec_runtime(
     // follows exec readiness.
     let applied_secrets = std::cell::RefCell::new(None::<ResolvedContainerSecretRuntime>);
     run_runtime_prep_steps(
-        || prepare_runtime_mounts_stage(repo_root, policy),
+        || Ok(()),
         || {
             // Task preparation runs the same apply as `container up`: the
             // shared services are started first, the same secrets reach the
@@ -63,7 +63,7 @@ pub(in crate::runner) fn prepare_container_exec_runtime(
                 policy,
                 start.retention,
                 |run, effect, deadline| {
-                    run_task_apply(
+                    prepare_runtime_mounts_stage(repo_root, policy).and_then(|()| run_task_apply(
                         repo_root,
                         policy,
                         start.reconcile_shared_services,
@@ -86,7 +86,7 @@ pub(in crate::runner) fn prepare_container_exec_runtime(
                             .map(|_| ())
                             .map_err(RunnerError::from)
                         },
-                    )
+                    ))
                     .and_then(|()| {
                         let has_named_volumes = policy.workspace_user.is_some()
                             && effigy_containers::load_workspace_ownership_plan(policy)
@@ -105,6 +105,7 @@ pub(in crate::runner) fn prepare_container_exec_runtime(
                                 )
                             },
                             |mounts| {
+                                crate::runner::environment::ensure_mount_repair_unheld(policy)?;
                                 eprintln!("[info] detached named-volume mount(s) {}; recreating service `{}` to reattach them while preserving named volumes", mounts.join(", "), policy.primary_service);
                                 let args = crate::runner::container_command::detached_recreate_args(policy)?;
                                 let env = applied_secrets.borrow().as_ref()
@@ -125,7 +126,13 @@ pub(in crate::runner) fn prepare_container_exec_runtime(
                     })
                 },
             );
-            bring_up = Some(result.map_err(|error| failure.into_inner().unwrap_or(error))?);
+            let applied = result.map_err(|error| failure.into_inner().unwrap_or(error))?;
+            crate::runner::environment::refuse_held_detached_mounts(
+                &applied,
+                policy,
+                container_name,
+            )?;
+            bring_up = Some(applied);
             Ok(())
         },
         || {
