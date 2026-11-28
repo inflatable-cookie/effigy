@@ -3058,23 +3058,31 @@ mod tests {
             "proj-first",
             Ok(ok_outcome("effigy", "proj-first-app-1")),
         );
-        runtime.drop_lease_on_list_containers(first_lease);
         let second_req = worker_request("effigy", "proj-second", &checkout, false);
 
-        // Drop after the Full sweep captured its status snapshot. The next wait
-        // slice observes and reclaims the newly ended lease without a timing race.
-        let acquired = acquire_container_lease_with(
-            Some(&fixture.barge),
-            &runtime,
-            &second_req,
-            Duration::from_millis(1200),
-            Duration::from_millis(400),
-        )
-        .expect("wait loop reclaims lease that ended during the single wait slice");
-        assert!(matches!(
-            acquired,
-            LeaseAcquireOutcome::Leased(ref lease) if lease.project() == "proj-second"
-        ));
+        // Keep the sole wait slice open long enough for the release thread to
+        // run under load. Its drop leaves the budget-exhausted Full sweep to
+        // reclaim the lease and retry acquisition.
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                std::thread::sleep(Duration::from_millis(50));
+                drop(first_lease);
+            });
+            let acquired = acquire_container_lease_with(
+                Some(&fixture.barge),
+                &runtime,
+                &second_req,
+                Duration::from_millis(800),
+                Duration::from_millis(1200),
+            )
+            .expect(
+                "budget-exhausted Full sweep reclaims lease that ended during its only wait slice",
+            );
+            assert!(matches!(
+                acquired,
+                LeaseAcquireOutcome::Leased(ref lease) if lease.project() == "proj-second"
+            ));
+        });
 
         assert_eq!(runtime.list_containers_count(), 1);
         let teardowns = runtime.teardown_calls();
