@@ -312,10 +312,10 @@ Injection rules:
 - `EFFIGY_SECRET_PASSPHRASE` names the passphrase a caller supplies for one
   invocation, which is what a headless session with no terminal uses. It is a
   source, not a credential: nothing is sealed or written
-- the local-dev key keeps its reach. Prompt-free use of it without a passphrase
-  stays limited to a resolved `dev` session (below); a session whose vault
-  holds only that key asks once before it renders rather than inside a tab, and
-  the key is never handed to another task's children
+- the local-dev key permits prompt-free container secret delivery on eligible
+  local bring-ups as described in Unlock Policy. Other task-secret access keeps
+  its existing `dev` session rules; the key is never handed to another task's
+  children
 - a declared container key that is not delivered is reported once, naming the
   key, the reason and the fix, and recorded under `warnings` in the bring-up's
   JSON envelope; required keys still fail the bring-up, and no bring-up writes

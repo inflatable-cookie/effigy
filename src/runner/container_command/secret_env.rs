@@ -241,9 +241,8 @@ pub(in crate::runner) fn resolve_container_secret_runtime(
     }
 
     let optional_only = required_names.is_empty() && !force_unlock;
-    // Every route a dev session can reach: the local-dev key, the passphrase
-    // this session already holds (prompted, inherited from its parent, or
-    // sealed in the local unlock credential), or one prompt now.
+    // Local container bring-ups can use the local-dev key. Otherwise use a
+    // held passphrase or, when required, prompt for one.
     let local_dev_active = crate::runner::secret_session::local_dev_secret_access_active();
     let local_key_allowed = !effigy_context::external_task_source_isolation_active()
         && !super::barge_leases::is_ci_environment();
@@ -1180,6 +1179,9 @@ catalog = "php-fpm"
             let _test_passphrase = ScopedEnvVar::remove("EFFIGY_TEST_SECRETS_PASSPHRASE");
             let _public_passphrase = ScopedEnvVar::remove("EFFIGY_SECRET_PASSPHRASE");
             let _internal_passphrase = ScopedEnvVar::remove("EFFIGY_INTERNAL_SECRET_PASSPHRASE");
+            let _ci = ScopedEnvVar::remove("CI");
+            let _isolated =
+                ScopedEnvVar::remove(effigy_context::EXTERNAL_TASK_SOURCE_ISOLATION_ENV_NAME);
             let _restricted = ScopedEnvVar::set(variable, "1");
             crate::runner::secret_session::forget_session_passphrase_for_tests();
             let runtime =

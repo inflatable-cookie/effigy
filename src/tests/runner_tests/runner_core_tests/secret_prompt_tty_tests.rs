@@ -175,9 +175,8 @@ fn a_managed_pane_with_terminal_stdin_never_prompts() {
     );
 }
 
-/// A container resolution whose declared keys are all optional never waits on
-/// a prompt, and says why the local-dev key did not unlock this run
-/// (effigy#1036).
+/// A direct container resolution with optional keys uses the local-dev key
+/// without waiting for a prompt.
 #[test]
 fn an_optional_only_resolution_never_prompts_on_a_terminal() {
     let fixture = effigy_test_support::Fixture::workspace("secret-prompt-optional-")
@@ -426,6 +425,8 @@ fn spawn_on_a_pty_with_env(case: &str, environment: &[(String, String)]) -> (Chi
         .env("TERM", "xterm-256color")
         // Session access never answers a prompt here: the case is what the
         // terminal sees.
+        .env_remove("CI")
+        .env_remove(effigy_context::EXTERNAL_TASK_SOURCE_ISOLATION_ENV_NAME)
         .env_remove("EFFIGY_TEST_SECRETS_PASSPHRASE")
         .env_remove("EFFIGY_SECRET_PASSPHRASE")
         .env_remove("EFFIGY_INTERNAL_SECRET_GRANT")
@@ -538,8 +539,7 @@ fn read_to_exit(child: &mut Child, master: &mut fs::File) -> String {
 
 // ---- Fixtures ---------------------------------------------------------------
 
-/// A repository whose one container key is optional, with a vault this machine
-/// holds a local-dev key for - and a run that is not a `dev` session.
+/// A repository with an optional container key and an adjacent local-dev key.
 fn write_optional_only_fixture(root: &Path) {
     fs::write(
         root.join("effigy.toml"),
