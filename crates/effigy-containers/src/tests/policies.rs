@@ -1992,3 +1992,74 @@ catalog = "postgres"
         "{unknown}"
     );
 }
+
+/// Render a php-fpm workspace whose service carries `service_params` (a TOML
+/// fragment), and return its generated policy.
+fn ssh_agent_preflight_rendered_workspace(
+    name: &str,
+    service_params: &str,
+) -> crate::EffectiveContainerPolicy {
+    let root = temp_repo(name);
+    fs::write(
+        root.join("effigy.toml"),
+        format!(
+            r#"
+[containers]
+default = "web"
+
+[containers.web]
+primary_service = "app"
+
+[containers.web.services.app]
+catalog = "php-fpm"
+version = "8.3"
+{service_params}
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
+working_dir = "/var/www/html"
+"#
+        ),
+    )
+    .expect("write manifest");
+    crate::tests::fixture_policy(&root, Some("web")).expect("rendered policy")
+}
+
+#[test]
+fn ssh_agent_preflight_follows_the_rendered_workspace_mount() {
+    with_temp_effigy_home("ssh-agent-preflight-mount", |_| {
+        let _lock = crate::test_env_lock();
+
+        let forwarded = ssh_agent_preflight_rendered_workspace("ssh-agent-preflight-on", "");
+        assert_eq!(forwarded.compose_source, EffectiveComposeSource::Generated);
+        let forwarded_compose = forwarded
+            .read_compose(&forwarded.compose_files[0])
+            .expect("forwarded workspace compose");
+        assert!(forwarded_compose.contains("/run/host-services/ssh-auth.sock"));
+        assert!(
+            crate::exec::policy_mounts_host_ssh_agent(&forwarded),
+            "forwarding is on by default, so the workspace mounts the agent"
+        );
+
+        let opted_out = ssh_agent_preflight_rendered_workspace(
+            "ssh-agent-preflight-off",
+            "forward_host_ssh_agent = false",
+        );
+        let opted_out_compose = opted_out
+            .read_compose(&opted_out.compose_files[0])
+            .expect("opted-out workspace compose");
+        // A volume entry is `host:target`. The catalog's inline entrypoint names
+        // the bridge socket too, so match the mount form, not the bare path.
+        assert!(
+            !opted_out_compose.contains(":/run/host-services/ssh-auth.sock"),
+            "the rendered compose carries no agent mount: {opted_out_compose}"
+        );
+        assert!(
+            !crate::exec::policy_mounts_host_ssh_agent(&opted_out),
+            "an opted-out workspace does not mount the agent and must not be gated on it"
+        );
+    });
+}

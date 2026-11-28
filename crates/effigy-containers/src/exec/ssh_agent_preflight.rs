@@ -197,10 +197,10 @@ fn ssh_agent_symlink_repair_script(
          if [ -z \"$live\" ]; then echo no-live-agent; exit 0; fi; \
          if [ -L \"$src\" ]; then \
            target=$(readlink \"$src\"); \
-           case \"$target\" in /*) ;; *) echo failed; exit 0 ;; esac; \
-           mkdir -p \"$(dirname \"$target\")\" || exit 1; \
+           case \"$target\" in /*) ;; *) target=\"$(dirname \"$src\")/$target\" ;; esac; \
+           {privilege}mkdir -p \"$(dirname \"$target\")\" || exit 1; \
            {before_link}; \
-           ln -s \"$live\" \"$target\" && [ -S \"$src\" ] && echo \"repaired $live\" || echo failed; \
+           {privilege}ln -s \"$live\" \"$target\" && [ -S \"$src\" ] && echo \"repaired $live\" || echo failed; \
          else \
            {privilege}mkdir -p \"$(dirname \"$src\")\" || exit 1; \
            {before_link}; \
@@ -300,39 +300,29 @@ const HOST_SSH_AGENT_TARGET: &str = "/run/host-services/ssh-auth.sock";
 /// Whether the policy's primary workspace service mounts the host SSH agent.
 ///
 /// The workspace mount rewrite writes that mount into the primary service's
-/// volumes when forwarding is on, so the rendered compose answers it directly.
-/// Forwarding defaults to on, so a policy whose render cannot be read counts as
-/// mounted.
+/// volumes when forwarding is on. The effective compose documents are read
+/// through the policy's own reader, which resolves the rendered snapshot
+/// wherever it lives (`checkout/` or `external/`). Forwarding defaults to on,
+/// so a policy whose compose cannot be read counts as mounted.
 pub fn policy_mounts_host_ssh_agent(policy: &EffectiveContainerPolicy) -> bool {
-    let Some(render) = policy.render.as_ref() else {
-        return true;
-    };
-    rendered_dir_mounts_host_ssh_agent(&render.path, &policy.primary_service).unwrap_or(true)
-}
-
-/// Scan the rendered compose documents in `dir` for the primary service.
-/// `None` when no document defines the service.
-fn rendered_dir_mounts_host_ssh_agent(dir: &Path, service: &str) -> Option<bool> {
-    let entries = std::fs::read_dir(dir).ok()?;
     let mut defined = false;
     let mut mounted = false;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !matches!(
-            path.extension().and_then(|ext| ext.to_str()),
-            Some("yml" | "yaml")
-        ) {
-            continue;
-        }
-        let Ok(content) = std::fs::read_to_string(&path) else {
+    for path in &policy.compose_files {
+        let Ok(content) = policy.read_compose(path) else {
             continue;
         };
-        if let Some(mount) = compose_service_mounts_host_ssh_agent(&content, service) {
+        if let Some(mount) =
+            compose_service_mounts_host_ssh_agent(&content, &policy.primary_service)
+        {
             defined = true;
             mounted |= mount;
         }
     }
-    defined.then_some(mounted)
+    if defined {
+        mounted
+    } else {
+        true
+    }
 }
 
 /// Whether one rendered compose document mounts the host SSH agent on
@@ -663,23 +653,64 @@ mod tests {
         assert!(std::fs::symlink_metadata(&forwarded).is_err());
     }
 
+    /// A broken link with a relative target resolves against the link's own
+    /// directory. Its missing target is created as a link to the live agent, so
+    /// the forwarded path recovers without its bytes changing.
     #[test]
-    fn repair_refuses_a_relative_broken_link_target() {
+    fn repair_redirects_a_relative_broken_link_to_a_live_guest_agent() {
+        let root = tempfile::tempdir().expect("repair fixture");
+        let forwarded = root.path().join("run/host-services/ssh-auth.sock");
+        std::fs::create_dir_all(forwarded.parent().expect("parent")).expect("forwarded dir");
+        std::os::unix::fs::symlink("gone.sock", &forwarded).expect("relative broken link");
+        let (live, _agent) = live_guest_agent(root.path());
+        let colima = fake_colima(root.path());
+
+        assert_eq!(
+            run_repair(root.path(), &colima, &forwarded),
+            SshAgentSymlinkRepair::Repaired {
+                source: live.to_string_lossy().into_owned()
+            }
+        );
+        assert_eq!(
+            std::fs::read_link(&forwarded).expect("forwarded link"),
+            Path::new("gone.sock"),
+            "the forwarded link keeps its own bytes"
+        );
+        let resolved = forwarded.parent().expect("parent").join("gone.sock");
+        assert_eq!(
+            std::fs::read_link(&resolved).expect("redirect target"),
+            live,
+            "the relative target now links to the live agent"
+        );
+        assert!(is_socket(&forwarded));
+    }
+
+    /// A competing writer fills the resolved relative target before the link.
+    /// The conditional link fails and the writer's socket survives.
+    #[test]
+    fn repair_loses_cleanly_when_a_socket_fills_a_relative_redirect_target_first() {
         let root = tempfile::tempdir().expect("repair fixture");
         let forwarded = root.path().join("run/host-services/ssh-auth.sock");
         std::fs::create_dir_all(forwarded.parent().expect("parent")).expect("forwarded dir");
         std::os::unix::fs::symlink("gone.sock", &forwarded).expect("relative broken link");
         let (_live, _agent) = live_guest_agent(root.path());
+        let resolved = forwarded.parent().expect("parent").join("gone.sock");
+        let racer = root.path().join("racer.sock");
+        let _racer = std::os::unix::net::UnixListener::bind(&racer).expect("competing socket");
         let colima = fake_colima(root.path());
+        let land_racer = format!("mv '{}' '{}'", racer.display(), resolved.display());
 
-        assert_eq!(
-            run_repair(root.path(), &colima, &forwarded),
-            SshAgentSymlinkRepair::Failed
-        );
-        assert_eq!(
-            std::fs::read_link(&forwarded).expect("forwarded link"),
-            Path::new("gone.sock")
-        );
+        let outcome = run_repair_with(
+            root.path(),
+            &colima,
+            &forwarded,
+            RepairRaceHooks {
+                before_link: &land_racer,
+            },
+        )
+        .expect("repair command runs");
+        assert_eq!(outcome, SshAgentSymlinkRepair::Failed);
+        assert!(is_socket(&resolved), "the competing socket is intact");
     }
 
     /// A competing writer fills the absent forwarded path between the repair's
