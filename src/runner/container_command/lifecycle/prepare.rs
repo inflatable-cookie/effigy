@@ -8,8 +8,9 @@ use crate::runner::container_command::support::ensure_shared_services_observed;
 use crate::runner::container_command::{secret_env, steps, RunnerError};
 use effigy_containers::compose::{resolve_compose_backend_for_repo, ComposeBackend};
 use effigy_containers::exec::{
-    colima_profile_warnings, ensure_runtime_backend_running_for_bringup,
-    inspect_colima_ssh_agent_socket, SshAgentSocketHealth,
+    colima_advice_mode, colima_profile_warnings, ensure_runtime_backend_running_for_bringup,
+    inspect_colima_ssh_agent_socket, policy_mounts_host_ssh_agent, repair_colima_ssh_agent_symlink,
+    ssh_agent_bring_up_decision, ContainerExecError, SshAgentSocketOutcome,
 };
 use effigy_containers::{
     effective_attach_mode, load_container_policy_for_creation_observed,
@@ -137,7 +138,7 @@ fn prepare_container_up_with_loader(
     operation.preparation_step = Some("runtime");
     let (colima_started, colima_bringup_guard) =
         ensure_runtime_backend_running_for_bringup(&policy, repo_root)?;
-    emit_ssh_agent_socket_warning(&policy, repo_root);
+    emit_ssh_agent_socket_warning(&policy, repo_root)?;
     operation.preparation_step = Some("mounts");
     effigy_containers::policy::mounts::prepare_container_mount_sources(&policy)?;
     // A shared service is awaited by its own project, so the frame names the
@@ -203,27 +204,43 @@ fn emit_warning_lines(warnings: &[String]) {
 /// Pre-empt the cryptic nerdctl `mkdir /run/host-services/ssh-auth.sock: file
 /// exists` crash. On a long-running colima VM the forwarded host SSH-agent
 /// socket can go stale (the host agent socket rotated), leaving a dangling
-/// symlink that the workspace container cannot bind-mount. We check the socket
-/// once colima is up and, if it is broken, warn with the exact remediation so
-/// the operator fixes it instead of decoding a runtime error (g08.017).
-fn emit_ssh_agent_socket_warning(policy: &EffectiveContainerPolicy, repo_root: &Path) {
-    // The probe runs inside the VM via `colima ssh`; only meaningful for the
-    // colima backend.
+/// symlink that the workspace container cannot bind-mount. Only a workspace that
+/// mounts the agent is checked. For it, a broken socket is repaired in place
+/// when a live guest agent exists, and otherwise the bring-up refuses before
+/// compose strands its containers (g08.017).
+fn emit_ssh_agent_socket_warning(
+    policy: &EffectiveContainerPolicy,
+    repo_root: &Path,
+) -> Result<(), RunnerError> {
+    // The probe and the repair run inside the VM via `colima ssh`; only
+    // meaningful for the colima backend.
     if resolve_compose_backend_for_repo(repo_root, policy) != ComposeBackend::ColimaNerdctl {
-        return;
+        return Ok(());
     }
-    let health = inspect_colima_ssh_agent_socket(policy, repo_root);
-    if health.is_broken() {
-        let detail = match health {
-            SshAgentSocketHealth::Stale => "is stale (the host SSH-agent socket rotated)",
-            SshAgentSocketHealth::Absent => "is not set up",
-            _ => "is unavailable",
-        };
-        emit_warning_lines(&[format!(
-            "workspace SSH-agent forwarding {detail} on colima profile `{profile}`. The \
-             workspace container can fail to start with `mkdir /run/host-services/ssh-auth.sock: \
-             file exists`. Fix: run `colima restart {profile}`, then re-run this command.",
-            profile = policy.profile,
-        )]);
+    let outcome = ssh_agent_bring_up_decision(
+        &policy.profile,
+        policy_mounts_host_ssh_agent(policy),
+        || inspect_colima_ssh_agent_socket(policy, repo_root),
+        || repair_colima_ssh_agent_symlink(&policy.profile, repo_root),
+        colima_advice_mode(),
+    );
+    match outcome {
+        SshAgentSocketOutcome::Proceed { relinked } => {
+            if let Some(source) = relinked {
+                eprintln!(
+                    "[info] Colima profile `{}`: repaired the workspace SSH-agent symlink inside the VM to {source}; the VM was not restarted",
+                    policy.profile
+                );
+            }
+            Ok(())
+        }
+        SshAgentSocketOutcome::Refuse(message) => {
+            Err(RunnerError::from(ContainerExecError::Failure {
+                command: "container up SSH-agent preflight".to_owned(),
+                code: None,
+                stdout: String::new(),
+                stderr: message,
+            }))
+        }
     }
 }

@@ -102,5 +102,7 @@ pub use process::{
 };
 pub use ssh_agent_preflight::{
     inspect_colima_ssh_agent_socket, inspect_colima_ssh_agent_socket_for_profile,
-    inspect_colima_ssh_agent_socket_for_profile_with_deadline, SshAgentSocketHealth,
+    inspect_colima_ssh_agent_socket_for_profile_with_deadline, policy_mounts_host_ssh_agent,
+    repair_colima_ssh_agent_symlink, ssh_agent_bring_up_decision, SshAgentSocketHealth,
+    SshAgentSocketOutcome, SshAgentSymlinkRepair,
 };

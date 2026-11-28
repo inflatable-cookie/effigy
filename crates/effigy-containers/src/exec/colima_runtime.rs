@@ -16,6 +16,7 @@ use super::process::{
     run_command_capture_allow_failure_with_deadline, run_command_capture_with_absolute_deadline,
     run_command_capture_with_timeout,
 };
+use super::ssh_agent_preflight::{repair_colima_ssh_agent_symlink, SshAgentSymlinkRepair};
 use crate::{
     colima::{
         classify_colima_observation, colima_start_command, colima_status_command,
@@ -462,9 +463,19 @@ fn ensure_colima_profile_running(
                     false,
                 )?
             } else if colima_profile_exists(policy, repo_root)? {
-                start_managed_colima_profile(policy, repo_root, ColimaProfileAction::Started)?
+                start_managed_colima_profile(
+                    policy,
+                    repo_root,
+                    ColimaProfileAction::Started,
+                    advice_mode,
+                )?
             } else {
-                start_managed_colima_profile(policy, repo_root, ColimaProfileAction::Created)?
+                start_managed_colima_profile(
+                    policy,
+                    repo_root,
+                    ColimaProfileAction::Created,
+                    advice_mode,
+                )?
             };
             let shared = downgrade_exclusive_lock_to_shared(&policy.profile, lock)?;
             Ok((
@@ -484,9 +495,19 @@ fn ensure_colima_profile_running(
                     contended,
                 )?
             } else if colima_profile_exists(policy, repo_root)? {
-                start_managed_colima_profile(policy, repo_root, ColimaProfileAction::Started)?
+                start_managed_colima_profile(
+                    policy,
+                    repo_root,
+                    ColimaProfileAction::Started,
+                    advice_mode,
+                )?
             } else {
-                start_managed_colima_profile(policy, repo_root, ColimaProfileAction::Created)?
+                start_managed_colima_profile(
+                    policy,
+                    repo_root,
+                    ColimaProfileAction::Created,
+                    advice_mode,
+                )?
             };
             Ok((action, ColimaProfileBringupGuard { _lock: lock }))
         }
@@ -679,7 +700,7 @@ fn maybe_migrate_running_profile_mount_inotify(
         &stop.label,
         COLIMA_STOP_TIMEOUT,
     )?;
-    start_managed_colima_profile(policy, repo_root, ColimaProfileAction::Started)?;
+    start_managed_colima_profile(policy, repo_root, ColimaProfileAction::Started, advice_mode)?;
     Ok(MountInotifyMigration::Migrated)
 }
 
@@ -716,6 +737,7 @@ fn start_managed_colima_profile(
     policy: &EffectiveContainerPolicy,
     repo_root: &Path,
     action: ColimaProfileAction,
+    advice_mode: ColimaAdviceMode,
 ) -> Result<ColimaProfileAction, ContainerExecError> {
     match action {
         ColimaProfileAction::Created => eprintln!(
@@ -742,7 +764,21 @@ fn start_managed_colima_profile(
     } else {
         COLIMA_START_TIMEOUT
     };
-    run_command_capture_with_timeout(repo_root, &cmd.program, &args, &cmd.label, start_timeout)?;
+    match run_command_capture_with_timeout(
+        repo_root,
+        &cmd.program,
+        &args,
+        &cmd.label,
+        start_timeout,
+    ) {
+        Ok(_) => {}
+        // The VM is up but DEGRADED and containerd never started. Recover it in
+        // place rather than failing the bring-up.
+        Err(error) if is_degraded_ssh_auth_start_failure(&error) => {
+            recover_degraded_colima_start(policy, repo_root, advice_mode)?;
+        }
+        Err(error) => return Err(error),
+    }
     if action == ColimaProfileAction::Created {
         eprintln!(
             "[info] {}",
@@ -752,6 +788,119 @@ fn start_managed_colima_profile(
     wait_for_colima_runtime_ready(policy, repo_root, COLIMA_RUNTIME_READY_TIMEOUT)
         .map_err(|error| runtime_readiness_error(&error))?;
     Ok(action)
+}
+
+/// `colima start` exits `DEGRADED` when the forwarded SSH-agent boot hook runs
+/// before `/run/host-services` exists. The VM stays up, containerd never starts,
+/// and the start aborts. Its output names that socket.
+fn is_degraded_ssh_auth_start_failure(error: &ContainerExecError) -> bool {
+    match error {
+        ContainerExecError::Failure { stdout, stderr, .. } => {
+            let output = format!("{stdout}\n{stderr}");
+            output.contains("DEGRADED") && output.contains("ssh-auth.sock")
+        }
+        ContainerExecError::Launch { .. } | ContainerExecError::Refusal { .. } => false,
+    }
+}
+
+/// Recover a `DEGRADED` start inside the running VM: repair the forwarded agent
+/// symlink, then start containerd and BuildKit. The VM is never stopped or restarted.
+fn recover_degraded_colima_start(
+    policy: &EffectiveContainerPolicy,
+    repo_root: &Path,
+    advice_mode: ColimaAdviceMode,
+) -> Result<(), ContainerExecError> {
+    recover_degraded_ssh_auth_start(
+        &policy.profile,
+        advice_mode,
+        || repair_colima_ssh_agent_symlink(&policy.profile, repo_root),
+        |timeout| wait_for_colima_runtime_ready(policy, repo_root, timeout),
+        || start_colima_runtime_units(policy, repo_root),
+    )
+}
+
+fn recover_degraded_ssh_auth_start(
+    profile: &str,
+    advice_mode: ColimaAdviceMode,
+    mut repair: impl FnMut() -> Result<SshAgentSymlinkRepair, String>,
+    mut wait_for_runtime: impl FnMut(Duration) -> Result<(), String>,
+    mut start_units: impl FnMut() -> Result<(), String>,
+) -> Result<(), ContainerExecError> {
+    match repair() {
+        Ok(SshAgentSymlinkRepair::Repaired { source }) => eprintln!(
+            "[info] Colima profile `{profile}` exited DEGRADED on the forwarded SSH-agent socket; repaired /run/host-services/ssh-auth.sock inside the VM to {source}"
+        ),
+        Ok(SshAgentSymlinkRepair::NoLiveAgent) => {
+            return Err(degraded_start_refusal(
+                profile,
+                "no live forwarded SSH-agent socket exists in the VM to link",
+                advice_mode,
+            ))
+        }
+        // A live socket already in place means the guest is usable: the DEGRADED
+        // exit came from a race that has since settled. Continue to unit readiness.
+        Ok(SshAgentSymlinkRepair::AlreadyLive) => eprintln!(
+            "[info] Colima profile `{profile}` exited DEGRADED but /run/host-services/ssh-auth.sock is already a live socket; starting containerd and BuildKit"
+        ),
+        Ok(SshAgentSymlinkRepair::Foreign) => {
+            return Err(degraded_start_refusal(
+                profile,
+                "/run/host-services/ssh-auth.sock is a regular file or directory, which Effigy never replaces",
+                advice_mode,
+            ))
+        }
+        Ok(SshAgentSymlinkRepair::Failed) => {
+            return Err(degraded_start_refusal(
+                profile,
+                "the symlink repair did not produce a live socket",
+                advice_mode,
+            ))
+        }
+        Err(error) => {
+            return Err(degraded_start_refusal(
+                profile,
+                &format!("symlink repair: {error}"),
+                advice_mode,
+            ))
+        }
+    }
+    // The aborted start never reached containerd, so units start first. The
+    // start is idempotent when they are already running.
+    if let Err(start_error) = start_units() {
+        return Err(degraded_start_refusal(
+            profile,
+            &format!("unit start: {start_error}"),
+            advice_mode,
+        ));
+    }
+    wait_for_runtime(COLIMA_RUNTIME_READY_TIMEOUT).map_err(|error| {
+        degraded_start_refusal(profile, &format!("runtime probe: {error}"), advice_mode)
+    })
+}
+
+fn degraded_start_refusal(
+    profile: &str,
+    detail: &str,
+    advice_mode: ColimaAdviceMode,
+) -> ContainerExecError {
+    ContainerExecError::Failure {
+        command: "Colima start".to_owned(),
+        code: None,
+        stdout: String::new(),
+        stderr: format!(
+            "Colima profile `{profile}` exited DEGRADED on the forwarded SSH-agent socket and did not recover in place\n{detail}\nEffigy did not stop or restart the profile because that stops every stack on it.\nnext: retry, {}",
+            operator_recovery_advice(profile, advice_mode)
+        ),
+    }
+}
+
+/// The operator-facing next step for a profile-wide problem. Interactive callers
+/// get the explicit commands; automated callers are told to report it instead.
+fn operator_recovery_advice(profile: &str, advice_mode: ColimaAdviceMode) -> String {
+    match advice_mode {
+        ColimaAdviceMode::Interactive => "recover this profile in place with `effigy container profile repair`, or stop it deliberately with `effigy container profile reset-runtime`".to_owned(),
+        ColimaAdviceMode::Automated => colima_profile_recovery_advice(profile, ColimaAdviceMode::Automated),
+    }
 }
 
 fn ensure_running_profile_runtime_ready(
@@ -818,14 +967,7 @@ fn runtime_unit_start_refusal(
         stderr: format!(
             "Colima profile `{profile}` is running but containerd/BuildKit are not ready\nStarting those units inside the VM did not recover them within {}s; Effigy did not stop or restart the profile because that stops every stack on it.\nfirst readiness probe: {readiness_error}{start}\nruntime probe after unit start: {probe_error}\nnext: retry, {}",
             COLIMA_UNIT_START_TIMEOUT.as_secs(),
-            match advice_mode {
-                ColimaAdviceMode::Interactive => {
-                    "recover this profile in place with `effigy container profile repair`, or stop it deliberately with `effigy container profile reset-runtime`".to_owned()
-                }
-                ColimaAdviceMode::Automated => {
-                    colima_profile_recovery_advice(profile, ColimaAdviceMode::Automated)
-                }
-            },
+            operator_recovery_advice(profile, advice_mode),
         ),
     }
 }
@@ -1751,6 +1893,180 @@ mod tests {
         );
     }
 
+    fn degraded_failure(stderr: &str) -> ContainerExecError {
+        ContainerExecError::Failure {
+            command: "colima start".to_owned(),
+            code: Some(1),
+            stdout: String::new(),
+            stderr: stderr.to_owned(),
+        }
+    }
+
+    #[test]
+    fn degraded_start_detection_needs_the_degraded_exit_and_the_agent_socket() {
+        assert!(is_degraded_ssh_auth_start_failure(&degraded_failure(
+            "[fatal] error starting vm: VM is DEGRADED\nln: /run/host-services/ssh-auth.sock: No such file or directory"
+        )));
+        assert!(!is_degraded_ssh_auth_start_failure(&degraded_failure(
+            "containerd failed to start"
+        )));
+        assert!(!is_degraded_ssh_auth_start_failure(&degraded_failure(
+            "VM is DEGRADED: buildkit failed"
+        )));
+        assert!(!is_degraded_ssh_auth_start_failure(
+            &ContainerExecError::Refusal {
+                command: "colima start".to_owned(),
+                reason: "DEGRADED ssh-auth.sock".to_owned(),
+            }
+        ));
+    }
+
+    #[test]
+    fn degraded_start_recovers_by_repairing_the_socket_then_starting_units() {
+        let calls = std::cell::RefCell::new(Vec::new());
+        let result = recover_degraded_ssh_auth_start(
+            "effigy",
+            ColimaAdviceMode::Automated,
+            || {
+                calls.borrow_mut().push("repair");
+                Ok(SshAgentSymlinkRepair::Repaired {
+                    source: "/tmp/ssh-x/agent.1".to_owned(),
+                })
+            },
+            |_| {
+                calls.borrow_mut().push("wait");
+                Ok(())
+            },
+            || {
+                calls.borrow_mut().push("start_units");
+                Ok(())
+            },
+        );
+        assert!(result.is_ok(), "recovery succeeds: {result:?}");
+        assert_eq!(calls.into_inner(), ["repair", "start_units", "wait"]);
+    }
+
+    #[test]
+    fn degraded_start_without_a_live_guest_agent_refuses_without_unit_start() {
+        let calls = std::cell::RefCell::new(Vec::new());
+        let result = recover_degraded_ssh_auth_start(
+            "effigy",
+            ColimaAdviceMode::Automated,
+            || {
+                calls.borrow_mut().push("repair");
+                Ok(SshAgentSymlinkRepair::NoLiveAgent)
+            },
+            |_| {
+                calls.borrow_mut().push("wait");
+                Ok(())
+            },
+            || {
+                calls.borrow_mut().push("start_units");
+                Ok(())
+            },
+        );
+        let Err(ContainerExecError::Failure { stderr, .. }) = result else {
+            panic!("expected a refusal");
+        };
+        assert_eq!(calls.into_inner(), ["repair"]);
+        assert!(stderr.contains("no live forwarded SSH-agent socket"));
+        assert!(stderr.contains("report the degraded profile to the host operator"));
+        assert!(!stderr.contains("colima stop"));
+        assert!(!stderr.contains("colima restart"));
+    }
+
+    #[test]
+    fn degraded_start_refuses_when_runtime_units_do_not_recover() {
+        let result = recover_degraded_ssh_auth_start(
+            "effigy",
+            ColimaAdviceMode::Automated,
+            || {
+                Ok(SshAgentSymlinkRepair::Repaired {
+                    source: "/tmp/ssh-x/agent.1".to_owned(),
+                })
+            },
+            |_| Err("nerdctl info: containerd not ready".to_owned()),
+            || Ok(()),
+        );
+        let Err(ContainerExecError::Failure { stderr, .. }) = result else {
+            panic!("expected a refusal");
+        };
+        assert!(stderr.contains("runtime probe: nerdctl info: containerd not ready"));
+        assert!(stderr.contains("did not recover in place"));
+    }
+
+    #[test]
+    fn degraded_start_refuses_when_the_repair_command_cannot_run() {
+        let calls = std::cell::RefCell::new(Vec::new());
+        let result = recover_degraded_ssh_auth_start(
+            "effigy",
+            ColimaAdviceMode::Interactive,
+            || {
+                calls.borrow_mut().push("repair");
+                Err("colima ssh exited unsuccessfully: not running".to_owned())
+            },
+            |_| Ok(()),
+            || {
+                calls.borrow_mut().push("start_units");
+                Ok(())
+            },
+        );
+        let Err(ContainerExecError::Failure { stderr, .. }) = result else {
+            panic!("expected a refusal");
+        };
+        assert_eq!(calls.into_inner(), ["repair"]);
+        assert!(stderr.contains("symlink repair: colima ssh exited unsuccessfully"));
+    }
+
+    #[test]
+    fn degraded_start_with_an_already_live_socket_continues_to_units() {
+        let calls = std::cell::RefCell::new(Vec::new());
+        let result = recover_degraded_ssh_auth_start(
+            "effigy",
+            ColimaAdviceMode::Automated,
+            || {
+                calls.borrow_mut().push("repair");
+                Ok(SshAgentSymlinkRepair::AlreadyLive)
+            },
+            |_| {
+                calls.borrow_mut().push("wait");
+                Ok(())
+            },
+            || {
+                calls.borrow_mut().push("start_units");
+                Ok(())
+            },
+        );
+        assert!(
+            result.is_ok(),
+            "a live socket still starts the units: {result:?}"
+        );
+        assert_eq!(calls.into_inner(), ["repair", "start_units", "wait"]);
+    }
+
+    #[test]
+    fn degraded_start_refuses_a_foreign_path_without_unit_start() {
+        let calls = std::cell::RefCell::new(Vec::new());
+        let result = recover_degraded_ssh_auth_start(
+            "effigy",
+            ColimaAdviceMode::Automated,
+            || {
+                calls.borrow_mut().push("repair");
+                Ok(SshAgentSymlinkRepair::Foreign)
+            },
+            |_| Ok(()),
+            || {
+                calls.borrow_mut().push("start_units");
+                Ok(())
+            },
+        );
+        let Err(ContainerExecError::Failure { stderr, .. }) = result else {
+            panic!("expected a refusal");
+        };
+        assert_eq!(calls.into_inner(), ["repair"]);
+        assert!(stderr.contains("never replaces"), "{stderr}");
+    }
+
     #[test]
     fn runtime_readiness_waits_through_delayed_containerd_and_buildkit_startup() {
         let mut attempts = 0;
@@ -2056,6 +2372,12 @@ case "$1" in
     ;;
   start)
     printf '%s\n' "$PWD" "${TMPDIR-unset}" "${TMP-unset}" "${TEMP-unset}" "$PATH" "$HOME" "$COLIMA_HOME" "$SSH_AUTH_SOCK" > "$root/start-env"
+    if [ -f "$root/degraded-start" ]; then
+      rm -f "$root/degraded-start"
+      : > "$root/running"; : > "$root/listed"; : > "$root/units-stopped"
+      printf '%s\n' '[fatal] error starting vm: VM is DEGRADED' 'ln: /run/host-services/ssh-auth.sock: No such file or directory' >&2
+      exit 1
+    fi
     : > "$root/running"; : > "$root/listed"; printf 'started\n' ;;
   stop)
     if [ -f "$root/pause-on-stop" ]; then
@@ -2068,6 +2390,10 @@ case "$1" in
     fi
     if [ ! -f "$root/stop-stays-running" ]; then rm -f "$root/running"; fi; printf 'stopped\n' ;;
   nerdctl)
+    if [ -f "$root/units-stopped" ] && printf '%s\n' "$*" | grep -q -- ' info$'; then
+      printf 'containerd is not running\n' >&2
+      exit 1
+    fi
     if [ -f "$root/offline" ]; then
       printf '%s\n' 'failed to solve: rust:1.88-bookworm: failed to resolve source metadata for docker.io/library/rust:1.88-bookworm: dial tcp: lookup registry-1.docker.io on 192.168.5.3:53: read udp: connection refused' >&2
       exit 1
@@ -2083,7 +2409,20 @@ case "$1" in
     fi
     exit 0
     ;;
-  ssh) exit 0 ;;
+  ssh)
+    # Scripted guest: the repair and unit-start commands are answered from
+    # fixture state and never executed, so no real /run path is touched.
+    case "$*" in
+      *ssh-auth.sock*)
+        if [ -f "$root/no-live-agent" ]; then printf 'no-live-agent\n'; exit 0; fi
+        printf 'repaired /tmp/ssh-fixture/agent.1\n'; exit 0 ;;
+      *systemctl*start*containerd*)
+        rm -f "$root/units-stopped"; printf 'units started\n'; exit 0 ;;
+      *buildctl*)
+        if [ -f "$root/units-stopped" ]; then printf 'buildkitd unavailable\n' >&2; exit 1; fi
+        exit 0 ;;
+      *) exit 0 ;;
+    esac ;;
   *) printf 'unexpected colima invocation: %s\n' "$*" >&2; exit 1 ;;
 esac
 "#;
@@ -2437,6 +2776,105 @@ esac
             !calls.iter().any(|call| call.starts_with("start ")),
             "Effigy never restarts the shared profile: {calls:#?}"
         );
+    }
+
+    /// Create the managed profile, then stop it, so the next ensure takes the
+    /// stopped-profile start path. Returns the number of calls made so far.
+    fn stop_fixture_profile_for_degraded_start(
+        fixture: &ManagedProfileFixture,
+        policy: &EffectiveContainerPolicy,
+    ) -> usize {
+        ensure_colima_running_report(policy, &fixture.root).expect("create profile");
+        std::fs::remove_file(fixture.root.join("running")).expect("stop the profile");
+        fixture.calls().len()
+    }
+
+    #[test]
+    fn degraded_managed_start_repairs_the_socket_then_starts_units_in_place() {
+        let _lock = crate::test_env_lock();
+        let fixture = ManagedProfileFixture::new();
+        let policy = fixture.policy();
+        let before = stop_fixture_profile_for_degraded_start(&fixture, &policy);
+        fixture.state("degraded-start");
+
+        let report = ensure_colima_running_report(&policy, &fixture.root)
+            .expect("a DEGRADED start recovers in place");
+        assert!(report.started);
+        assert!(!report.profile_created_or_restarted);
+        assert!(fixture.has_state("running"));
+        assert!(
+            !fixture.has_state("units-stopped"),
+            "containerd and BuildKit were started"
+        );
+
+        let calls = fixture.calls();
+        let phase = &calls[before..];
+        let start = phase
+            .iter()
+            .position(|call| call.starts_with("start "))
+            .expect("the degraded start ran");
+        let repair = phase
+            .iter()
+            .position(|call| call.contains("ssh-auth.sock"))
+            .expect("the guest symlink was repaired");
+        let units = phase
+            .iter()
+            .position(|call| call.contains("systemctl start containerd buildkit"))
+            .expect("containerd and BuildKit were started");
+        assert!(start < repair && repair < units, "{phase:#?}");
+        assert_eq!(
+            phase
+                .iter()
+                .filter(|call| call.starts_with("start "))
+                .count(),
+            1,
+            "the failed start is not retried: {phase:#?}"
+        );
+        assert!(
+            !phase
+                .iter()
+                .any(|call| call.starts_with("stop ") || call.starts_with("restart ")),
+            "the VM is never stopped or restarted: {phase:#?}"
+        );
+    }
+
+    #[test]
+    fn degraded_managed_start_without_a_live_agent_refuses_without_restarting_the_vm() {
+        let _lock = crate::test_env_lock();
+        let fixture = ManagedProfileFixture::new();
+        let policy = fixture.policy();
+        let before = stop_fixture_profile_for_degraded_start(&fixture, &policy);
+        fixture.state("degraded-start");
+        fixture.state("no-live-agent");
+
+        let Err(error) = ensure_colima_running_report(&policy, &fixture.root) else {
+            panic!("a DEGRADED start with no live guest agent refuses");
+        };
+        let ContainerExecError::Failure { stderr, .. } = error else {
+            panic!("expected a refusal Failure");
+        };
+        assert!(
+            stderr.contains("no live forwarded SSH-agent socket exists"),
+            "{stderr}"
+        );
+        assert!(
+            !stderr.contains("colima stop") && !stderr.contains("colima restart"),
+            "a non-interactive caller is never told to stop or restart: {stderr}"
+        );
+
+        let calls = fixture.calls();
+        let phase = &calls[before..];
+        assert!(
+            !phase.iter().any(|call| call.contains("systemctl")),
+            "no unit start without a repaired agent: {phase:#?}"
+        );
+        assert!(
+            !phase
+                .iter()
+                .any(|call| call.starts_with("stop ") || call.starts_with("restart ")),
+            "the VM is never stopped or restarted: {phase:#?}"
+        );
+        assert!(fixture.has_state("units-stopped"));
     }
 
     #[test]
