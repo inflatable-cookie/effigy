@@ -912,7 +912,7 @@ fn settle_interrupted_run(
 ) -> io::Result<Status> {
     let cleanup = op.cleanup(Duration::from_secs(10)).map_err(error)?;
     let mut adapter = Adapter;
-    let outcome = run::settle_interrupted(&cx, &root, &owner(), id, next(), &cleanup, &mut adapter)
+    let outcome = run::settle_interrupted(cx, root, &owner(), id, next(), &cleanup, &mut adapter)
         .map_err(|cause| match cause {
             run::RunError::Gate(_) => error(
                 "the interrupted gateway run still holds its owner gate; refusing to bypass kernel custody or start a second gateway",
