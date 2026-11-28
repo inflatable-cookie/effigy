@@ -1071,6 +1071,9 @@ catalog = "php-fpm"
                 ("mailchimp_api_key", "mc-dev-value"),
             ],
         );
+        let _ci = ScopedEnvVar::remove("CI");
+        let _isolated =
+            ScopedEnvVar::remove(effigy_context::EXTERNAL_TASK_SOURCE_ISOLATION_ENV_NAME);
         let _test_passphrase = ScopedEnvVar::remove("EFFIGY_TEST_SECRETS_PASSPHRASE");
         let _internal_passphrase = ScopedEnvVar::remove("EFFIGY_INTERNAL_SECRET_PASSPHRASE");
         crate::runner::secret_session::forget_session_passphrase_for_tests();
