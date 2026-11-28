@@ -1024,10 +1024,6 @@ fn acquire_and_publish(
             }
             continue;
         };
-        if matches!(selection, BundleSelection::Git { .. }) {
-            checks.insert(name.clone(), now);
-            checked_any = true;
-        }
         let generation =
             ensure_generation(manifest, &objects, &generation_id, &mut generation, cx, run)?;
         let object = source_dir(generation, &sha256_hex(name.as_bytes()), cx, manifest)?;
@@ -1091,6 +1087,13 @@ fn acquire_and_publish(
             }
         };
         step.finish(None, None);
+        if mode != Mode::Missing && fallback.is_some() {
+            // Cache the bounded fallback probe under REMOTE_CHECK_TTL without
+            // turning normal initial acquisitions or read-only discovery into a
+            // completed remote refresh.
+            checks.insert(name.clone(), now);
+            checked_any = true;
+        }
         let selected = SourcePin {
             declaration: selection.spec(),
             object: relative_object(manifest, object.path())?,

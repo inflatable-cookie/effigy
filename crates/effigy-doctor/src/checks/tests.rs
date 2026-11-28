@@ -15,6 +15,7 @@ fn doctor_check_registry_order_and_progress_labels_are_stable() {
             "environment_tools",
             "task_references",
             "pinned_sources",
+            "bundle_compatibility",
             "god_files",
             "duplicate_blocks",
             "health_task",
