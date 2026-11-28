@@ -136,6 +136,22 @@ fn parse_release_run_id_verbs_and_refusals() {
             false,
         ),
         (
+            &["release", "abort"],
+            ReleaseSubcommand::Abort {
+                run: None,
+                yes: false,
+            },
+            false,
+        ),
+        (
+            &["release", "abort", "run-abc", "--yes", "--json"],
+            ReleaseSubcommand::Abort {
+                run: Some("run-abc".to_owned()),
+                yes: true,
+            },
+            true,
+        ),
+        (
             &["release", "settle", "run-id", "--json"],
             ReleaseSubcommand::Settle {
                 run: "run-id".to_owned(),
@@ -177,6 +193,23 @@ fn parse_release_run_id_verbs_and_refusals() {
     ])
     .expect_err("a decision needs --published or --not-published");
     assert!(unclear.to_string().contains("--published"), "{unclear}");
+
+    // An abort takes at most one Run id and no other flag.
+    let two = parse_command(vec![
+        "release".to_owned(),
+        "abort".to_owned(),
+        "one".to_owned(),
+        "two".to_owned(),
+    ])
+    .expect_err("an abort takes at most one Run id");
+    assert!(two.to_string().contains("at most one"), "{two}");
+    let flag = parse_command(vec![
+        "release".to_owned(),
+        "abort".to_owned(),
+        "--force".to_owned(),
+    ])
+    .expect_err("an abort has no --force");
+    assert!(flag.to_string().contains("--force"), "{flag}");
 
     assert!(parse_command(vec!["release".into(), "settle".into()]).is_err());
     assert!(parse_command(vec![

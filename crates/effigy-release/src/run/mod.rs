@@ -8,6 +8,7 @@
 //! push is journalled before it runs; a resume reconciles an unknown push by
 //! looking the tag up first (054 §7).
 
+mod abort;
 mod artifacts;
 mod effects;
 mod input;
@@ -167,6 +168,10 @@ fn plan_sync_files(plan: &ReleasePipelinePlan) -> Vec<ResolvedSyncFile> {
 #[cfg(test)]
 mod tests;
 
+pub use abort::{
+    abort_release, render_release_abort_json, render_release_abort_text, PreparedCommit,
+    ReleaseAbortReport, RELEASE_ABORT_SCHEMA,
+};
 pub use artifacts::{capture_artifact, sha256_bytes, verify_artifact_digests};
 pub use effects::{approver_name, GitEffects, ReleaseEffects, TaskRequest, TaskResponse};
 pub use input::{

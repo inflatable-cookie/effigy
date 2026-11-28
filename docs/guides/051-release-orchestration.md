@@ -149,6 +149,20 @@ Current built-in release commands:
     has gone missing while its record remains, is reported with its error. It
     never reads as "no release Run"
 
+- `effigy release abort [<run>] [--yes]`
+  - discard a Run that never published: its record, receipt and candidate are
+    removed and its checkpoint clears, so the next `effigy release run` starts a
+    fresh Run instead of resuming the failed one. `<run>` defaults to this
+    checkout's active Run
+  - it refuses, and changes nothing, when the release commit was pushed, the Run
+    is complete, any publish target is `published`, `failed` or `unknown`, or the
+    journal leaves a publish outcome unsettled. The refusal names the command
+    that moves the Run on (`resume`, `decide` or `receipt`)
+  - without `--yes` it checks every gate and discards nothing. It never runs
+    `git reset`: the report names the `git reset --keep <source>` that discards
+    an unpushed prepared commit still on `HEAD`, and that command is the
+    operator's to run
+
 Retired in v0.15 (contract 054 §5 and §4.4), each refusing with the
 replacement above:
 
@@ -592,6 +606,11 @@ its prepared commit and checkpoints in place:
 effigy release status
 effigy release resume <run>
 ```
+
+To abandon a Run that never published instead of resuming it, run
+`effigy release abort --yes`. The next `effigy release run` then starts fresh.
+If the report says the prepared commit is still an unpushed commit on `HEAD`,
+run the `git reset --keep <source>` it names yourself before that run.
 
 An unknown tag push is reconciled before any retry: the Run looks the tag up
 locally and on the remote, records it if it is already there at the candidate

@@ -2307,7 +2307,7 @@ fn cli_release_plan_replaces_the_retired_simulate_command() {
         .1;
     assert_eq!(
         refusal,
-        "  `effigy release simulate` is retired in v0.15: use `effigy release --plan`, which shows the whole pipeline (next versions, files, gates by stage, artifacts, targets and approval checkpoints) and still mutates nothing. See the v0.15.0 Removed entry in CHANGELOG.md\n  hint: Run `effigy release --help` for every form\n\neffigy release accepts here: approve, decide, gates, receipt, resume, run, settle, status\n"
+        "  `effigy release simulate` is retired in v0.15: use `effigy release --plan`, which shows the whole pipeline (next versions, files, gates by stage, artifacts, targets and approval checkpoints) and still mutates nothing. See the v0.15.0 Removed entry in CHANGELOG.md\n  hint: Run `effigy release --help` for every form\n\neffigy release accepts here: abort, approve, decide, gates, receipt, resume, run, settle, status\n"
     );
 }
 

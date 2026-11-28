@@ -192,6 +192,15 @@ GLIBC and Homebrew checks) become Effigy repo tasks, wired as gates or as
 | `effigy release approve <run>` | Passes an approval checkpoint. |
 | `effigy release gates [--stage pre\|certify]` | Runs gates standalone, with no Run. |
 | `effigy release receipt <run> [--json]` | Prints a receipt. Replaces `evidence summary`. |
+| `effigy release abort [<run>] [--yes] [--json]` | Discards an unpublished failed Run: removes its record, receipt and candidate, and clears its checkpoint, so the next `release run` starts a fresh Run. Refuses, changing nothing, when the release commit was pushed, the Run is complete, any publish target is `published`, `failed` or `unknown`, or the journal leaves a publish outcome unsettled. Without `--yes` it checks every gate and discards nothing. Never runs `git reset`. |
+
+`release abort` removes what the Run wrote under its state directory before it
+clears the checkpoint in `kernel.db`, so a crash between the two leaves a
+checkpoint that refuses to resume. It never leaves a record that `release run`
+would continue. Its `effigy.release.abort.v1` payload carries `release_id`,
+`run_id`, `state_directory`, `source_commit`, `head_commit`, `prepared_commit`
+(`commit`, `on_head`, `pushed`), `reset_hint` (the `git reset --keep <source>`
+for an unpushed prepared commit still on `HEAD`, or `null`) and `messages`.
 
 `effigy changelog validate|format|analyze|extract` stays as it is.
 

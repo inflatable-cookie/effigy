@@ -360,6 +360,28 @@ impl Run<'_> {
         })
     }
 
+    /// Clear the authority engine's own record: the resource's engine column
+    /// becomes NULL, so no engine record is read back afterwards. Written under
+    /// the owning generation's gate, like `set_engine_record`.
+    pub fn clear_engine_record(&mut self) -> Result<(), RunError> {
+        self.can_effect()?;
+        self.cx
+            .require(Capability::SourceStore)
+            .map_err(|_| RunError::refused("engine record needs Prepare or Mutate"))?;
+        let result = self.store.transaction(&self.cx, |txn| {
+            journal::check_fence(txn.conn(), &self.owner)?;
+            txn.conn().execute(
+                "UPDATE resources SET engine=NULL,updated_at=?2 WHERE name=?1",
+                params![self.owner.resource.name().to_string(), txn.now()],
+            )?;
+            Ok::<(), RunError>(())
+        });
+        if result.is_err() {
+            self.poisoned = true;
+        }
+        result
+    }
+
     /// Replace the authority engine's own record under the owning
     /// generation's gate. The kernel stores it opaquely and bounds its size;
     /// it never grants authority by itself.

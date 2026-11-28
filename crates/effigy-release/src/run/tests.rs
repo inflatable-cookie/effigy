@@ -2972,4 +2972,5 @@ mod settlement_tests {
     }
 }
 
+mod abort;
 mod changelog_fragments;
