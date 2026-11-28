@@ -1435,7 +1435,7 @@ mod tests {
         running_profiles_calls: AtomicUsize,
         list_containers_calls: Mutex<Vec<String>>,
         drop_on_list_containers: Mutex<Option<ContainerLease>>,
-        on_list_containers: Mutex<Option<std::sync::mpsc::SyncSender<()>>>,
+        drop_on_running_profiles_call: Mutex<Option<(usize, ContainerLease)>>,
         teardown_calls: Mutex<Vec<TeardownCall>>,
         teardown_results: Mutex<BTreeMap<(String, String), Result<RetireOutcome, String>>>,
     }
@@ -1449,7 +1449,7 @@ mod tests {
                 running_profiles_calls: AtomicUsize::new(0),
                 list_containers_calls: Mutex::new(Vec::new()),
                 drop_on_list_containers: Mutex::new(None),
-                on_list_containers: Mutex::new(None),
+                drop_on_running_profiles_call: Mutex::new(None),
                 teardown_calls: Mutex::new(Vec::new()),
                 teardown_results: Mutex::new(BTreeMap::new()),
             }
@@ -1462,11 +1462,11 @@ mod tests {
                 .expect("drop_on_list_containers lock") = Some(lease);
         }
 
-        fn notify_on_list_containers(&self, tx: std::sync::mpsc::SyncSender<()>) {
+        fn drop_lease_on_running_profiles_call(&self, call: usize, lease: ContainerLease) {
             *self
-                .on_list_containers
+                .drop_on_running_profiles_call
                 .lock()
-                .expect("on_list_containers lock") = Some(tx);
+                .expect("drop_on_running_profiles_call lock") = Some((call, lease));
         }
 
         fn set_containers(&self, profile: &str, rows: Vec<ContainerRow>) {
@@ -1519,7 +1519,19 @@ mod tests {
 
     impl LeaseRuntime for FakeLeaseRuntime {
         fn running_profiles(&self) -> Result<Vec<String>, RunnerError> {
-            self.running_profiles_calls.fetch_add(1, Ordering::SeqCst);
+            let call = self.running_profiles_calls.fetch_add(1, Ordering::SeqCst) + 1;
+            let dropped = {
+                let mut drop_on_call = self
+                    .drop_on_running_profiles_call
+                    .lock()
+                    .expect("drop_on_running_profiles_call lock");
+                if matches!(drop_on_call.as_ref(), Some((target, _)) if *target == call) {
+                    drop_on_call.take().map(|(_, lease)| lease)
+                } else {
+                    None
+                }
+            };
+            drop(dropped);
             Ok(self.running.lock().expect("running lock").clone())
         }
 
@@ -1546,14 +1558,6 @@ mod tests {
                 .expect("drop_on_list_containers lock")
                 .take();
             drop(dropped);
-            if let Some(tx) = self
-                .on_list_containers
-                .lock()
-                .expect("on_list_containers lock")
-                .take()
-            {
-                let _ = tx.send(());
-            }
             Ok(self
                 .containers
                 .lock()
@@ -3056,21 +3060,24 @@ mod tests {
         );
         let second_req = worker_request("effigy", "proj-second", &checkout, false);
 
-        // Keep one wait slice while leaving room for the release thread to be
-        // scheduled on heavily loaded CI runners.
+        // Keep the sole wait slice open long enough for the release thread to
+        // run under load. Its drop leaves the budget-exhausted Full sweep to
+        // reclaim the lease and retry acquisition.
         std::thread::scope(|scope| {
             scope.spawn(|| {
-                std::thread::sleep(Duration::from_millis(15));
+                std::thread::sleep(Duration::from_millis(50));
                 drop(first_lease);
             });
             let acquired = acquire_container_lease_with(
                 Some(&fixture.barge),
                 &runtime,
                 &second_req,
-                Duration::from_millis(500),
-                Duration::from_secs(1),
+                Duration::from_millis(800),
+                Duration::from_millis(1200),
             )
-            .expect("first Full sweep reclaims lease that ended during the single wait slice");
+            .expect(
+                "budget-exhausted Full sweep reclaims lease that ended during its only wait slice",
+            );
             assert!(matches!(
                 acquired,
                 LeaseAcquireOutcome::Leased(ref lease) if lease.project() == "proj-second"
@@ -3087,60 +3094,73 @@ mod tests {
     #[test]
     fn ended_only_sweep_reclaims_lease_ending_during_final_later_wait_slice() {
         let fixture = BargeFixture::new();
-        fixture.declare_profiles(&[("effigy", 1)]);
+        fixture.declare_profiles(&[("effigy", 2)]);
         let checkout = fixture._temp.path().join("wt-final-slice");
         std::fs::create_dir_all(&checkout).expect("mkdir");
+        let marker_checkout = fixture._temp.path().join("wt-final-slice-marker");
+        std::fs::create_dir_all(&marker_checkout).expect("mkdir marker");
 
         let first_req = worker_request("effigy", "proj-first", &checkout, true);
         let first_lease = match fixture.barge.container_lease(&first_req).expect("lease") {
             ContainerLeaseOutcome::Leased(lease) => lease,
             _ => panic!("expected first lease"),
         };
+        let marker_req = worker_request("effigy", "proj-marker", &marker_checkout, true);
+        let marker_lease = match fixture
+            .barge
+            .container_lease(&marker_req)
+            .expect("marker lease")
+        {
+            ContainerLeaseOutcome::Leased(lease) => lease,
+            _ => panic!("expected marker lease"),
+        };
 
         let runtime = FakeLeaseRuntime::new(&["effigy"]);
+        runtime.set_teardown_result(
+            "effigy",
+            "proj-marker",
+            Err("keep marker lease occupied through the final wait slice".to_owned()),
+        );
+        runtime.drop_lease_on_list_containers(marker_lease);
+        // Call 1 is the Slice 1 Full sweep. Call 2 belongs to Slice 2's
+        // EndedOnly sweep; its lease snapshot was already taken, so dropping
+        // first_lease here cannot reclaim it until the final wait slice.
+        runtime.drop_lease_on_running_profiles_call(2, first_lease);
         runtime.set_teardown_result(
             "effigy",
             "proj-first",
             Ok(ok_outcome("effigy", "proj-first-app-1")),
         );
-        let (list_tx, list_rx) = std::sync::mpsc::sync_channel(1);
-        runtime.notify_on_list_containers(list_tx);
         let second_req = worker_request("effigy", "proj-second", &checkout, false);
 
-        // Wait budget 600ms with 180ms slices:
-        // - Slice 1 (0..180ms): Full sweep runs (~180ms) and signals `list_tx`.
-        // - Slice 2 (180..360ms): EndedOnly sweep runs (~360ms) while `first_lease` is still held.
-        // - Final slice (360..600ms): `first_lease` drops ~240ms after Slice 1 (~420ms, 180ms
-        //   before the 600ms budget ends), so the final `container_lease` returns Full with
-        //   `started.elapsed() >= wait_budget`. The final EndedOnly sweep must reclaim it and
-        //   retry acquisition.
-        std::thread::scope(|scope| {
-            scope.spawn(move || {
-                list_rx
-                    .recv()
-                    .expect("first Full sweep signals list_containers");
-                std::thread::sleep(Duration::from_millis(240));
-                drop(first_lease);
-            });
-            let acquired = acquire_container_lease_with(
-                Some(&fixture.barge),
-                &runtime,
-                &second_req,
-                Duration::from_millis(600),
-                Duration::from_millis(180),
-            )
-            .expect("final later wait slice reclaims newly ended lease before timing out");
-            assert!(matches!(
-                acquired,
-                LeaseAcquireOutcome::Leased(ref lease) if lease.project() == "proj-second"
-            ));
-        });
+        let acquired = acquire_container_lease_with(
+            Some(&fixture.barge),
+            &runtime,
+            &second_req,
+            Duration::from_millis(1200),
+            Duration::from_millis(400),
+        )
+        .expect("final later wait slice reclaims newly ended lease before timing out");
+        assert!(matches!(
+            acquired,
+            LeaseAcquireOutcome::Leased(ref lease) if lease.project() == "proj-second"
+        ));
 
         assert_eq!(runtime.list_containers_count(), 1);
-        assert_eq!(runtime.running_profiles_count(), 2);
+        assert_eq!(runtime.running_profiles_count(), 3);
         let teardowns = runtime.teardown_calls();
-        assert_eq!(teardowns.len(), 1);
-        assert_eq!(teardowns[0].project, "proj-first");
-        assert!(!teardowns[0].remove_volumes);
+        assert_eq!(teardowns.len(), 3);
+        assert_eq!(
+            teardowns
+                .iter()
+                .filter(|teardown| teardown.project == "proj-marker")
+                .count(),
+            2
+        );
+        let first_teardown = teardowns
+            .iter()
+            .find(|teardown| teardown.project == "proj-first")
+            .expect("final EndedOnly sweep tears down newly ended first lease");
+        assert!(!first_teardown.remove_volumes);
     }
 }
