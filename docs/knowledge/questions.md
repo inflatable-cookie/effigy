@@ -877,3 +877,46 @@ Authority: [contract 052 §8](contracts/052-runtime-kernel-contract.md#8-host-an
 The channel design and its qualification work are retired. Guest identity
 observation and binary publication remain; contract 052 §8 owns the current
 guest model. The earlier design is available in Git history.
+
+## Q-022: Native Apple Containers backend
+
+Status: answered (deferred)
+Asked: 2026-11-18
+Answered: 2026-11-28 by Tom
+Owner: [Environment reconciler contract §6](contracts/053-environment-reconciler-contract.md#6-backend-seam)
+Evidence: `effigy#1161` spike on macOS 27.2.1 arm64 with `apple/container`
+1.7.1 (`a15b460`), guest kernel 6.18.15; lead
+`01a5cc08-425d-455b-bcde-9891fd681fe5`, lane `native-containers`.
+
+Defer an Apple Containers backend after the 1.7.1 spike. Model A, one Apple
+container per service, fits `EnvironmentBackend` cleanly: exact-ID JSON
+inventory, labels, `image inspect`, isolated per-stack networks, about 6 s
+teardown, 962 MB idle across three VMs, 11.4 s cold start and 7.4 s warm
+restart. It is the preferred shape if this is revisited. Model B, one project
+VM with guest-supervised `crun`, is rejected: `container machine` cannot mount
+checkouts outside `$HOME` (`-v` and `-p` are unavailable), while running
+`crun` in a `container run` VM requires maintaining a custom runtime,
+`CAP_SYS_ADMIN` and `CAP_SYS_RESOURCE`, has broken `crun exec`, lacks child
+memory cgroup caps (`EIO`), and idles at 1,518 MB with 1.08 GB of unreclaimed
+guest page cache.
+
+The preferred shape still does not beat hardened Colima. Freed guest RAM is
+not returned to macOS: 543 MB remained pinned 30 s after freeing 512 MiB in
+the guest, while Colima's shared Linux VM dynamically reclaims and shares RAM
+across containers. Version 1.7.1 rejects single-label DNS aliases and requires
+a sudo-created host DNS domain (`container system dns create`, never `.test`)
+or IP re-rendering, which takes about 4 s of dependent-service recreation
+because IPs change on each start. VirtioFS has the same limits: no host-to-guest
+`inotify` events, so `fs-event-relay` remains required, and 2,000 small files
+took 8.38 s. A macOS-only Compose-less adapter would also need service
+discovery, config-hash diffing, root-owned ext4 named-volume preparation and
+`PGDATA` subdirectories, `data_from` helpers, exec-custody nonce wrappers and
+full contract 053 qualification. This maintenance cost does not improve on
+Effigy's hardened Colima stack, which already has Barge leases,
+`mountInotify: false` with `fs-event-relay`, batched teardown, cold-start
+recovery and detached-submount auto-repair.
+
+Reopen when `apple/container` provides both working host memory reclaim or
+ballooning and unprivileged per-network service DNS, or if removing the
+Colima/third-party VM prerequisite for new macOS users becomes a standalone
+product priority. If reopened, start from Model A.
