@@ -166,7 +166,7 @@ fn verdict(record: &ReleaseRecord, effects: &[Effect]) -> Result<(), ReleaseErro
                 format!("`effigy release resume {id}` continues the Run past it")
             }
             RecordTargetState::Unknown => format!(
-                "`effigy release resume {id}` reconciles it, and `effigy release decide {id}` records its outcome when the Run waits for one"
+                "`effigy release resume {id}` reconciles it, and `effigy release decide {id} --published` or `effigy release decide {id} --not-published` records its outcome when the Run waits for one"
             ),
             RecordTargetState::Failed => format!(
                 "a failed publish may have landed some destinations, so abort never discards it; `effigy release resume {id}` retries it from the checkpoint"
