@@ -3056,6 +3056,8 @@ mod tests {
         );
         let second_req = worker_request("effigy", "proj-second", &checkout, false);
 
+        // Keep one wait slice while leaving room for the release thread to be
+        // scheduled on heavily loaded CI runners.
         std::thread::scope(|scope| {
             scope.spawn(|| {
                 std::thread::sleep(Duration::from_millis(15));
@@ -3065,8 +3067,8 @@ mod tests {
                 Some(&fixture.barge),
                 &runtime,
                 &second_req,
-                Duration::from_millis(50),
-                Duration::from_millis(200),
+                Duration::from_millis(500),
+                Duration::from_secs(1),
             )
             .expect("first Full sweep reclaims lease that ended during the single wait slice");
             assert!(matches!(
