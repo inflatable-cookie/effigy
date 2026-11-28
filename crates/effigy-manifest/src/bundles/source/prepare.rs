@@ -1107,7 +1107,10 @@ fn acquire_and_publish(
                 || pin.fallback != selected.fallback
                 || !same_declaration(&pin.declaration, selection)
         });
-        if mode == Mode::Refresh && !pin_changed {
+        let existing_object_usable = pinned
+            .as_ref()
+            .is_some_and(|pin| parent(manifest).join(".effigy").join(&pin.object).is_dir());
+        if mode == Mode::Refresh && !pin_changed && existing_object_usable {
             if let Some(existing) = &pinned {
                 reports.insert(name.clone(), pin_report(manifest, selection, existing));
                 continue;
