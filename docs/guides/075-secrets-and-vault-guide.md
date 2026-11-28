@@ -340,10 +340,10 @@ only tears down runtime artifacts; the next `container up` is what injects
 secrets again. Unrelated required container secrets cannot block those
 operations. No repo-root `.env` file is written.
 
-Stored optional values are injected when the vault is unlocked. A `dev`
-session resolves them through the local-dev key, or through the passphrase that
-session just entered, in every step it starts, including the `container up`
-child a managed run brings up. Only keys declared with `required = true` gate
+Stored optional values are injected when the vault is unlocked. Local container
+bring-ups resolve them through the adjacent local-dev key, including `dev`,
+`container up` and container-activating tasks. CI and isolated external task
+sources do not use that key. Only keys declared with `required = true` gate
 container startup.
 
 A declared container key that could not be delivered — the vault is locked with
@@ -352,14 +352,6 @@ vault is missing, or the local-dev key cannot read it — is reported once:
 
 ```text
 [warn] container secret `openai_api_key` was not delivered: the vault is locked and this run has no terminal to ask for its passphrase; run `effigy secrets unlock` at a terminal, or rerun `effigy dev` on one
-```
-
-When this machine holds a local-dev key but the command is not a `dev` session,
-the warning says exactly that instead, because the key is a `dev` factor and the
-vault is not locked for a machine that can read it:
-
-```text
-[warn] container secret `openai_api_key` was not delivered: the local-dev key only unlocks `effigy dev`, and this run is not a dev session; for direct commands run `effigy secrets unlock` once at a terminal
 ```
 
 Only keys declared `required = true` are ever asked for: a resolution whose

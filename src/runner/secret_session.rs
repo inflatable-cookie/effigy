@@ -245,13 +245,6 @@ pub(in crate::runner) fn held_vault_passphrase(
     Ok(passphrase)
 }
 
-/// Whether this machine holds a local-dev key beside the vault. The key is the
-/// `effigy dev` factor, so its presence is what a direct command's
-/// undelivered-key warning names (effigy#1036).
-pub(in crate::runner) fn local_dev_key_present(vault_path: &Path) -> bool {
-    effigy_secrets::local_dev_unlock_key_path(vault_path).exists()
-}
-
 pub(in crate::runner) fn read_vault_passphrase(
     vault_path: &Path,
     optional_only: bool,
@@ -961,7 +954,7 @@ mod tests {
                 .as_deref(),
             Some("sealed-passphrase")
         );
-        assert!(super::local_dev_key_present(&vault_path));
+        assert!(effigy_secrets::local_dev_unlock_key_path(&vault_path).exists());
         forget_session_passphrase_for_tests();
     }
 

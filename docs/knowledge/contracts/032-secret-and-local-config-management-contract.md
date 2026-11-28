@@ -231,6 +231,11 @@ A legacy vault requires one final passphrase unlock from `effigy dev` or
 `effigy secrets unlock`, which upgrades it in place. Changing the passphrase
 also rotates an active command credential.
 
+Tom's 2026-11-28 ruling: the adjacent local-dev key unlocks container-targeted
+secrets for any non-CI, non-isolated local container bring-up, including `dev`,
+`container up`, `seed`, and container-activating tasks. Vault mutations, CI and
+isolated external task sources retain their existing guards.
+
 The local-dev key is a runtime capability, not an isolation boundary against a
 repo-owner process. A process allowed to run or alter the application can also
 influence how injected secrets are consumed. Mutation and export remain
@@ -307,10 +312,10 @@ Injection rules:
 - `EFFIGY_SECRET_PASSPHRASE` names the passphrase a caller supplies for one
   invocation, which is what a headless session with no terminal uses. It is a
   source, not a credential: nothing is sealed or written
-- the local-dev key keeps its reach. Prompt-free use of it without a passphrase
-  stays limited to a resolved `dev` session (below); a session whose vault
-  holds only that key asks once before it renders rather than inside a tab, and
-  the key is never handed to another task's children
+- the local-dev key permits prompt-free container secret delivery on eligible
+  local bring-ups as described in Unlock Policy. Other task-secret access keeps
+  its existing `dev` session rules; the key is never handed to another task's
+  children
 - a declared container key that is not delivered is reported once, naming the
   key, the reason and the fix, and recorded under `warnings` in the bring-up's
   JSON envelope; required keys still fail the bring-up, and no bring-up writes

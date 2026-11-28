@@ -179,9 +179,17 @@ fn run_container_up_inner(
                     *detached_failure.borrow_mut() = Some(error);
                     return Err(BackendError::Failed(message));
                 }
+                let delivery =
+                    crate::runner::container_command::secret_env::ComposeDelivery::prepare(
+                        repo_root,
+                        &plan.policy,
+                        &plan.secret_runtime,
+                    )
+                    .map_err(|error| BackendError::NotStarted(error.to_string()))?;
                 applied.set(true);
                 match run_container_up_compose(
                     &plan,
+                    delivery.as_ref().is_some_and(|delivery| delivery.recreate),
                     &mut compose_steps.borrow_mut(),
                     &observation,
                     run,
@@ -206,6 +214,11 @@ fn run_container_up_inner(
                         *detached_failure.borrow_mut() = Some(error);
                         return Err(BackendError::Uncertain(message));
                     }
+                }
+                if let Some(delivery) = delivery {
+                    delivery
+                        .record()
+                        .map_err(|error| BackendError::Uncertain(error.to_string()))?;
                 }
                 let has_named_volumes = plan.policy.workspace_user.is_some()
                     && effigy_containers::load_workspace_ownership_plan(&plan.policy)
@@ -496,6 +509,7 @@ fn reject_conflicting_container_up_modes(attach: bool, detach: bool) -> Result<(
 /// before; the steps then end with what the runtime did.
 fn run_container_up_compose(
     plan: &ContainerUpPlan,
+    recreate: bool,
     compose_steps: &mut ComposeSteps,
     observation: &std::cell::Cell<Option<std::time::Instant>>,
     run: &mut effigy_kernel::run::Run<'_>,
@@ -523,11 +537,15 @@ fn run_container_up_compose(
             compose_steps.observe(&event);
         }
     };
+    let mut args = plan.up_plan.args.clone();
+    if recreate {
+        args.push("--force-recreate".into());
+    }
     let output = run_compose_invocation_streaming_with_env_owner(
         &plan.policy.repo_root,
         &plan.policy,
         &plan.up_plan.program,
-        &plan.up_plan.args,
+        &args,
         &plan.up_plan.label,
         &plan.compose_secret_env,
         Some(&plan.stop_flag),
