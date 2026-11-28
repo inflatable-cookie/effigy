@@ -6,7 +6,7 @@ use super::catalog_checks::{
     run_task_references_check,
 };
 use super::scan_checks::{run_duplicate_blocks_check, run_god_files_check};
-use super::source_checks::run_pinned_source_drift_check;
+use super::source_checks::{run_bundle_compatibility_check, run_pinned_source_drift_check};
 use crate::progress::{ScanLabel, DUPLICATE_BLOCKS, GOD_FILES, HEALTH_TASK};
 use crate::{manifest_snapshot::ManifestSnapshot, DoctorRuntimePorts, DoctorState};
 
@@ -47,7 +47,7 @@ pub(super) struct DoctorCheckDefinition {
     pub(super) run: DoctorCheckFn,
 }
 
-const STRUCTURAL_CHECKS: [DoctorCheckDefinition; 4] = [
+const STRUCTURAL_CHECKS: [DoctorCheckDefinition; 5] = [
     DoctorCheckDefinition {
         name: "manifest_conflicts",
         progress_label: None,
@@ -67,6 +67,11 @@ const STRUCTURAL_CHECKS: [DoctorCheckDefinition; 4] = [
         name: "pinned_sources",
         progress_label: None,
         run: run_pinned_source_drift_check,
+    },
+    DoctorCheckDefinition {
+        name: "bundle_compatibility",
+        progress_label: None,
+        run: run_bundle_compatibility_check,
     },
 ];
 

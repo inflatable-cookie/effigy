@@ -49,3 +49,27 @@ pub(super) fn run_pinned_source_drift_check(
         );
     }
 }
+
+/// Reports when the active bundle pin is on an automatic compatibility-fallback
+/// tag because the declared floating branch requires a newer Effigy version.
+pub(super) fn run_bundle_compatibility_check(
+    context: &DoctorCheckContext<'_>,
+    state: &mut DoctorState,
+) {
+    let manifest_path = context
+        .resolved_root
+        .join(effigy_manifest::TASK_MANIFEST_FILE);
+    if !manifest_path.is_file() {
+        return;
+    }
+    let Ok(Some(report)) = effigy_manifest::inspect_bundle_source(&manifest_path) else {
+        return;
+    };
+    if let Some(fallback) = &report.fallback {
+        state.add_check_warning(
+            check_id::BUNDLE_COMPATIBILITY,
+            fallback.notice("bundle"),
+            remediation::UPGRADE_EFFIGY_FOR_BUNDLE,
+        );
+    }
+}

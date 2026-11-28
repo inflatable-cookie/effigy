@@ -312,9 +312,38 @@ ignored without a warning.
 ## Inspection and synchronization
 
 `bundle inspect` retains its v1 source type, materialized path, version hint and
-stale fields. `bundle sync` retains its v1 result fields and adds a `sources` map
-covering the bundle and catalog pins. A catalog-only declaration can sync too.
+stale fields, and includes `compatibility_fallback` when the active pin is on an
+automatic compatibility-fallback tag. `bundle sync` retains its v1 result fields
+and adds a `sources` map covering the bundle and catalog pins (and `notes` when
+update or fallback notes were emitted). A catalog-only declaration can sync too.
 Local path sources now report `applicable = true` because sync snapshots them.
+
+## Bundle Effigy version compatibility and tag fallback
+
+A bundle may declare optional SemVer bounds (`minimum_effigy_version` and
+`maximum_effigy_version`) under `[bundle]` in `bundle.toml` and/or under
+`[manifest]` in its defaults template. Bounds are validated strictly on load
+(`X.Y.Z`, with `minimum_effigy_version <= maximum_effigy_version`) and compared
+against the running Effigy binary's `major.minor.patch` core (ignoring
+pre-release and `+local.<sha>` build metadata).
+
+- **Floating Git branch (`ref` absent, `HEAD`, `refs/heads/...`, or a remote
+  branch):** when the fetched branch tip fails the bundle's compatibility
+  bounds, Prepare inspects remote tags via one bounded `git ls-remote --tags`,
+  sorts them newest-first (SemVer descending, then non-SemVer descending),
+  skips tags at the incompatible tip commit, and probes at most 12 candidates
+  to select the newest compatible tag. The selected pin records
+  `SourceCompatibilityFallback` (`selected_tag`, `skipped_ref`,
+  `skipped_revision`, `required_effigy`, `running_effigy`), reuses the
+  10-minute `REMOTE_CHECK_TTL` cache while on the same Effigy version, and
+  surfaces a clear notice in `UPDATE_NOTES`, `bundle inspect`, and `effigy
+  doctor` (`sources.bundle-compatibility`). Upgrading Effigy immediately
+  re-evaluates the floating branch without waiting for the TTL.
+- **Explicit commit `rev` or explicit tag pin:** never falls back silently;
+  refuses with a human-readable version-mismatch error naming the required and
+  running Effigy versions before parsing bundle defaults.
+- **No compatible tag found:** refuses with the same version-mismatch error
+  before parsing bundle defaults.
 
 ## Drift Triggers
 

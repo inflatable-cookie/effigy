@@ -28,6 +28,32 @@ pub use progress::{SourceProgress, SourceProgressEvent};
 const LOCK_FILE: &str = "sources.lock.json";
 const LOCK_MAX: u64 = 1024 * 1024;
 
+/// Metadata recorded when a floating Git bundle branch tip required an
+/// incompatible Effigy version and Effigy automatically selected the newest
+/// compatible tag instead.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SourceCompatibilityFallback {
+    pub selected_tag: String,
+    pub skipped_ref: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skipped_revision: Option<String>,
+    pub required_effigy: String,
+    pub running_effigy: String,
+}
+
+impl SourceCompatibilityFallback {
+    pub fn notice(&self, name: &str) -> String {
+        format!(
+            "{name} selected compatible tag `{}` (skipped `{}` which requires Effigy {}, running {}); upgrade Effigy to unlock the latest bundle release",
+            self.selected_tag,
+            self.skipped_ref,
+            self.required_effigy,
+            self.running_effigy,
+        )
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct ResolvedBundleSource {
     pub source_type: BundleSourceType,
@@ -35,6 +61,7 @@ pub(super) struct ResolvedBundleSource {
     pub source_path: PathBuf,
     pub version_hint: Option<String>,
     pub stale: bool,
+    pub fallback: Option<SourceCompatibilityFallback>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -63,6 +90,8 @@ pub struct BundleSourceInspectReport {
     pub local_path: PathBuf,
     pub version_hint: Option<String>,
     pub stale: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<SourceCompatibilityFallback>,
 }
 
 #[derive(Debug)]
@@ -151,6 +180,8 @@ struct SourcePin {
     version: String,
     #[serde(default)]
     revision: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    fallback: Option<SourceCompatibilityFallback>,
 }
 fn state_location(
     manifest: &Path,
@@ -301,6 +332,7 @@ fn resolve_source(
             local_path: root,
             version_hint: pin.revision.clone().or_else(|| Some(pin.version.clone())),
             stale,
+            fallback: pin.fallback.clone(),
         });
     }
     // Read-only migration view. Prepare imports these exact bytes before any
@@ -314,6 +346,7 @@ fn resolve_source(
             version_hint: legacy_version(&root, selection),
             local_path: root,
             stale: false,
+            fallback: None,
         });
     }
     Err(error(manifest, format!("source `{name}` is not prepared; run `effigy bundle sync` (or start `effigy dev` / `effigy bootstrap`)")))
@@ -325,6 +358,7 @@ fn inspect(resolved: ResolvedBundleSource) -> BundleSourceInspectReport {
         local_path: resolved.local_path,
         version_hint: resolved.version_hint,
         stale: resolved.stale,
+        fallback: resolved.fallback,
     }
 }
 pub fn inspect_bundle_source(
@@ -599,6 +633,7 @@ base = { type = "git", url = "https://invalid.invalid/bundle" }
                         object: object.into(),
                         version: "v1".into(),
                         revision: None,
+                        fallback: None,
                     },
                 )]),
             })
@@ -617,6 +652,7 @@ base = { type = "git", url = "https://invalid.invalid/bundle" }
             object: "cache/sources/one".into(),
             version: version.into(),
             revision: revision.map(str::to_owned),
+            fallback: None,
         }
     }
 
@@ -652,6 +688,7 @@ base = { type = "git", url = "https://invalid.invalid/bundle" }
                         object: object.into(),
                         version: "sha256:selected".into(),
                         revision: None,
+                        fallback: None,
                     },
                 )]),
             })

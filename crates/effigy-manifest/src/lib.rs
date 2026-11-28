@@ -44,7 +44,8 @@ pub use bundles::{
     prepare_bundle_sources, prepare_missing_bundle_sources, resolve_catalog_source,
     sync_bundle_source, BundleInputResolution, BundleInputSource, BundleInputSpec, BundleInputType,
     BundleSourceInspectReport, BundleSourceType, BundleSpec, BundleSyncReport, CatalogSourceRoots,
-    SourceHold, SourcePreparation, SourceProgress, SourceProgressEvent, SourceSettlement,
+    SourceCompatibilityFallback, SourceHold, SourcePreparation, SourceProgress,
+    SourceProgressEvent, SourceSettlement,
 };
 pub use catalog_section::{
     env_schema_declaring_catalog, nearest_catalog, nearest_declaring_catalog,

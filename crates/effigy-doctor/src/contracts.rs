@@ -6,6 +6,7 @@ pub mod check_id {
     pub const MANIFEST_CONFLICTS: &str = "manifest.conflicts";
     pub const TASK_REFERENCES_RESOLVE: &str = "tasks.references.resolve";
     pub const PINNED_SOURCES_DRIFT: &str = "sources.pinned-drift";
+    pub const BUNDLE_COMPATIBILITY: &str = "sources.bundle-compatibility";
     pub const DEPENDENCY_LINK_HEALTH: &str = "dependencies.link-health";
     /// v0.14 task state families (`tasks.legacy-state.<family>`): informational,
     /// but listed so an operator knows what is safe to delete.
@@ -24,7 +25,7 @@ pub mod check_id {
     pub const RUNTIME_PARKED_SENTINEL: &str = "runtime.parked-sentinel";
 }
 
-pub const ALL_CHECK_IDS: [&str; 16] = [
+pub const ALL_CHECK_IDS: [&str; 17] = [
     check_id::WORKSPACE_ROOT_RESOLUTION,
     check_id::ENVIRONMENT_TOOLS_REQUIRED,
     check_id::MANIFEST_PARSE,
@@ -32,6 +33,7 @@ pub const ALL_CHECK_IDS: [&str; 16] = [
     check_id::MANIFEST_CONFLICTS,
     check_id::TASK_REFERENCES_RESOLVE,
     check_id::PINNED_SOURCES_DRIFT,
+    check_id::BUNDLE_COMPATIBILITY,
     check_id::DEPENDENCY_LINK_HEALTH,
     check_id::SCAN_GOD_FILES,
     check_id::SCAN_DUPLICATE_BLOCKS,
@@ -71,6 +73,8 @@ pub mod remediation {
         "Change the key or value the loader names to one it accepts, or run `effigy config --schema` for the accepted shape.";
     pub const RESOLVE_PINNED_SOURCE_DRIFT: &str =
         "Resolve the pinned source by hand: commit or discard its local changes, or check out the pinned commit. Effigy never resets, fetches forward or cleans a working copy; move the pin only by editing `rev` or `rev_file` (see CHANGELOG.md).";
+    pub const UPGRADE_EFFIGY_FOR_BUNDLE: &str =
+        "Upgrade Effigy to unlock the latest bundle release, then run `effigy bundle sync`.";
     pub const MANIFEST_READ_FAILURE: &str =
         "Fix file permissions/path issues and re-run `effigy doctor`.";
     pub const MANIFEST_TOML_SYNTAX: &str = "Fix TOML syntax and re-run `effigy doctor`.";

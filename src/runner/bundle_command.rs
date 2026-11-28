@@ -222,25 +222,28 @@ fn run_active_bundle_inspect(
     };
 
     if output_json {
+        let mut source = serde_json::Map::new();
+        source.insert("source_type".to_owned(), json!(report.source_type));
+        source.insert("source_path".to_owned(), json!(report.source_path));
+        source.insert("local_path".to_owned(), json!(report.local_path));
+        source.insert("version_hint".to_owned(), json!(report.version_hint));
+        source.insert("stale".to_owned(), json!(report.stale));
+        source.insert("manifest_path".to_owned(), json!(manifest_path));
+        if let Some(fallback) = &report.fallback {
+            source.insert("compatibility_fallback".to_owned(), json!(fallback));
+        }
         return Ok(json!({
             "schema": "effigy.bundle.inspect.v1",
             "schema_version": 1,
             "ok": true,
             "mode": "active-source",
             "bundle": null,
-            "source": {
-                "source_type": report.source_type,
-                "source_path": report.source_path,
-                "local_path": report.local_path,
-                "version_hint": report.version_hint,
-                "stale": report.stale,
-                "manifest_path": manifest_path,
-            }
+            "source": source,
         })
         .to_string());
     }
 
-    Ok([
+    let mut lines = vec![
         format!("[bundle] source {}", source_type_label(report.source_type)),
         format!("source={}", report.source_path.display()),
         format!("manifest={}", manifest_path.display()),
@@ -250,8 +253,14 @@ fn run_active_bundle_inspect(
             report.version_hint.as_deref().unwrap_or("unavailable")
         ),
         format!("stale={}", report.stale),
-    ]
-    .join("\n"))
+    ];
+    if let Some(fallback) = &report.fallback {
+        lines.push(format!(
+            "compatibility_fallback={}",
+            fallback.notice("bundle")
+        ));
+    }
+    Ok(lines.join("\n"))
 }
 
 fn run_bundle_sync(output_json: bool) -> Result<String, RunnerError> {
@@ -266,20 +275,22 @@ fn run_bundle_sync(output_json: bool) -> Result<String, RunnerError> {
     };
 
     if output_json {
-        return Ok(json!({
-            "schema": "effigy.bundle.sync.v1",
-            "schema_version": 1,
-            "ok": true,
-            "source_type": report.source_type,
-            "source_path": report.source_path,
-            "local_path": report.local_path,
-            "version_hint": report.version_hint,
-            "changed": report.changed,
-            "applicable": report.applicable,
-            "manifest_path": manifest_path,
-            "sources": report.sources,
-        })
-        .to_string());
+        let mut payload = serde_json::Map::new();
+        payload.insert("schema".to_owned(), json!("effigy.bundle.sync.v1"));
+        payload.insert("schema_version".to_owned(), json!(1));
+        payload.insert("ok".to_owned(), json!(true));
+        payload.insert("source_type".to_owned(), json!(report.source_type));
+        payload.insert("source_path".to_owned(), json!(report.source_path));
+        payload.insert("local_path".to_owned(), json!(report.local_path));
+        payload.insert("version_hint".to_owned(), json!(report.version_hint));
+        payload.insert("changed".to_owned(), json!(report.changed));
+        payload.insert("applicable".to_owned(), json!(report.applicable));
+        payload.insert("manifest_path".to_owned(), json!(manifest_path));
+        payload.insert("sources".to_owned(), json!(report.sources));
+        if !report.notes.is_empty() {
+            payload.insert("notes".to_owned(), json!(report.notes));
+        }
+        return Ok(serde_json::Value::Object(payload).to_string());
     }
 
     let mut lines = vec![format!(
@@ -307,6 +318,9 @@ fn run_bundle_sync(output_json: bool) -> Result<String, RunnerError> {
             "unchanged"
         }
     ));
+    for note in &report.notes {
+        lines.push(format!("note={note}"));
+    }
     Ok(lines.join("\n"))
 }
 

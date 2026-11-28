@@ -52,6 +52,9 @@ consuming `effigy.toml` unless absolute.
 name = "acme"
 description = "Acme local dev stack."
 defaults = "export.toml"
+minimum_effigy_version = "0.15.0"
+# Optional upper bound:
+# maximum_effigy_version = "0.16.99"
 
 [[inputs]]
 name = "host"
@@ -60,6 +63,25 @@ required = true
 description = "Primary local hostname."
 example = "acme.test"
 ```
+
+Optional Effigy version compatibility bounds:
+
+- `minimum_effigy_version` and `maximum_effigy_version` under `[bundle]` in
+  `bundle.toml` (or under `[manifest]` in the bundle's `defaults` file) declare
+  the Effigy versions that can load the bundle.
+- Bounds are validated strictly as SemVer (`X.Y.Z`) with
+  `minimum_effigy_version <= maximum_effigy_version`. Pre-release identifiers
+  and local `+local.<sha>` build metadata on the running binary are ignored
+  when comparing against bundle bounds.
+- When a consumer tracks a floating Git branch (such as `ref = "main"` or an
+  omitted `ref`) whose tip requires a newer Effigy version, Effigy boundedly
+  inspects the repository's tags newest-first (SemVer order) and automatically
+  selects the newest compatible tag, emitting a notice in output,
+  `effigy bundle inspect`, and `effigy doctor`. Upgrading Effigy immediately
+  re-evaluates the floating branch and moves back to it.
+- Explicit commit `rev` pins and explicit tag pins never fall back silently;
+  they fail clearly with the required vs running Effigy version before parsing
+  bundle defaults.
 
 Supported input types:
 

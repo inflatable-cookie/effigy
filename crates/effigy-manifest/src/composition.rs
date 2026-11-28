@@ -142,9 +142,15 @@ pub fn load_task_manifest_with_inspection(
 pub(crate) fn validate_source_snapshot(
     manifest_path: &Path,
     source: &Path,
+    active_version: Option<&str>,
 ) -> Result<(), ManifestError> {
     let mut composed = load_composed_value(manifest_path, &mut CompositionSession::default())?;
-    apply_bundle_defaults(manifest_path, &mut composed, Some(source))?;
+    crate::bundles::apply_bundle_defaults_for_version(
+        manifest_path,
+        &mut composed,
+        Some(source),
+        active_version,
+    )?;
     let manifest = composed
         .into_manifest()
         .map_err(|error| ManifestError::Parse {

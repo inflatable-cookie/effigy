@@ -64,6 +64,13 @@ is going is picked up by the next command, not by the one already running.
 - a floating Git source (no `ref`, or a branch or tag) is checked with one
   bounded `git ls-remote` at most once per checkout per 10 minutes, and the
   new revision is acquired when upstream moved;
+- when a floating Git branch tip declares `minimum_effigy_version` (or
+  `maximum_effigy_version`) that the running Effigy binary does not satisfy,
+  Effigy boundedly checks the repository's tags newest-first and selects the
+  newest compatible tag automatically, surfacing the selection in output notes,
+  `effigy bundle inspect`, and `effigy doctor` until Effigy is upgraded;
+- explicit commit `rev` pins and explicit tag pins never silently fall back and
+  instead refuse clearly with the required vs running Effigy version;
 - a full commit id in `ref`, an OCI digest and a tag still at its pinned commit
   never move;
 - an offline or failed update keeps the current pins and warns once; only a

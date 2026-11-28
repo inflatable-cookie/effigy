@@ -13,6 +13,8 @@ pub(crate) struct ManifestSectionConfig {
     pub(crate) extend: Vec<String>,
     #[serde(default)]
     pub(crate) minimum_effigy_version: Option<String>,
+    #[serde(default)]
+    pub(crate) maximum_effigy_version: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
