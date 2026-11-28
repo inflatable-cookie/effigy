@@ -28,3 +28,5 @@ pub(super) use shell::run_container_shell;
 pub(super) use stats::run_container_stats_command;
 pub(super) use status::run_container_status_command;
 pub(super) use up::run_container_up;
+
+pub(in crate::runner) use up::{detached_recreate_args, verify_and_repair_detached_mounts};

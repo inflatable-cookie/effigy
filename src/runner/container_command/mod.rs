@@ -28,6 +28,7 @@ pub(in crate::runner) use gateway_registration::{
     register_gateway_routes_for_container,
 };
 pub(in crate::runner) use hosts::scoped_host_map;
+pub(in crate::runner) use lifecycle::{detached_recreate_args, verify_and_repair_detached_mounts};
 pub(in crate::runner) use lifecycle::{
     release_managed_environment, run_container_exec_capture_with_credentials,
     run_container_exec_operation_capture, run_container_exec_stream,

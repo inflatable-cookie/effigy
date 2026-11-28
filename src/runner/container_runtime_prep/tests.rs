@@ -1255,3 +1255,21 @@ fn exec_prep_ensures_the_docker_backend_without_invoking_colima() {
         "no step names the backend this host does not have: {message}"
     );
 }
+
+#[test]
+fn reused_stack_mount_preparation_does_not_touch_named_volume_host_paths() {
+    let fixture = effigy_test_support::Fixture::workspace("protected-mount-").expect("fixture");
+    let root = fixture.path();
+    let compose = root.join("compose.yml");
+    let overlay = root.join("overlay.yml");
+    fs::write(&compose, format!("services:\n  app:\n    volumes:\n      - '{}:/workspace'\n  other:\n    volumes:\n      - '{}:/other'\n", root.display(), root.join("node_modules/child").display())).expect("compose");
+    fs::write(&overlay, "services:\n  app:\n    volumes:\n      - type: volume\n        source: deps\n        target: /workspace/node_modules\n").expect("overlay");
+    let mut policy = test_policy(compose);
+    policy.compose_files.push(overlay);
+    super::host_mounts::prepare_host_bind_mount_dirs_with_protected_volumes(root, &policy, true)
+        .expect("protected prepare");
+    assert!(
+        !root.join("node_modules").exists(),
+        "host directory beneath a named submount must remain absent"
+    );
+}

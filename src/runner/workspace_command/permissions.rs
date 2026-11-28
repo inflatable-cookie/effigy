@@ -58,19 +58,28 @@ pub(super) struct PermissionPrepContext {
 #[derive(Debug)]
 pub(in crate::runner) struct PermissionPrepError {
     pub message: String,
+    detached_mounts: Vec<String>,
 }
 
 impl PermissionPrepError {
     fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
+            detached_mounts: Vec::new(),
         }
     }
 }
 
 impl From<PermissionPrepError> for RunnerError {
     fn from(error: PermissionPrepError) -> Self {
-        RunnerError::task_invocation(error.message)
+        if error.detached_mounts.is_empty() {
+            RunnerError::task_invocation(error.message)
+        } else {
+            RunnerError::DetachedNamedVolumes {
+                mounts: error.detached_mounts,
+                detail: error.message,
+            }
+        }
     }
 }
 
@@ -252,6 +261,31 @@ struct PreparedTarget {
     mount_kind: WorkspaceMountKind,
     source: Option<String>,
     read_only: bool,
+}
+
+pub(in crate::runner) fn verify_workspace_named_volumes(
+    root: &Path,
+    policy: &EffectiveContainerPolicy,
+    container_name: Option<&str>,
+) -> Result<(), RunnerError> {
+    let Some(user) = policy.workspace_user.as_deref() else {
+        return Ok(());
+    };
+    let plan = load_workspace_ownership_plan(policy)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let context = PermissionPrepContext {
+        profile: policy.profile.clone(),
+        project_name: policy.project_name.clone(),
+        container_name: container_name.unwrap_or(&policy.name).to_owned(),
+        service: policy.primary_service.clone(),
+    };
+    verify_declared_named_volumes(
+        user,
+        &declared_named_volume_targets(&plan),
+        &context,
+        &compose_backend(root, policy),
+    )
+    .map_err(Into::into)
 }
 
 pub(super) fn ensure_workspace_permissions_ready_with(
@@ -884,14 +918,14 @@ fn verify_declared_named_volumes(
     context: &PermissionPrepContext,
     backend: &impl WorkspaceAccessBackend,
 ) -> Result<(), PermissionPrepError> {
-    let Some(detached) = unmounted_named_volumes(backend, volumes)?
-        .into_iter()
-        .next()
-    else {
+    let detached = unmounted_named_volumes(backend, volumes)?;
+    let Some(first) = detached.first() else {
         return Ok(());
     };
     let identity = backend.resolve_doctor_identity(user)?;
-    Err(detached_named_volume_error(&identity, detached, context))
+    let mut error = detached_named_volume_error(&identity, first, context);
+    error.detached_mounts = detached.iter().map(|volume| volume.path.clone()).collect();
+    Err(error)
 }
 
 fn nested_verify_paths(target: &PreparedTarget) -> Vec<String> {
@@ -990,7 +1024,7 @@ fn detached_named_volume_error(
 /// Mount points from `/proc/self/mountinfo`, with kernel octal escapes decoded
 /// and trailing slashes normalized. Field 5 (index 4) is the mount point; the
 /// kernel escapes spaces and tabs, so whitespace splitting is safe.
-fn parse_mountinfo_mountpoints(raw: &str) -> BTreeSet<String> {
+pub(in crate::runner) fn parse_mountinfo_mountpoints(raw: &str) -> BTreeSet<String> {
     raw.lines()
         .filter_map(|line| line.split_whitespace().nth(4))
         .map(|escaped| normalize_mount_path(&unescape_mountinfo_field(escaped)))

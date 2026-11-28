@@ -194,15 +194,31 @@ Mounts are part of a service's rendered configuration, so they need no separate
 change detector. One apply (`compose up -d --build --remove-orphans`, no
 recreate flag) converges the stack, and Compose recreates exactly the services
 whose configuration changed, mounts included ([053](053-environment-reconciler-contract.md)
-§3). A running stack is never inspected for mount drift, and `container up`
-adds no `--no-recreate`/`--force-recreate` variant.
+§3). After apply, workspace permission preflight verifies declared named-volume
+mounts against the live mount table. If one is detached, `container up` and
+routed task activation recreate only the primary service once with
+`--force-recreate --no-deps`, preserving volumes, then verify again. A live
+holder prevents the apply; a detached mount then refuses with the holder's run
+ID and asks the caller to retry after release. If holder evidence is unreadable,
+activation with named volumes refuses before Compose can replace the service. A
+second mount verification failure refuses. Exec and doctor report detached
+mounts without recreating the container or inspecting the host directory
+underneath. The host checkout journal remains under `.effigy/state` and is
+accessed for `Gate(Env)` even when its container mask is detached. The planner
+permits this normal journal access and configured media-source validation; the
+no-host-touch rule forbids ownership repair, preparation, scanning or deletion
+of the isolated host mountpoint underneath a named volume.
 
 An isolated volume overlays a directory inside the checkout, so its host mount
-point must exist. Up and routed-task preparation create a missing host
-mount-point directory for a named volume of the primary service nested under
-the working directory (the isolated `target` and `node_modules` trees) before
-the apply. A non-directory or symlink at that path refuses; creation never
-replaces a file and never follows a link, and the refusal names
+point must exist for a fresh stack. Before a cold apply, preparation creates a
+missing host mount-point directory for a named volume of the primary service
+nested under the working directory (the isolated `target` and `node_modules`
+trees). If any project container is running, or the inventory is unavailable,
+isolated mountpoint creation is skipped. Task bind-mount preparation excludes
+named-volume host paths and their ancestors from permission widening: a
+detached mount could expose the host directory underneath. Normal configured
+media-source validation may inspect a source before mount verification. A non-directory or symlink at a cold mount point refuses; creation
+never replaces a file and never follows a link, and the refusal names
 `oxide outputs adopt` as the fix, because an Oxide output link on an isolated
 path is the shape that meets it. This is a host-side preparation step, not
 permission repair: it changes no ownership or mode.

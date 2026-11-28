@@ -27,7 +27,7 @@ fi
 subcmd=""
 for arg in "$@"; do
   case "$arg" in
-    up|down|ps|inspect|logs) subcmd="$arg"; break ;;
+    up|down|ps|inspect|logs|exec) subcmd="$arg"; break ;;
   esac
 done
 case "$subcmd" in
@@ -35,6 +35,24 @@ case "$subcmd" in
   up)
     if [ -f "$state/fail-up" ]; then echo 'no such image' >&2; exit 1; fi
     : > "$state/running"
+    case "$*" in *--force-recreate*)
+      if [ -f "$state/reattach" ]; then printf '1 0 0:1 / /workspace/.effigy/state rw - ext4 /dev/a rw\n2 0 0:2 / /workspace/.effigy/secrets rw - ext4 /dev/b rw\n' > "$state/mountinfo"; fi ;;
+    esac
+    ;;
+  exec)
+    marker=""
+    for arg in "$@"; do
+      case "$arg" in
+        effigy-named-volume-mounts) cat "$state/mountinfo"; exit 0 ;;
+        effigy-workspace-identity) printf '501\n20\n'; exit 0 ;;
+        effigy-perm-inspect-batch|effigy-perm-find-batch|effigy-perm-access-batch) marker="$arg"; continue ;;
+      esac
+      case "$marker:$arg" in
+        effigy-perm-inspect-batch:/*) printf 'dir 501 20 755\n' ;;
+        effigy-perm-find-batch:/*) printf 'clean\n' ;;
+        effigy-perm-access-batch:/*) printf 'ready\n' ;;
+      esac
+    done
     ;;
   ps)
     if [ -f "$state/running" ]; then
@@ -337,4 +355,174 @@ fn detached_auto_up_starts_no_relay_process() {
         "{log}"
     );
     fixture.down();
+}
+
+#[test]
+fn up_repairs_detached_named_volume_once_and_preserves_data() {
+    for (mounted, reattach, succeeds, expected_recreates) in [
+        (false, true, true, 1),
+        (false, false, false, 1),
+        (true, false, true, 0),
+    ] {
+        for mode in [0, 1, 2] {
+            let fixture = RelayFixture::new("");
+            let _skip_handoff = EnvGuard::set_many(&[(
+                "EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF",
+                Some("1".to_owned()),
+            )]);
+            let mut manifest =
+                fs::read_to_string(fixture.repo.join("effigy.toml")).expect("manifest");
+            manifest.push_str("\n[systems]\ndefault = 'dev'\n[systems.dev]\ndefault_workspace = 'app'\n[systems.dev.workspaces.app]\ncontainer = 'dev'\nworking_dir = '/workspace'\nuser = 'dev'\nhome = '/home/dev'\n");
+            fs::write(fixture.repo.join("effigy.toml"), manifest).expect("manifest");
+            crate::runner::test_support::migrate_declared_compose_files(&fixture.repo);
+            fs::write(fixture.state.join("running"), "").expect("running");
+            fs::write(
+            fixture.state.join("mountinfo"),
+            if mounted {
+                "1 0 0:1 / /workspace/.effigy/state rw - ext4 /dev/a rw\n2 0 0:2 / /workspace/.effigy/secrets rw - ext4 /dev/b rw\n"
+            } else {
+                "1 0 0:1 / /workspace/.effigy/state rw - ext4 /dev/a rw\n"
+            },
+        )
+        .expect("mountinfo");
+            if reattach {
+                fs::write(fixture.state.join("reattach"), "").expect("reattach");
+            }
+            let host = fixture.repo.join(".effigy/secrets");
+            let witness = fixture.state.join("host-witness");
+            fs::create_dir_all(&witness).expect("witness directory");
+            fs::write(witness.join("witness"), "host data").expect("host data");
+            // A missing or replaced host mountpoint must not be inspected or
+            // repaired when the container's named submount is detached.
+            let host_missing = !mounted && reattach;
+            if !host_missing {
+                fs::create_dir_all(host.parent().expect("host parent"))
+                    .expect("host parent directory");
+                std::os::unix::fs::symlink(&witness, &host).expect("host symlink");
+            }
+            fs::write(fixture.state.join("volume"), "volume data").expect("volume data");
+            let result = if mode == 2 {
+                let policy = effigy_containers::policy::render::prepare_resolved(&fixture.policy())
+                    .expect("prepared policy");
+                with_cwd(&fixture.repo, || {
+                    crate::runner::container_runtime_prep::prepare_container_exec_runtime(
+                        &fixture.repo,
+                        &policy,
+                        Some("dev"),
+                        crate::runner::container_runtime_prep::StartPolicy {
+                            retention: Retention::Persistent,
+                            holders: &[],
+                            reconcile_shared_services: true,
+                        },
+                    )
+                })
+                .map(|()| String::new())
+            } else {
+                fixture.up(mode == 1)
+            };
+            let log = fixture.read("args.log");
+            assert_eq!(result.is_ok(), succeeds, "result: {result:?}\n{log}");
+            if let Err(error) = result {
+                assert!(
+                    error
+                        .to_string()
+                        .contains("detached from the running container"),
+                    "{error}"
+                );
+            }
+            let recreates: Vec<_> = log
+                .lines()
+                .filter(|line| line.contains("--force-recreate"))
+                .collect();
+            assert_eq!(recreates.len(), expected_recreates, "{log}");
+            for line in recreates {
+                assert!(
+                    line.contains("--no-deps app") && !line.contains("--volumes"),
+                    "{line}"
+                );
+            }
+            assert_eq!(
+                fs::read_to_string(witness.join("witness")).expect("host"),
+                "host data"
+            );
+            if host_missing {
+                assert!(!host.exists(), "detached host mountpoint was created");
+            } else {
+                assert!(fs::symlink_metadata(&host)
+                    .expect("host symlink")
+                    .file_type()
+                    .is_symlink());
+            }
+            assert_eq!(fixture.read("volume"), "volume data");
+        }
+    }
+}
+
+#[test]
+fn a_live_holder_prevents_detached_volume_recreation() {
+    for mode in [0, 1, 2] {
+        let fixture = RelayFixture::new("");
+        let _skip_handoff = EnvGuard::set_many(&[(
+            "EFFIGY_TEST_SKIP_WORKSPACE_EFFIGY_HANDOFF",
+            Some("1".to_owned()),
+        )]);
+        let mut manifest = fs::read_to_string(fixture.repo.join("effigy.toml")).expect("manifest");
+        manifest.push_str("\n[systems]\ndefault = 'dev'\n[systems.dev]\ndefault_workspace = 'app'\n[systems.dev.workspaces.app]\ncontainer = 'dev'\nworking_dir = '/workspace'\nuser = 'dev'\nhome = '/home/dev'\n");
+        fs::write(fixture.repo.join("effigy.toml"), manifest).expect("manifest");
+        crate::runner::test_support::migrate_declared_compose_files(&fixture.repo);
+        fs::write(fixture.state.join("running"), "").expect("running");
+        fs::write(fixture.state.join("mountinfo"), "1 0 0:1 / /workspace/.effigy/state rw - ext4 /dev/a rw\n2 0 0:2 / /workspace/.effigy/secrets rw - ext4 /dev/b rw\n").expect("healthy mountinfo");
+        fixture.up(false).expect("activate environment");
+        let policy = fixture.policy();
+        let mut held =
+            crate::runner::environment::Held::begin(&fixture.repo, &policy, "fixture task")
+                .expect("begin holder")
+                .expect("host holder");
+        assert!(held.attach_active().expect("attach holder"));
+        let holder = held.id().expect("holder ID").to_string();
+        fs::write(
+            fixture.state.join("mountinfo"),
+            "1 0 0:1 / /workspace/.effigy/state rw - ext4 /dev/a rw\n",
+        )
+        .expect("detached mountinfo");
+        fs::write(fixture.state.join("args.log"), "").expect("clear log");
+        let result = if mode == 2 {
+            let policy = effigy_containers::policy::render::prepare_resolved(&policy)
+                .expect("prepared policy");
+            with_cwd(&fixture.repo, || {
+                crate::runner::container_runtime_prep::prepare_container_exec_runtime(
+                    &fixture.repo,
+                    &policy,
+                    Some("dev"),
+                    crate::runner::container_runtime_prep::StartPolicy {
+                        retention: Retention::Persistent,
+                        holders: &[],
+                        reconcile_shared_services: true,
+                    },
+                )
+            })
+            .map(|()| String::new())
+        } else {
+            fixture.up(mode == 1)
+        };
+        let error = result
+            .expect_err("held detached volume must refuse")
+            .to_string();
+        assert!(
+            error.contains(&holder)
+                && error.contains("after active holders release")
+                && error.contains("detached"),
+            "{error}"
+        );
+        let log = fixture.read("args.log");
+        assert!(
+            !log.lines().any(|line| line.contains("--force-recreate")
+                || line
+                    .split_whitespace()
+                    .any(|arg| arg == "down" || arg == "rm")),
+            "{log}"
+        );
+        assert!(held.holds(), "the existing task remains attached");
+        drop(held);
+    }
 }
