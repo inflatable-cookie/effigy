@@ -2024,7 +2024,7 @@ fn consumer_effective_manifests_match_after_importing_their_actual_cached_bytes(
             .clone()
             .try_into()
             .unwrap();
-        let effigy_manifest::ManifestBundleBase::Git { url, r#ref } = spec else {
+        let effigy_manifest::ManifestBundleBase::Git { url, r#ref, .. } = spec else {
             panic!("expected git consumer");
         };
         let legacy = fixture

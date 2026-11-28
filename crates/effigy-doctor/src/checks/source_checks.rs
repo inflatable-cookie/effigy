@@ -66,10 +66,18 @@ pub(super) fn run_bundle_compatibility_check(
         return;
     };
     if let Some(fallback) = &report.fallback {
+        let guidance = match fallback.kind {
+            effigy_manifest::CompatibilityMismatchKind::BelowMinimum => {
+                remediation::UPGRADE_EFFIGY_FOR_BUNDLE
+            }
+            effigy_manifest::CompatibilityMismatchKind::AboveMaximum => {
+                remediation::USE_COMPATIBLE_BUNDLE_OR_EFFIGY
+            }
+        };
         state.add_check_warning(
             check_id::BUNDLE_COMPATIBILITY,
             fallback.notice("bundle"),
-            remediation::UPGRADE_EFFIGY_FOR_BUNDLE,
+            guidance,
         );
     }
 }

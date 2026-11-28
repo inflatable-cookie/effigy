@@ -75,6 +75,8 @@ pub mod remediation {
         "Resolve the pinned source by hand: commit or discard its local changes, or check out the pinned commit. Effigy never resets, fetches forward or cleans a working copy; move the pin only by editing `rev` or `rev_file` (see CHANGELOG.md).";
     pub const UPGRADE_EFFIGY_FOR_BUNDLE: &str =
         "Upgrade Effigy to unlock the latest bundle release, then run `effigy bundle sync`.";
+    pub const USE_COMPATIBLE_BUNDLE_OR_EFFIGY: &str =
+        "Wait for a bundle release that supports this Effigy version (or use a compatible Effigy release), then run `effigy bundle sync`.";
     pub const MANIFEST_READ_FAILURE: &str =
         "Fix file permissions/path issues and re-run `effigy doctor`.";
     pub const MANIFEST_TOML_SYNTAX: &str = "Fix TOML syntax and re-run `effigy doctor`.";

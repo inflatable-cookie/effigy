@@ -25,7 +25,7 @@ base = { type = "git", url = "git@github.com:acme/effigy-bundle.git", ref = "mai
     .expect("parse git bundle config");
     assert!(matches!(
         git.base.as_ref(),
-        Some(ManifestBundleBase::Git { url, r#ref })
+        Some(ManifestBundleBase::Git { url, r#ref, .. })
             if url == "git@github.com:acme/effigy-bundle.git" && r#ref.as_deref() == Some("main")
     ));
 

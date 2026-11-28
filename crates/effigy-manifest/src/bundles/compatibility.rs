@@ -1,8 +1,18 @@
 use std::path::Path;
 
 use semver::Version;
+use serde::{Deserialize, Serialize};
 
 use crate::{ManifestError, TASK_MANIFEST_FILE};
+
+/// Direction of an Effigy version compatibility mismatch.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompatibilityMismatchKind {
+    #[default]
+    BelowMinimum,
+    AboveMaximum,
+}
 
 /// Optional Effigy version compatibility bounds declared by a bundle.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -16,6 +26,40 @@ pub(crate) struct BundleCompatibility {
 pub(crate) struct CompatibilityMismatch {
     pub required: String,
     pub running: String,
+    pub kind: CompatibilityMismatchKind,
+}
+
+impl CompatibilityMismatch {
+    pub(crate) fn guidance_for_load(&self) -> &'static str {
+        match self.kind {
+            CompatibilityMismatchKind::BelowMinimum => {
+                "upgrade Effigy or select a compatible bundle version"
+            }
+            CompatibilityMismatchKind::AboveMaximum => {
+                "select a compatible bundle version or use a compatible Effigy release"
+            }
+        }
+    }
+
+    pub(crate) fn guidance_for_pin(&self) -> &'static str {
+        match self.kind {
+            CompatibilityMismatchKind::BelowMinimum => {
+                "upgrade Effigy or select a compatible bundle ref"
+            }
+            CompatibilityMismatchKind::AboveMaximum => {
+                "select a compatible bundle ref or use a compatible Effigy release"
+            }
+        }
+    }
+
+    pub(crate) fn guidance_for_no_tag(&self) -> &'static str {
+        match self.kind {
+            CompatibilityMismatchKind::BelowMinimum => "upgrade Effigy to use this bundle",
+            CompatibilityMismatchKind::AboveMaximum => {
+                "wait for a bundle release supporting this Effigy version or use a compatible Effigy release"
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -106,10 +150,16 @@ impl BundleCompatibility {
             .as_ref()
             .is_some_and(|max| running > *max);
         if below_min || above_max {
+            let kind = if below_min {
+                CompatibilityMismatchKind::BelowMinimum
+            } else {
+                CompatibilityMismatchKind::AboveMaximum
+            };
             return Err(CompatibilityCheckError::Incompatible(
                 CompatibilityMismatch {
                     required: self.describe_requirement(),
                     running: active_version.trim().to_owned(),
+                    kind,
                 },
             ));
         }

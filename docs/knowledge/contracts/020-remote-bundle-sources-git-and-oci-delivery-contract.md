@@ -328,22 +328,31 @@ against the running Effigy binary's `major.minor.patch` core (ignoring
 pre-release and `+local.<sha>` build metadata).
 
 - **Floating Git branch (`ref` absent, `HEAD`, `refs/heads/...`, or a remote
-  branch):** when the fetched branch tip fails the bundle's compatibility
-  bounds, Prepare inspects remote tags via one bounded `git ls-remote --tags`,
-  sorts them newest-first (SemVer descending, then non-SemVer descending),
-  skips tags at the incompatible tip commit, and probes at most 12 candidates
-  to select the newest compatible tag. The selected pin records
+  branch):** when `ref` is absent or `HEAD`, Effigy resolves and monitors the
+  remote repository's actual default branch (`HEAD`) rather than assuming
+  `main`. When the fetched branch tip fails the bundle's compatibility bounds,
+  Prepare inspects remote tags via one bounded `git ls-remote --tags`, sorts
+  them newest-first (SemVer descending, then non-SemVer descending), skips tags
+  at the incompatible tip commit, and probes at most 12 candidates to select
+  the newest compatible tag. The selected pin records
   `SourceCompatibilityFallback` (`selected_tag`, `skipped_ref`,
-  `skipped_revision`, `required_effigy`, `running_effigy`), reuses the
-  10-minute `REMOTE_CHECK_TTL` cache while on the same Effigy version, and
-  surfaces a clear notice in `UPDATE_NOTES`, `bundle inspect`, and `effigy
-  doctor` (`sources.bundle-compatibility`). Upgrading Effigy immediately
-  re-evaluates the floating branch without waiting for the TTL.
-- **Explicit commit `rev` or explicit tag pin:** never falls back silently;
-  refuses with a human-readable version-mismatch error naming the required and
-  running Effigy versions before parsing bundle defaults.
-- **No compatible tag found:** refuses with the same version-mismatch error
-  before parsing bundle defaults.
+  `skipped_revision`, `required_effigy`, `running_effigy`, `kind`), reuses the
+  10-minute `REMOTE_CHECK_TTL` cache while on the same Effigy version, re-probes
+  bounded tag candidates after the TTL expires (picking up newly published
+  compatible tags even if the skipped branch tip did not move), and surfaces a
+  clear notice in `UPDATE_NOTES`, `bundle inspect`, and `effigy doctor`
+  (`sources.bundle-compatibility`) tailored to whether the running version is
+  below `minimum_effigy_version` or above `maximum_effigy_version`. Upgrading
+  Effigy immediately re-evaluates the floating branch without waiting for the
+  TTL.
+- **Explicit commit `rev` (`rev = "<sha>"` or a full SHA in `ref`) or explicit
+  tag pin:** never falls back silently; refuses with a human-readable
+  version-mismatch error naming the required and running Effigy versions before
+  parsing bundle defaults. Declaring both `ref` and `rev` is rejected.
+- **No compatible tag found (or consumer `effigy.toml` `[manifest].minimum_effigy_version`
+  not satisfied, including `+local.` builds):** refuses with a clear
+  version-mismatch error tailored to the mismatch direction before parsing
+  bundle defaults.
 
 ## Drift Triggers
 

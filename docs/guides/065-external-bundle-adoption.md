@@ -18,7 +18,7 @@ project_name = "acme-dev"
 Supported sources:
 
 - `base = { type = "path", dir = "bundles/acme" }`
-- `base = { type = "git", url = "...", ref = "main" }`
+- `base = { type = "git", url = "...", ref = "main" }` (or `rev = "<commit-sha>"` for an explicit commit pin)
 - `base = { type = "oci", url = "ghcr.io/acme/effigy-bundle:v1" }`
 
 Legacy string bundle names are intentionally gone:

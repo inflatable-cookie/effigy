@@ -40,17 +40,28 @@ pub struct SourceCompatibilityFallback {
     pub skipped_revision: Option<String>,
     pub required_effigy: String,
     pub running_effigy: String,
+    #[serde(default)]
+    pub kind: super::compatibility::CompatibilityMismatchKind,
 }
 
 impl SourceCompatibilityFallback {
     pub fn notice(&self, name: &str) -> String {
-        format!(
-            "{name} selected compatible tag `{}` (skipped `{}` which requires Effigy {}, running {}); upgrade Effigy to unlock the latest bundle release",
-            self.selected_tag,
-            self.skipped_ref,
-            self.required_effigy,
-            self.running_effigy,
-        )
+        match self.kind {
+            super::compatibility::CompatibilityMismatchKind::BelowMinimum => format!(
+                "{name} selected compatible tag `{}` (skipped `{}` which requires Effigy {}, running {}); upgrade Effigy to unlock the latest bundle release",
+                self.selected_tag,
+                self.skipped_ref,
+                self.required_effigy,
+                self.running_effigy,
+            ),
+            super::compatibility::CompatibilityMismatchKind::AboveMaximum => format!(
+                "{name} selected compatible tag `{}` (skipped `{}` which only supports Effigy {}, running {}); wait for a bundle release supporting this Effigy version or use a compatible Effigy release",
+                self.selected_tag,
+                self.skipped_ref,
+                self.required_effigy,
+                self.running_effigy,
+            ),
+        }
     }
 }
 
@@ -102,6 +113,7 @@ pub(super) enum BundleSelection {
     Git {
         url: String,
         reference: Option<String>,
+        rev: Option<String>,
     },
     Oci {
         url: String,
@@ -121,14 +133,29 @@ impl BundleSelection {
                     },
                 })
             }
-            ManifestBundleBase::Git { url, r#ref } if !url.trim().is_empty() => Ok(Self::Git {
-                url: url.trim().into(),
-                reference: r#ref
+            ManifestBundleBase::Git { url, r#ref, rev } if !url.trim().is_empty() => {
+                let reference = r#ref
                     .as_deref()
                     .map(str::trim)
                     .filter(|value| !value.is_empty())
-                    .map(str::to_owned),
-            }),
+                    .map(str::to_owned);
+                let rev = rev
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_owned);
+                if reference.is_some() && rev.is_some() {
+                    return Err(error(
+                        manifest,
+                        "git bundle source cannot declare both `ref` and `rev`",
+                    ));
+                }
+                Ok(Self::Git {
+                    url: url.trim().into(),
+                    reference,
+                    rev,
+                })
+            }
             ManifestBundleBase::Oci { url } if !url.trim().is_empty() => Ok(Self::Oci {
                 url: url.trim().into(),
             }),
@@ -143,9 +170,14 @@ impl BundleSelection {
             Self::Path { path } => ManifestBundleBase::Path {
                 dir: path.to_string_lossy().into(),
             },
-            Self::Git { url, reference } => ManifestBundleBase::Git {
+            Self::Git {
+                url,
+                reference,
+                rev,
+            } => ManifestBundleBase::Git {
                 url: url.clone(),
                 r#ref: reference.clone(),
+                rev: rev.clone(),
             },
             Self::Oci { url } => ManifestBundleBase::Oci { url: url.clone() },
         }
@@ -456,11 +488,15 @@ fn legacy_root(manifest: &Path, selection: &BundleSelection) -> Option<PathBuf> 
     let cache = parent(manifest).join(".effigy/cache/bundles");
     Some(match selection {
         BundleSelection::Path { path } => path.clone(),
-        BundleSelection::Git { url, reference } => cache
+        BundleSelection::Git {
+            url,
+            reference,
+            rev,
+        } => cache
             .join("git")
             .join(sha256_hex(canonical_git_cache_identity(url).as_bytes()))
             .join(sanitize_cache_segment(
-                reference.as_deref().unwrap_or("main"),
+                rev.as_deref().or(reference.as_deref()).unwrap_or("main"),
             )),
         BundleSelection::Oci { url } => {
             let locator = oci_bundle_cache_locator(url);
@@ -565,6 +601,7 @@ base = { type = "git", url = "https://invalid.invalid/bundle" }
         let source = BundleSelection::Git {
             url: "https://invalid.invalid/bundle".into(),
             reference: None,
+            rev: None,
         };
         assert!(resolve_materialized_bundle_source(&manifest, &source)
             .unwrap_err()
@@ -648,6 +685,7 @@ base = { type = "git", url = "https://invalid.invalid/bundle" }
             declaration: ManifestBundleBase::Git {
                 url: "https://example.invalid/bundle".into(),
                 r#ref: None,
+                rev: None,
             },
             object: "cache/sources/one".into(),
             version: version.into(),

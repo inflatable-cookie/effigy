@@ -11,6 +11,7 @@ use crate::TASK_MANIFEST_FILE;
 mod compatibility;
 mod source;
 
+pub use compatibility::CompatibilityMismatchKind;
 pub use source::{
     bundle_update_notes, catalog_source_roots, hold_selected_sources, inspect_bundle_source,
     prepare_bundle_sources, prepare_missing_bundle_sources, resolve_catalog_source,
@@ -261,8 +262,10 @@ fn resolve_local_bundle_defaults(
                 ManifestError::Compose {
                     path: manifest_path.to_path_buf(),
                     detail: format!(
-                        "bundle requires Effigy {}, but this binary is {}; upgrade Effigy or select a compatible bundle version",
-                        mismatch.required, mismatch.running
+                        "bundle requires Effigy {}, but this binary is {}; {}",
+                        mismatch.required,
+                        mismatch.running,
+                        mismatch.guidance_for_load()
                     ),
                 }
             }
@@ -1177,8 +1180,10 @@ fn take_bundle_extend_paths(
                 ManifestError::Compose {
                     path: manifest_path.to_path_buf(),
                     detail: format!(
-                        "bundle requires Effigy {}, but this binary is {}; upgrade Effigy or select a compatible bundle version",
-                        mismatch.required, mismatch.running
+                        "bundle requires Effigy {}, but this binary is {}; {}",
+                        mismatch.required,
+                        mismatch.running,
+                        mismatch.guidance_for_load()
                     ),
                 }
             }
