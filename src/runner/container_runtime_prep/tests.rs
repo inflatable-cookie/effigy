@@ -544,14 +544,14 @@ fn task_apply_stages_runtime_secrets_before_compose_and_preserves_failed_apply()
 
 #[test]
 fn task_apply_starts_shared_services_and_delivers_secrets_before_the_one_apply() {
-    let repo_root = Path::new("/tmp/demo-repo");
+    let repo_root = temp_test_dir("task-apply-secrets");
     let policy = test_policy(PathBuf::from("docker-compose.yml"));
     let order = Arc::new(Mutex::new(Vec::<String>::new()));
 
     let shared_order = Arc::clone(&order);
     let secrets_order = Arc::clone(&order);
     run_task_apply(
-        repo_root,
+        &repo_root,
         &policy,
         true,
         move |_| {
@@ -579,10 +579,11 @@ fn task_apply_starts_shared_services_and_delivers_secrets_before_the_one_apply()
                     .expect("order lock")
                     .push("apply".to_owned());
                 assert_eq!(label, "docker compose up");
+                let mut expected = effigy_containers::compose::compose_up_args(policy);
+                expected.push("--force-recreate".into());
                 assert_eq!(
-                    args,
-                    effigy_containers::compose::compose_up_args(policy),
-                    "the task path passes the very arguments `container up` passes"
+                    args, expected,
+                    "changed secret delivery recreates the stack"
                 );
                 assert_eq!(
                     env,

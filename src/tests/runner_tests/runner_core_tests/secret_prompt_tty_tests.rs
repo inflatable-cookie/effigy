@@ -346,19 +346,8 @@ fn optional_only_resolution_pty_helper() {
     );
     match runtime {
         Ok(runtime) => {
-            if !runtime.env.is_empty() {
-                eprintln!("a direct command delivered {:?}", runtime.env.len());
-                finish(1);
-            }
-            let named = runtime
-                .warnings
-                .iter()
-                .all(|warning| warning.contains("the local-dev key only unlocks `effigy dev`"));
-            if runtime.warnings.is_empty() || !named {
-                eprintln!(
-                    "the warnings do not name the local-dev scope: {:?}",
-                    runtime.warnings
-                );
+            if runtime.env.len() != 1 || runtime.env[0].1.expose() != "sk-dev-value" {
+                eprintln!("the direct command did not resolve the local key");
                 finish(1);
             }
         }

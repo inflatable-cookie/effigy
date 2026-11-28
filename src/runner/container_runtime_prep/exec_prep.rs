@@ -205,17 +205,28 @@ pub(super) fn run_task_apply(
         repo_root, policy, &secrets,
     )?;
     let env = crate::runner::container_command::secret_env::compose_env(&secrets);
-    run_runtime_compose_up_stage(repo_root, policy, &env, run_compose)
+    let delivery = crate::runner::container_command::secret_env::ComposeDelivery::prepare(
+        repo_root, policy, &secrets,
+    )?;
+    run_runtime_compose_up_stage(repo_root, policy, &env, |root, policy, args, label, env| {
+        let mut args = args.to_vec();
+        if delivery.as_ref().is_some_and(|delivery| delivery.recreate) {
+            args.push("--force-recreate".into());
+        }
+        run_compose(root, policy, &args, label, env)
+    })?;
+    if let Some(delivery) = delivery {
+        delivery.record()?;
+    }
+    Ok(())
 }
 
 /// Write the runtime files this apply resolved, now that the primary service
 /// binding is verified, and report the keys this apply changed under it.
 ///
 /// A stack this session started already received them from its `container up`.
-/// A stack this session *reused* did not: a direct `container up` outside a
-/// `dev` session cannot resolve the session's optional keys, so an `effigy dev`
-/// that borrows that stack would otherwise run with the keys it just resolved
-/// missing and nothing said about it (effigy#1036). Writing the files delivers
+/// A stack this session *reused* may have started when its secrets were
+/// unavailable. Writing the files delivers
 /// them to every process that starts next; a service already running keeps the
 /// values it read, so the delivery names the keys it changed, once, and says
 /// how a startup-only reader gets them. Nothing is carried between applies.

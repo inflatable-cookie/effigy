@@ -526,3 +526,52 @@ fn a_live_holder_prevents_detached_volume_recreation() {
         drop(held);
     }
 }
+
+#[test]
+fn compose_env_secret_delivery_recreates_only_when_values_change() {
+    let fixture = RelayFixture::new("");
+    let manifest_path = fixture.repo.join("effigy.toml");
+    let manifest = fs::read_to_string(&manifest_path).expect("manifest");
+    fs::write(&manifest_path, format!("{manifest}\n[secrets]\nbackend = \"effigy-vault\"\n\n[secrets.vault]\npath = \".effigy/secrets/local.vault\"\n\n[secrets.keys.api_token]\nrequired = false\ntargets = [\"containers\"]\n")).expect("secret manifest");
+    fixture.up(false).expect("secretless up");
+
+    let mut payload = effigy_secrets::VaultPlaintextPayload::empty();
+    payload.records.insert(
+        "api_token".into(),
+        effigy_secrets::VaultSecretRecord::new(effigy_secrets::SecretValue::new(
+            "delivery-sentinel-secret",
+        )),
+    );
+    let key = effigy_secrets::LocalDevUnlockKey::generate().expect("local key");
+    let envelope = payload
+        .encrypt_with_passphrase_and_local_dev_key("passphrase", &key)
+        .expect("vault");
+    let vault = fixture.repo.join(".effigy/secrets/local.vault");
+    effigy_test_support::write_private_fixture(
+        &vault,
+        envelope.to_json_pretty().unwrap().as_bytes(),
+    )
+    .expect("vault file");
+    effigy_test_support::write_private_fixture(
+        &effigy_secrets::local_dev_unlock_key_path(&vault),
+        key.expose(),
+    )
+    .expect("key file");
+    fixture.up(false).expect("secret delivery up");
+    fixture.up(false).expect("unchanged delivery up");
+
+    let log = fs::read_to_string(fixture.state.join("args.log")).expect("runtime log");
+    let applies: Vec<_> = log
+        .lines()
+        .filter(|line| line.split_whitespace().any(|arg| arg == "up"))
+        .collect();
+    assert_eq!(applies.len(), 3, "{applies:?}");
+    assert!(!applies[0].contains("--force-recreate"));
+    assert!(applies[1].contains("--force-recreate"));
+    assert!(!applies[2].contains("--force-recreate"));
+    assert!(!log.contains("delivery-sentinel-secret"));
+    assert!(!fs::read_to_string(fixture.repo.join("docker-compose.yml"))
+        .unwrap()
+        .contains("delivery-sentinel-secret"));
+    fixture.down();
+}

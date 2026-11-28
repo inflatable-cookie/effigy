@@ -45,6 +45,11 @@ by recursively changing its ownership.
 
 ## Container secret runtime files
 
+Local container bring-ups can use the adjacent local-dev vault key without a
+prompt, including `container up` and tasks that start the container. CI and
+isolated external task sources do not use that key. Compose environment delivery
+recreates an unheld stack when its resolved secret values change.
+
 With `secrets.delivery = "runtime-files"`, generated stacks mount staged secret
 files read-only before the primary service starts. They survive container
 restarts and are removed on teardown. See the [secrets guide](075-secrets-and-vault-guide.md)

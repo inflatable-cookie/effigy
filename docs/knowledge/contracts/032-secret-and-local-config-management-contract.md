@@ -231,6 +231,11 @@ A legacy vault requires one final passphrase unlock from `effigy dev` or
 `effigy secrets unlock`, which upgrades it in place. Changing the passphrase
 also rotates an active command credential.
 
+Tom's 2026-11-28 ruling: the adjacent local-dev key unlocks container-targeted
+secrets for any non-CI, non-isolated local container bring-up, including `dev`,
+`container up`, `seed`, and container-activating tasks. Vault mutations, CI and
+isolated external task sources retain their existing guards.
+
 The local-dev key is a runtime capability, not an isolation boundary against a
 repo-owner process. A process allowed to run or alter the application can also
 influence how injected secrets are consumed. Mutation and export remain
