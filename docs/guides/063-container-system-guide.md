@@ -2328,12 +2328,14 @@ colima restart <profile>
 effigy container up
 ```
 
-Effigy pre-empts this: `container up` first repairs the forwarded socket inside
-the running VM when a live agent socket exists in the guest, and logs an
-`[info]` line. The VM is not restarted. Only when no live agent exists does it
-warn, naming the `colima restart <profile>` remediation to interactive callers.
-Automated callers are told to report the profile to the host operator instead.
-`effigy doctor` still flags a stale socket for any running colima profile.
+Effigy pre-empts this: `container up` first repairs a stale forwarded socket
+inside the running VM when a live agent socket exists in the guest, and logs an
+`[info]` line. The VM is not restarted. If a dangling link has no live agent to
+replace it, `container up` refuses to start the workspace and names the next
+step. An absent socket only warns. Interactive callers get the
+`colima restart <profile>` remediation. Automated callers are told to report the
+profile to the host operator instead. `effigy doctor` still flags a stale socket
+for any running colima profile.
 
 A cold start can also exit `DEGRADED` when the forwarded-socket boot hook runs
 before `/run/host-services` exists. `container up` then repairs the link and

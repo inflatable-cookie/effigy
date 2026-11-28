@@ -8,9 +8,9 @@ use crate::runner::container_command::support::ensure_shared_services_observed;
 use crate::runner::container_command::{secret_env, steps, RunnerError};
 use effigy_containers::compose::{resolve_compose_backend_for_repo, ComposeBackend};
 use effigy_containers::exec::{
-    colima_advice_mode, colima_profile_recovery_advice, colima_profile_warnings,
-    ensure_runtime_backend_running_for_bringup, inspect_colima_ssh_agent_socket,
-    repair_colima_ssh_agent_symlink, ColimaAdviceMode, SshAgentSocketHealth, SshAgentSymlinkRepair,
+    colima_advice_mode, colima_profile_warnings, ensure_runtime_backend_running_for_bringup,
+    inspect_colima_ssh_agent_socket, repair_colima_ssh_agent_symlink, ssh_agent_socket_outcome,
+    ContainerExecError, SshAgentSocketOutcome,
 };
 use effigy_containers::{
     effective_attach_mode, load_container_policy_for_creation_observed,
@@ -138,7 +138,7 @@ fn prepare_container_up_with_loader(
     operation.preparation_step = Some("runtime");
     let (colima_started, colima_bringup_guard) =
         ensure_runtime_backend_running_for_bringup(&policy, repo_root)?;
-    emit_ssh_agent_socket_warning(&policy, repo_root);
+    emit_ssh_agent_socket_warning(&policy, repo_root)?;
     operation.preparation_step = Some("mounts");
     effigy_containers::policy::mounts::prepare_container_mount_sources(&policy)?;
     // A shared service is awaited by its own project, so the frame names the
@@ -207,46 +207,44 @@ fn emit_warning_lines(warnings: &[String]) {
 /// symlink that the workspace container cannot bind-mount. We check the socket
 /// once colima is up and, if it is broken, warn with the exact remediation so
 /// the operator fixes it instead of decoding a runtime error (g08.017).
-fn emit_ssh_agent_socket_warning(policy: &EffectiveContainerPolicy, repo_root: &Path) {
+fn emit_ssh_agent_socket_warning(
+    policy: &EffectiveContainerPolicy,
+    repo_root: &Path,
+) -> Result<(), RunnerError> {
     // The probe runs inside the VM via `colima ssh`; only meaningful for the
     // colima backend.
     if resolve_compose_backend_for_repo(repo_root, policy) != ComposeBackend::ColimaNerdctl {
-        return;
+        return Ok(());
     }
     let health = inspect_colima_ssh_agent_socket(policy, repo_root);
-    if health.is_broken() {
-        // A forwarded path that is missing or dangling, while the guest still has
-        // a live agent socket, is repaired in place. The VM is not restarted.
-        if let Ok(SshAgentSymlinkRepair::Repaired { source }) =
-            repair_colima_ssh_agent_symlink(&policy.profile, repo_root)
-        {
-            eprintln!(
-                "[info] Colima profile `{}`: repaired the workspace SSH-agent symlink inside the VM to {source}; the VM was not restarted",
-                policy.profile
-            );
-            return;
-        }
-        let detail = match health {
-            SshAgentSocketHealth::Stale => "is stale (the host SSH-agent socket rotated)",
-            SshAgentSocketHealth::Absent => "is not set up",
-            _ => "is unavailable",
-        };
-        // Automated callers are never told to stop or restart a shared profile
-        // (effigy#1136); only interactive callers get the restart command.
-        let fix = match colima_advice_mode() {
-            ColimaAdviceMode::Interactive => format!(
-                "Fix: run `colima restart {}`, then re-run this command.",
-                policy.profile
-            ),
-            ColimaAdviceMode::Automated => {
-                colima_profile_recovery_advice(&policy.profile, ColimaAdviceMode::Automated)
+    if !health.is_broken() {
+        return Ok(());
+    }
+    // A broken forwarded path is repaired in place when the guest has a live
+    // agent socket. The VM is not restarted. The outcome decides whether the
+    // bring-up continues, warns, or refuses.
+    let repair = repair_colima_ssh_agent_symlink(&policy.profile, repo_root);
+    match ssh_agent_socket_outcome(&policy.profile, health, &repair, colima_advice_mode()) {
+        SshAgentSocketOutcome::Proceed { relinked } => {
+            if let Some(source) = relinked {
+                eprintln!(
+                    "[info] Colima profile `{}`: repaired the workspace SSH-agent symlink inside the VM to {source}; the VM was not restarted",
+                    policy.profile
+                );
             }
-        };
-        emit_warning_lines(&[format!(
-            "workspace SSH-agent forwarding {detail} on colima profile `{profile}`. The \
-             workspace container can fail to start with `mkdir /run/host-services/ssh-auth.sock: \
-             file exists`. {fix}",
-            profile = policy.profile,
-        )]);
+            Ok(())
+        }
+        SshAgentSocketOutcome::Warn(message) => {
+            emit_warning_lines(&[message]);
+            Ok(())
+        }
+        SshAgentSocketOutcome::Refuse(message) => {
+            Err(RunnerError::from(ContainerExecError::Failure {
+                command: "container up SSH-agent preflight".to_owned(),
+                code: None,
+                stdout: String::new(),
+                stderr: message,
+            }))
+        }
     }
 }
