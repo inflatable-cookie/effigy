@@ -410,57 +410,18 @@ runtime_dir = "/run/effigy/secrets"
 source_for_deferrals = true
 ```
 
-In that mode, Effigy writes:
+For generated stacks, Effigy stages `runtime.env` and `runtime.json` before
+Compose starts the primary service. It mounts the staged directory read-only at
+`runtime_dir`, so startup readers see the values and container restarts retain
+them. The host directory is `.effigy/runtime/secrets/<environment>/` with mode
+`0700`; the files have mode `0600`. Compose contains the mount path, never the
+secret values. Teardown removes the staged files.
 
-- `runtime.env`
-- `runtime.json`
-
-under the configured `runtime_dir` inside the running primary service.
-
-The files are written on every apply that resolves values, not only on first
-creation. A `dev` session that borrows an environment a direct `container up`
-started — which cannot resolve that session's optional keys — therefore
-rewrites both files with what the session resolves, instead of reusing a stack
-that is missing them.
-
-A service that is already running keeps the values it read when it started. The
-delivery reads the files back before rewriting them and, when a delivered value
-differs from what the service holds (including a service that holds no file at
-all), reports the changed keys once in that apply:
-
-```text
-[warn] container secret(s) mailchimp_api_key were written to /run/effigy/secrets/runtime.json after `app` started; services that read this file per request see them now; a service that reads it only at startup needs its process restarted to see them
-```
-
-That is one apply's report, not a record: nothing is persisted between applies
-and nothing retires it. An apply that writes exactly what the service already
-holds says nothing, and an apply that changes a key says so again because it
-changed it again. The line states facts and prescribes nothing: it does not
-recommend a container restart, which may clear a tmpfs `runtime_dir`.
-
-Nothing restarts a live service on its own: the apply is the preparation the
-task is about to run in, so stopping it there would break the run. Consumers
-that read these files when a process starts — a request-time bootstrap, a
-deferred spawn — see the new values on their next start and need no restart.
-
-**Known limitation: delivery timing for startup-only readers.** These files are
-written into a container that is already running, so a process that reads them
-exactly once at container start does not see a delivery that arrives afterwards
-— on any path, including a clean `effigy dev`. This is a pre-existing
-limitation of runtime-file delivery, not something this change introduces or
-fixes; the planner tracks it as its own lead. Until it is addressed, a consumer
-that must have the values at process start either reads the files per request
-(as the PHP bootstrap example below does), sources `runtime.env` for the
-process it starts, or gets its process restarted after a delivery — with the
-caveat that a restart clears a tmpfs `runtime_dir`, so a delivery into a tmpfs
-has to be repeated afterwards.
-
-Core
-Effigy treats those as generic runtime files. The bundle/catalog can then wire
-them into the app runtime however it needs. A legacy PHP bundle, for example,
-can mount `runtime_dir` as tmpfs, auto-prepend a PHP bootstrap that reads
-`runtime.json`, and let container deferral source `runtime.env` only for the
-deferred process.
+Each apply refreshes resolved values. A running process that read the old values
+only at startup needs a restart to observe changes; request-time readers see the
+new files. Undeliverable keys are reported individually, and an empty delivery
+does not silently write empty files. Direct Compose sources retain their
+post-start delivery behavior.
 
 Repo `.env` files can still carry non-secret local overrides. Runtime-file
 delivery is for the sensitive values declared under `[secrets]`.

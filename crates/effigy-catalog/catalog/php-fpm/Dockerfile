@@ -138,7 +138,7 @@ RUN { \
         echo 'request_terminate_timeout = 300'; \
         echo 'catch_workers_output = yes'; \
         echo 'decorate_workers_output = no'; \
-        echo 'php_admin_value[auto_prepend_file] = /run/effigy/secrets/bootstrap.php'; \
+        echo 'php_admin_value[auto_prepend_file] = /usr/local/share/effigy/container-secrets-bootstrap.php'; \
     } > /usr/local/etc/php-fpm.d/effigy-dev.conf
 
 RUN mkdir -p /usr/local/share/effigy && { \
@@ -248,10 +248,12 @@ RUN set -eux; \
         echo 'dev_uid=$(id -u dev 2>/dev/null || echo 1000)'; \
         echo 'dev_gid=$(id -g dev 2>/dev/null || echo 1000)'; \
         echo 'if [ "$is_root" -eq 1 ]; then'; \
+        echo 'if [ "${EFFIGY_SECRET_RUNTIME_READONLY:-0}" != 1 ]; then'; \
         echo 'mkdir -p /run/effigy/secrets'; \
         echo 'cp /usr/local/share/effigy/container-secrets-bootstrap.php /run/effigy/secrets/bootstrap.php'; \
         echo ': > /run/effigy/secrets/runtime.env'; \
         echo 'printf '"'"'{}'"'"' > /run/effigy/secrets/runtime.json'; \
+        echo 'fi'; \
         echo 'cat > /etc/msmtprc <<EOF'; \
         echo 'defaults'; \
         echo 'auth off'; \
@@ -265,9 +267,11 @@ RUN set -eux; \
         echo 'chmod 0600 /etc/msmtprc'; \
         echo 'log_optional "[effigy-entrypoint] configured msmtp sendmail shim -> ${smtp_host}:${smtp_port} from ${smtp_from}"'; \
         echo 'log_optional "[effigy-entrypoint] dev uid=$dev_uid gid=$dev_gid"'; \
+        echo 'if [ "${EFFIGY_SECRET_RUNTIME_READONLY:-0}" != 1 ]; then'; \
         echo 'chown dev:"$(id -gn dev 2>/dev/null || echo dev)" /run/effigy/secrets /run/effigy/secrets/bootstrap.php /run/effigy/secrets/runtime.env /run/effigy/secrets/runtime.json'; \
         echo 'chmod 0700 /run/effigy/secrets'; \
         echo 'chmod 0600 /run/effigy/secrets/bootstrap.php /run/effigy/secrets/runtime.env /run/effigy/secrets/runtime.json'; \
+        echo 'fi'; \
         echo 'else'; \
         echo '    log_optional "[effigy-entrypoint] WARNING non-root startup cannot initialize root-owned PHP secrets or msmtp configuration; existing files are unchanged"'; \
         echo '    log_optional "[effigy-entrypoint] dev uid=$dev_uid gid=$dev_gid"'; \

@@ -127,6 +127,20 @@ pub(in crate::runner) fn prepare_container_exec_runtime(
                 },
             );
             let applied = result.map_err(|error| failure.into_inner().unwrap_or(error))?;
+            if !applied.holders.is_empty()
+                && policy.compose_source == effigy_containers::EffectiveComposeSource::Generated
+                && policy.secret_delivery
+                    == effigy_manifest::ManifestContainerSecretDelivery::RuntimeFiles
+            {
+                let secrets =
+                    crate::runner::container_command::secret_env::resolve_secret_runtime_for_apply(
+                        repo_root, policy,
+                    )?;
+                crate::runner::container_command::secret_env::stage_container_secret_runtime(
+                    repo_root, policy, &secrets,
+                )?;
+                *applied_secrets.borrow_mut() = Some(secrets);
+            }
             crate::runner::environment::refuse_held_detached_mounts(
                 &applied,
                 policy,
@@ -187,8 +201,21 @@ pub(super) fn run_task_apply(
 ) -> Result<(), RunnerError> {
     apply_shared_services(policy, reconcile_shared_services, ensure_shared)?;
     let secrets = secret_env(repo_root, policy)?;
+    crate::runner::container_command::secret_env::stage_container_secret_runtime(
+        repo_root, policy, &secrets,
+    )?;
     let env = crate::runner::container_command::secret_env::compose_env(&secrets);
-    run_runtime_compose_up_stage(repo_root, policy, &env, run_compose)
+    let result = run_runtime_compose_up_stage(repo_root, policy, &env, run_compose);
+    if result.is_err()
+        && secrets.delivery == effigy_manifest::ManifestContainerSecretDelivery::RuntimeFiles
+        && policy.compose_source == effigy_containers::EffectiveComposeSource::Generated
+    {
+        crate::runner::container_command::secret_env::cleanup_container_secret_runtime(
+            repo_root,
+            &policy.name,
+        )?;
+    }
+    result
 }
 
 /// Write the runtime files this apply resolved, now that the primary service

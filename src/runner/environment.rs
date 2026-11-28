@@ -630,6 +630,10 @@ pub(in crate::runner) fn stop_exempting(
         exempt,
         |progress| {
             effect(progress)?;
+            crate::runner::container_command::secret_env::cleanup_container_secret_runtime(
+                &policy.repo_root,
+                &policy.name,
+            )?;
             barge_lifecycle::return_torn_down_stack(&policy.profile, &policy.project_name);
             Ok(())
         },
@@ -694,8 +698,13 @@ pub(in crate::runner) fn reset(
     let backend = backend(repo_root, policy);
     let mut failure = None;
     let result = engine::reset(&ctx, &env, &backend, &policy.project_name, |progress| {
-        let torn_down = effect(progress).map(|()| {
+        let torn_down = effect(progress).and_then(|()| {
+            crate::runner::container_command::secret_env::cleanup_container_secret_runtime(
+                &policy.repo_root,
+                &policy.name,
+            )?;
             barge_lifecycle::return_torn_down_stack(&policy.profile, &policy.project_name);
+            Ok(())
         });
         torn_down.map_err(|error| {
             let message = error.to_string();
@@ -1083,6 +1092,11 @@ fn stop_idle(
         crate::runner::fs_relay::stop_stack_relay(repo_root, policy);
         effigy_containers::exec::shutdown_container(repo_root, policy)
             .map_err(|error| BackendError::Uncertain(error.to_string()))?;
+        crate::runner::container_command::secret_env::cleanup_container_secret_runtime(
+            &policy.repo_root,
+            &policy.name,
+        )
+        .map_err(|error| BackendError::Uncertain(error.to_string()))?;
         barge_lifecycle::return_torn_down_stack(&policy.profile, &policy.project_name);
         Ok(())
     })

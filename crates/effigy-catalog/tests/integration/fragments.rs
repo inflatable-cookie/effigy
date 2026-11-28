@@ -72,7 +72,7 @@ fn resolve_php_fpm_fragment() {
     );
     assert!(
         dockerfile
-            .contains("php_admin_value[auto_prepend_file] = /run/effigy/secrets/bootstrap.php"),
+            .contains("php_admin_value[auto_prepend_file] = /usr/local/share/effigy/container-secrets-bootstrap.php"),
         "php-fpm workspace image should wire the secret bootstrap into php-fpm"
     );
     assert!(

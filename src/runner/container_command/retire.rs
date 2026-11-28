@@ -52,6 +52,9 @@ pub(super) fn run_container_retire(
     let owned = inventory.owned_by(&checkout_label, scope, &declared);
     let mut kept = inventory.unlabelled_kept(&owned.projects);
     if owned.resources.is_empty() && kept.is_empty() {
+        if scope.is_none() {
+            cleanup_retired_secrets(&checkout, &owned.projects)?;
+        }
         let outcome = RetireOutcome::default();
         return Ok(render_container_report(
             retire_report(Some(&checkout_label), &outcome),
@@ -69,9 +72,45 @@ pub(super) fn run_container_retire(
     crate::runner::fs_relay::stop_checkout_stack_relays(&checkout, &owned.projects, None);
     let mut outcome = retire_owned(&checkout, &owned.resources, keep_data)?;
     return_retired_leases(&inventory, &outcome);
+    if outcome.failed.is_empty() {
+        let projects = if let Some(scope) = scope {
+            inventory
+                .labelled
+                .iter()
+                .filter(|entry| {
+                    same_path(&entry.checkout, &checkout_label)
+                        && entry.scope.as_deref().map(str::trim) == Some(scope.trim())
+                })
+                .filter_map(|entry| entry.project.clone())
+                .collect()
+        } else {
+            owned.projects.clone()
+        };
+        cleanup_retired_secrets(&checkout, &projects)?;
+    }
     outcome.kept.splice(0..0, kept.drain(..));
     outcome.gateway = release_gateway(&checkout_label)?;
     finish(outcome, Some(&checkout_label), output_json)
+}
+
+fn cleanup_retired_secrets(
+    checkout: &Path,
+    projects: &BTreeSet<String>,
+) -> Result<(), RunnerError> {
+    if !checkout.join(".effigy/runtime/secrets").exists() {
+        return Ok(());
+    }
+    for policy in
+        effigy_containers::load_all_container_policies(checkout).map_err(RunnerError::from)?
+    {
+        if projects.contains(&policy.project_name) {
+            crate::runner::container_command::secret_env::cleanup_container_secret_runtime(
+                checkout,
+                &policy.name,
+            )?;
+        }
+    }
+    Ok(())
 }
 
 /// Return the Barge lease of every project this retirement removed from a

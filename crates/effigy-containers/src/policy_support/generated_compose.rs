@@ -545,6 +545,39 @@ pub(crate) fn resolve_compose_source(
         &mut compose_document,
         resolve_staged_workspace_source,
     )?;
+    if let Some(secrets) = config.secrets.as_ref().filter(|secrets| {
+        secrets.delivery == Some(effigy_manifest::ManifestContainerSecretDelivery::RuntimeFiles)
+    }) {
+        let runtime_dir = secrets
+            .runtime_dir
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                ContainerPolicyError::TaskInvocation(format!(
+                    "container `{container_name}` has no secret runtime directory"
+                ))
+            })?;
+        let primary = config.primary_service.as_deref().unwrap_or_default();
+        let service = compose_document.services.get_mut(primary).ok_or_else(|| {
+            ContainerPolicyError::TaskInvocation(format!(
+                "container `{container_name}` has no primary service `{primary}`"
+            ))
+        })?;
+        if let Some(YamlValue::Sequence(entries)) = service.extra.get_mut("tmpfs") {
+            entries.retain(|entry| entry.as_str() != Some(runtime_dir));
+        }
+        if runtime_dir == "/run/effigy/secrets" {
+            service.environment_mapping_mut()?.insert(
+                "EFFIGY_SECRET_RUNTIME_READONLY".to_owned(),
+                YamlValue::String("1".to_owned()),
+            );
+        }
+        let source = repo_root
+            .join(".effigy/runtime/secrets")
+            .join(container_name);
+        service.append_mounts(&[format!("{}:{runtime_dir}:ro", source.display())]);
+    }
     // The checkout label, fence and generation name the checkout that owns
     // this environment's journal. A nested catalog directory with no Git
     // metadata of its own is part of the enclosing checkout (contract 052
@@ -2152,6 +2185,33 @@ services:
             .expect("repeated staged render")
             .expect("staged");
         assert_eq!(again, staged);
+    }
+
+    #[test]
+    fn generated_compose_mounts_runtime_secrets_read_only() {
+        let _lock = crate::test_env_lock();
+        let repo = tempfile::tempdir().expect("private checkout");
+        let root = repo.path().canonicalize().expect("canonical checkout");
+        std::fs::write(root.join("effigy.toml"), "[containers.web]\nprimary_service = 'app'\nworking_dir = '/workspace'\n[containers.web.secrets]\ndelivery = 'runtime-files'\nruntime_dir = '/run/effigy/secrets'\n[containers.web.services.app]\ncatalog = 'php-fpm'\nversion = '8.3'\n").expect("manifest");
+        let policy = crate::load_container_policy(&root, Some("web")).expect("policy");
+        let yaml = policy
+            .read_compose(&policy.compose_files[0])
+            .expect("compose");
+        let document: YamlValue = serde_yaml::from_str(&yaml).expect("yaml");
+        let service = &document["services"]["app"];
+        let mount = format!(
+            "{}:/run/effigy/secrets:ro",
+            root.join(".effigy/runtime/secrets/web").display()
+        );
+        assert!(service["volumes"]
+            .as_sequence()
+            .unwrap()
+            .iter()
+            .any(|entry| entry.as_str() == Some(mount.as_str())));
+        assert!(!service["tmpfs"].as_sequence().is_some_and(|items| items
+            .iter()
+            .any(|entry| entry.as_str() == Some("/run/effigy/secrets"))));
+        assert!(!yaml.contains("plaintext-secret-value"));
     }
 
     /// A recorded Barge lease labels every generated service beside its

@@ -301,6 +301,93 @@ pub(in crate::runner) fn writes_runtime_secret_files(
     runtime.delivery == ManifestContainerSecretDelivery::RuntimeFiles && !runtime.env.is_empty()
 }
 
+/// Stage generated-stack files before Compose starts or recreates services.
+pub(in crate::runner) fn stage_container_secret_runtime(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    runtime: &ResolvedContainerSecretRuntime,
+) -> Result<(), RunnerError> {
+    if policy.compose_source != effigy_containers::EffectiveComposeSource::Generated
+        || runtime.delivery != ManifestContainerSecretDelivery::RuntimeFiles
+    {
+        return Ok(());
+    }
+    let result = stage_generated_runtime_files(repo_root, policy, runtime);
+    if result.is_err() {
+        cleanup_container_secret_runtime(repo_root, &policy.name)?;
+    }
+    result
+}
+
+fn stage_generated_runtime_files(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    runtime: &ResolvedContainerSecretRuntime,
+) -> Result<(), RunnerError> {
+    use std::io::Write;
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+    let dir = repo_root.join(".effigy/runtime/secrets").join(&policy.name);
+    let existing_directory = dir.is_dir();
+    effigy_core::runtime_dir::ensure_effigy_ignored_in_git_root(repo_root).map_err(|e| {
+        RunnerError::task_invocation(format!("protect secret runtime from git: {e}"))
+    })?;
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(&dir)
+        .map_err(|e| {
+            RunnerError::task_invocation(format!("create secret runtime directory: {e}"))
+        })?;
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).map_err(|e| {
+        RunnerError::task_invocation(format!("protect secret runtime directory: {e}"))
+    })?;
+    if !writes_runtime_secret_files(runtime) {
+        return Ok(());
+    }
+    let previous = std::fs::read_to_string(dir.join("runtime.json")).ok();
+    let changed = changed_runtime_secret_keys(previous.as_deref(), runtime);
+    for (name, contents) in [
+        ("runtime.env", render_runtime_env_file(&runtime.env)),
+        ("runtime.json", render_runtime_json_file(&runtime.env)),
+    ] {
+        let mut file = tempfile::NamedTempFile::new_in(&dir).map_err(|e| {
+            RunnerError::task_invocation(format!("create secret runtime file: {e}"))
+        })?;
+        file.as_file()
+            .set_permissions(std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| {
+                RunnerError::task_invocation(format!("protect secret runtime file: {e}"))
+            })?;
+        file.write_all(contents.as_bytes())
+            .map_err(|e| RunnerError::task_invocation(format!("write secret runtime file: {e}")))?;
+        file.persist(dir.join(name)).map_err(|e| {
+            RunnerError::task_invocation(format!("publish secret runtime file: {e}"))
+        })?;
+    }
+    if existing_directory {
+        if let Some(runtime_dir) = policy.secret_runtime_dir.as_deref() {
+            for warning in runtime_secret_refresh_warnings(policy, runtime_dir, &changed) {
+                eprintln!("[warn] {warning}");
+            }
+        }
+    }
+    Ok(())
+}
+
+pub(in crate::runner) fn cleanup_container_secret_runtime(
+    repo_root: &Path,
+    name: &str,
+) -> Result<(), RunnerError> {
+    let dir = repo_root.join(".effigy/runtime/secrets").join(name);
+    match std::fs::remove_dir_all(dir) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(RunnerError::task_invocation(format!(
+            "remove secret runtime files: {error}"
+        ))),
+    }
+}
+
 /// Write this delivery's runtime files, and say what changed under the running
 /// service, in this apply only.
 ///
@@ -315,6 +402,9 @@ pub(in crate::runner) fn materialize_container_secret_runtime(
     runtime: &ResolvedContainerSecretRuntime,
     binding: &effigy_containers::exec::VerifiedComposeContainer,
 ) -> Result<Vec<String>, RunnerError> {
+    if policy.compose_source == effigy_containers::EffectiveComposeSource::Generated {
+        return Ok(Vec::new());
+    }
     if !writes_runtime_secret_files(runtime) {
         return Ok(Vec::new());
     }
@@ -454,10 +544,8 @@ pub(in crate::runner) fn changed_runtime_secret_keys(
 ///
 /// The delivery cannot know whether a consumer reads these files per request or
 /// once at startup, so it states both facts. It prescribes nothing: runtime
-/// files are written after services start on every path, so a startup-only
-/// reader cannot be served by this delivery, and restarting the container may
-/// clear a tmpfs `runtime_dir`. That delivery-timing limit is its own lead
-/// (planner ruling 9b1019a7). It names keys, never a value (effigy#1036).
+/// files may change while services are running. It names keys, never values
+/// (effigy#1036).
 pub(in crate::runner) fn runtime_secret_refresh_warnings(
     policy: &EffectiveContainerPolicy,
     runtime_dir: &str,
@@ -621,6 +709,45 @@ mod tests {
     use effigy_secrets::{SecretValue, VaultPlaintextPayload, VaultSecretRecord};
     use std::fs;
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn generated_runtime_files_are_private_refreshed_and_removed() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = temp_repo("staged-runtime");
+        let policy = test_runtime_files_policy();
+        let runtime = |value: &str| ResolvedContainerSecretRuntime {
+            delivery: ManifestContainerSecretDelivery::RuntimeFiles,
+            env: vec![("TOKEN".to_owned(), SecretString::new(value.to_owned()))],
+            warnings: Vec::new(),
+        };
+        super::stage_container_secret_runtime(&root, &policy, &runtime("first")).expect("stage");
+        let dir = root.join(".effigy/runtime/secrets/web");
+        assert_eq!(
+            fs::metadata(&dir).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        for name in ["runtime.env", "runtime.json"] {
+            assert_eq!(
+                fs::metadata(dir.join(name)).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+            assert!(fs::read_to_string(dir.join(name))
+                .unwrap()
+                .contains("first"));
+        }
+        super::stage_container_secret_runtime(&root, &policy, &runtime("second")).expect("refresh");
+        assert!(fs::read_to_string(dir.join("runtime.json"))
+            .unwrap()
+            .contains("second"));
+        fs::remove_file(dir.join("runtime.json")).expect("remove json");
+        fs::create_dir(dir.join("runtime.json")).expect("block json replacement");
+        super::stage_container_secret_runtime(&root, &policy, &runtime("third"))
+            .expect_err("a failed second publish removes the first file");
+        assert!(!dir.exists());
+        super::cleanup_container_secret_runtime(&root, "web").expect("cleanup is idempotent");
+        assert!(!dir.exists());
+        fs::remove_dir_all(root).expect("fixture cleanup");
+    }
 
     #[test]
     fn container_secret_env_resolves_declared_container_target_values() {
@@ -1312,8 +1439,11 @@ exit 0
         }
 
         fn policy(&self) -> EffectiveContainerPolicy {
-            crate::runner::test_support::load_fixture_policy(&self.repo_root, None)
-                .expect("fixture policy")
+            let mut policy =
+                crate::runner::test_support::load_fixture_policy(&self.repo_root, None)
+                    .expect("fixture policy");
+            policy.compose_source = EffectiveComposeSource::Direct;
+            policy
         }
 
         fn runtime_dir(&self) -> String {

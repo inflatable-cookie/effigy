@@ -123,6 +123,7 @@ fn run_container_up_inner(
     // Whether this bring-up may have replaced the containers a running relay
     // watches into.
     let applied = std::cell::Cell::new(false);
+    let staged = std::cell::Cell::new(false);
     let mut reservation = None;
     let result = (|| {
         operation.active = plan.attach_mode == EffectiveAttachMode::Detached;
@@ -168,6 +169,23 @@ fn run_container_up_inner(
             &plan.policy,
             retention,
             |run, effect, deadline| {
+                if let Err(error) =
+                    crate::runner::container_command::secret_env::stage_container_secret_runtime(
+                        repo_root,
+                        &plan.policy,
+                        &plan.secret_runtime,
+                    )
+                {
+                    let message = error.to_string();
+                    *detached_failure.borrow_mut() = Some(error);
+                    return Err(BackendError::Failed(message));
+                }
+                staged.set(
+                    plan.secret_runtime.delivery
+                        == effigy_manifest::ManifestContainerSecretDelivery::RuntimeFiles
+                        && plan.policy.compose_source
+                            == effigy_containers::EffectiveComposeSource::Generated,
+                );
                 applied.set(true);
                 match run_container_up_compose(
                     &plan,
@@ -295,6 +313,13 @@ fn run_container_up_inner(
                 };
             }
         };
+        if !bring_up.holders.is_empty() {
+            crate::runner::container_command::secret_env::stage_container_secret_runtime(
+                repo_root,
+                &plan.policy,
+                &plan.secret_runtime,
+            )?;
+        }
         environment::refuse_held_detached_mounts(
             &bring_up,
             &plan.policy,
@@ -394,6 +419,12 @@ fn run_container_up_inner(
         }
         Ok(rendered)
     })();
+    if result.is_err() && staged.get() {
+        crate::runner::container_command::secret_env::cleanup_container_secret_runtime(
+            repo_root,
+            &plan.policy.name,
+        )?;
+    }
     if result.is_err() && applied.get() {
         crate::runner::fs_relay::stop_stack_relay(repo_root, &plan.policy);
     }
