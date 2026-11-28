@@ -1508,8 +1508,9 @@ detached named-volume mount is the exception: `up` recreates the primary
 service once without deleting volumes when no task holds the environment, then
 checks the mount again. An active holder prevents recreation; the refusal names
 the run and asks you to retry after it releases. If it is still detached, `up`
-refuses before permission repair scans the host directory underneath. The host
-journal itself still uses `.effigy/state`, even if that named mount is detached.
+refuses without scanning or repairing the isolated host mountpoint underneath.
+Normal checkout-journal access and configured media-source validation continue
+before the mount check.
 Other preparation failures refuse closed: detached `up` leaves the started
 scope in place for the next activation to reconcile, and attached `up` cleans
 up.
