@@ -50,17 +50,12 @@ pub(super) fn container_env(env: &BTreeMap<OsString, EnvValue>, ansi: bool) -> V
 }
 
 fn should_apply(env: &BTreeMap<OsString, EnvValue>, ansi: bool) -> bool {
-    if !ansi
-        || env.contains_key(OsStr::new("CI"))
-        || PREFERENCES
+    ansi && !env.contains_key(OsStr::new("CI"))
+        && !PREFERENCES
             .iter()
             .any(|key| env.contains_key(OsStr::new(key)))
-        || matches!(env.get(OsStr::new("TERM")), Some(EnvValue::Plain(term)) if term == "dumb")
-        || matches!(env.get(OsStr::new("TERM")), Some(EnvValue::Secret(_)))
-    {
-        return false;
-    }
-    true
+        && !matches!(env.get(OsStr::new("TERM")), Some(EnvValue::Plain(term)) if term == "dumb")
+        && !matches!(env.get(OsStr::new("TERM")), Some(EnvValue::Secret(_)))
 }
 
 /// Non-secret presentation capability, fixed before a detached host handoff.

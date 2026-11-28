@@ -519,7 +519,8 @@ impl Digest {
             return None;
         }
         let mut bytes = [0u8; 32];
-        for (index, pair) in text.as_bytes().chunks_exact(2).enumerate() {
+        let (pairs, _) = text.as_bytes().as_chunks::<2>();
+        for (index, pair) in pairs.iter().enumerate() {
             let digit = |byte: u8| match byte {
                 b'0'..=b'9' => Some(byte - b'0'),
                 b'a'..=b'f' => Some(byte - b'a' + 10),

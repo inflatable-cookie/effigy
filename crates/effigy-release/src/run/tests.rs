@@ -271,28 +271,22 @@ kind = "tag"
 /// `test:release:runtime-storage` builds it and exports
 /// `EFFIGY_KERNEL_CUSTODY_FIXTURE`; an ordinary `effigy test` run prepares it
 /// through `effigy-kernel`'s `tests/fixture_binary.rs`, so it is either beside
-/// the test executable's profile directory or, when Oxide uplifts final
-/// binaries to the workspace (Oxide #106), in `target/<profile>/`.
+/// the Cargo profile directory or, when Oxide uplifts final binaries to the
+/// workspace (Oxide #106), in `target/<profile>/`.
 fn custody_fixture() -> effigy_kernel::supervise::Executable {
     let executable = std::env::current_exe().expect("test executable");
-    let profile_dir = executable
-        .parent()
-        .and_then(Path::parent)
-        .expect("target profile directory");
-    let profile = profile_dir
-        .file_name()
-        .expect("target profile directory name");
-    let candidates: Vec<PathBuf> = std::env::var_os("EFFIGY_KERNEL_CUSTODY_FIXTURE")
+    let candidates = std::env::var_os("EFFIGY_KERNEL_CUSTODY_FIXTURE")
         .map(PathBuf::from)
         .into_iter()
-        .chain([
-            profile_dir.join("kernel-custody-fixture"),
-            Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../target")
-                .join(profile)
-                .join("kernel-custody-fixture"),
-        ])
-        .collect();
+        .chain(custody_fixture_candidates(
+            &executable,
+            std::env::var_os("CARGO_TARGET_DIR")
+                .map(PathBuf::from)
+                .into_iter()
+                .chain([Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target")]),
+            effigy_core::effigy_invocation::CARGO_PROFILE,
+        ))
+        .collect::<Vec<_>>();
     for candidate in &candidates {
         if candidate.is_file() {
             return effigy_kernel::supervise::Executable::capture(candidate)
@@ -308,6 +302,45 @@ fn custody_fixture() -> effigy_kernel::supervise::Executable {
             .map(|candidate| candidate.display().to_string())
             .collect::<Vec<_>>()
             .join(", "),
+    );
+}
+
+fn custody_fixture_candidates(
+    executable: &Path,
+    target_dirs: impl IntoIterator<Item = PathBuf>,
+    profile: &str,
+) -> Vec<PathBuf> {
+    let profile_dir = effigy_core::effigy_invocation::cargo_profile_dir(executable);
+    target_dirs
+        .into_iter()
+        .map(|target| target.join(profile).join("kernel-custody-fixture"))
+        .chain(profile_dir.map(|dir| dir.join("kernel-custody-fixture")))
+        .collect()
+}
+
+#[test]
+fn custody_fixture_candidates_cover_cargo_build_unit_layout() {
+    let fixture = tempfile::tempdir().expect("fixture");
+    let profile = effigy_core::effigy_invocation::CARGO_PROFILE;
+    let executable = fixture
+        .path()
+        .join(profile)
+        .join("build/effigy-release/0123456789abcdef/out/release-test");
+    std::fs::create_dir_all(executable.parent().expect("unit directory"))
+        .expect("create unit directory");
+    std::fs::write(&executable, "test harness").expect("write harness");
+
+    let target = fixture.path().join("workspace-target");
+    let binary = target.join(profile).join("kernel-custody-fixture");
+    std::fs::create_dir_all(binary.parent().expect("profile directory"))
+        .expect("create profile directory");
+    std::fs::write(&binary, "fixture").expect("write fixture");
+
+    assert_eq!(
+        custody_fixture_candidates(&executable, [target], profile)
+            .into_iter()
+            .find(|candidate| candidate.is_file()),
+        Some(binary)
     );
 }
 

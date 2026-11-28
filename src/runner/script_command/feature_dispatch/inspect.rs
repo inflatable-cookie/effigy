@@ -4,7 +4,6 @@ use effigy_cli::{
     ContractsArgs, ContractsSelectionPrintMode, ContractsSubcommand, DoctorArgs, TaskInvocation,
     TasksArgs,
 };
-use effigy_rhai::surface::*;
 use serde_json::Value;
 
 use super::*;

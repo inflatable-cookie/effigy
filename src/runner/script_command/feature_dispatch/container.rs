@@ -4,7 +4,6 @@ use effigy_cli::{
     BootstrapDbSeedInput, ContainerArgs, ContainerCacheSubcommand, ContainerDataSubcommand,
     ContainerDbDumpInput, ContainerSubcommand, ContainerVolumeSubcommand,
 };
-use effigy_rhai::surface::*;
 use serde_json::Value;
 
 use super::*;

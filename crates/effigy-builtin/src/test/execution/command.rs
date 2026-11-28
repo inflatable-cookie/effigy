@@ -106,18 +106,22 @@ pub(super) fn suite_host_env(
 /// inherited choice, else this process's binary when it is not a library test
 /// harness (which re-execs itself only for `__kernel-*` entries).
 fn suite_effigy() -> Option<String> {
-    if let Some(explicit) = std::env::var_os(EXECUTABLE_ENV) {
-        if !explicit.is_empty() {
-            return Some(explicit.to_string_lossy().into_owned());
-        }
-    }
     let executable = std::env::current_exe().ok()?;
-    let is_test_harness = executable
-        .parent()
-        .and_then(std::path::Path::file_name)
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name == "deps");
-    (!is_test_harness).then(|| executable.display().to_string())
+    let explicit = std::env::var_os(EXECUTABLE_ENV);
+    suite_effigy_for(&executable, explicit.as_deref())
+}
+
+fn suite_effigy_for(
+    executable: &std::path::Path,
+    explicit: Option<&std::ffi::OsStr>,
+) -> Option<String> {
+    effigy_core::effigy_invocation::resolve_effigy_invocation_argv_for(
+        executable,
+        explicit.map(|value| value.to_string_lossy().into_owned()),
+    )
+    .ok()?
+    .into_iter()
+    .next()
 }
 
 /// Whether this suite runs as a host process of the calling run: a host-scoped
@@ -239,4 +243,44 @@ fn render_wrapped_suite_command(suite: &BuiltinTestRunnable) -> String {
         &suite.env,
         &suite.root,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn suite_effigy_resolves_cargo_build_unit_harness_to_profile_binary() {
+        let fixture = tempfile::tempdir().expect("fixture");
+        let profile = effigy_core::effigy_invocation::CARGO_PROFILE;
+        let executable = fixture
+            .path()
+            .join(profile)
+            .join("build/effigy-builtin/0123456789abcdef/out/effigy-test-harness");
+        std::fs::create_dir_all(executable.parent().expect("unit directory"))
+            .expect("create unit directory");
+        std::fs::write(&executable, "test harness").expect("write harness");
+        let binary = fixture.path().join(profile).join("effigy");
+        std::fs::write(&binary, "effigy").expect("write profile binary");
+
+        assert_eq!(
+            suite_effigy_for(&executable, None),
+            Some(
+                binary
+                    .canonicalize()
+                    .expect("canonical binary")
+                    .display()
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn suite_effigy_preserves_the_explicit_executable() {
+        let executable = std::path::Path::new("/build/debug/test-harness");
+        assert_eq!(
+            suite_effigy_for(executable, Some(std::ffi::OsStr::new("/opt/effigy"))),
+            Some("/opt/effigy".to_owned())
+        );
+    }
 }

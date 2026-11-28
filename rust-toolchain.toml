@@ -1,5 +1,5 @@
 # Pin the toolchain so local dev and CI agree. This records the current build
 # toolchain only; it is not evidence of a wider supported MSRV range.
 [toolchain]
-channel = "1.97.1"
+channel = "1.100.0"
 components = ["rustfmt", "clippy"]

@@ -4,7 +4,6 @@ use effigy_cli::{
     BundleArgs, BundleSubcommand, ChangelogArgs, ChangelogSubcommand, GatewaySubcommand,
     ServiceArgs, ServiceSubcommand,
 };
-use effigy_rhai::surface::*;
 use serde_json::Value;
 
 use super::*;

@@ -19,7 +19,7 @@ pub enum HttpReadMethod {
 pub struct StatusSet(Vec<std::ops::RangeInclusive<u16>>);
 impl Default for StatusSet {
     fn default() -> Self {
-        Self(vec![200..=299])
+        Self(std::iter::once(200..=299).collect())
     }
 }
 impl StatusSet {

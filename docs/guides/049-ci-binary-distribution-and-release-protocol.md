@@ -213,7 +213,7 @@ This is the supported source-build path. Effigy does not publish to crates.io
 because its workspace contains app-specific internal crates that are not
 intended as reusable library dependencies.
 
-The source checkout currently pins `rust-toolchain.toml` to Rust 1.97.1.
+The source checkout currently pins `rust-toolchain.toml` to Rust 1.100.0.
 Workspace package manifests do not declare `rust-version`, and CI uses stable
 Rust rather than a lower-toolchain compatibility matrix. The pin documents the
 current build toolchain; it is not evidence of a wider supported MSRV range.

@@ -1,7 +1,6 @@
 use std::path::Path;
 
 use effigy_cli::{DeployArgs, DeploySubcommand};
-use effigy_rhai::surface::*;
 use serde_json::Value;
 
 use super::*;
