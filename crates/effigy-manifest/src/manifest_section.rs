@@ -13,6 +13,8 @@ pub(crate) struct ManifestSectionConfig {
     pub(crate) extend: Vec<String>,
     #[serde(default)]
     pub(crate) minimum_effigy_version: Option<String>,
+    #[serde(default)]
+    pub(crate) maximum_effigy_version: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -32,6 +34,15 @@ pub(crate) fn validate_minimum_effigy_version(
     manifest_path: &Path,
     requested: Option<&str>,
 ) -> Result<(), ManifestError> {
+    let active_version = effigy_core::build_info::active_version();
+    validate_minimum_effigy_version_for(manifest_path, requested, &active_version)
+}
+
+pub(crate) fn validate_minimum_effigy_version_for(
+    manifest_path: &Path,
+    requested: Option<&str>,
+    active_version: &str,
+) -> Result<(), ManifestError> {
     let Some(requested) = requested.map(str::trim).filter(|value| !value.is_empty()) else {
         return Ok(());
     };
@@ -41,8 +52,7 @@ pub(crate) fn validate_minimum_effigy_version(
             "`[manifest].minimum_effigy_version` must be a valid semver version: {error}"
         ),
     })?;
-    let active_version = effigy_core::build_info::active_version();
-    if !active_version_satisfies_minimum_effigy_version(&active_version, &requested_version)
+    if !active_version_satisfies_minimum_effigy_version(active_version, &requested_version)
         .map_err(|detail| ManifestError::Compose {
             path: manifest_path.to_path_buf(),
             detail,
@@ -64,12 +74,16 @@ pub(crate) fn active_version_satisfies_minimum_effigy_version(
     requested_version: &Version,
 ) -> Result<bool, String> {
     let normalized = active_version.trim().trim_start_matches('v');
-    if normalized.contains("+local.") {
-        return Ok(true);
-    }
     let current_version = Version::parse(normalized)
         .map_err(|error| format!("current Effigy version is invalid: {error}"))?;
-    Ok(current_version >= *requested_version)
+    // Ignore pre-release identifiers and local `+local.<sha>` build metadata per
+    // SemVer when comparing against `[manifest].minimum_effigy_version`.
+    let core = Version::new(
+        current_version.major,
+        current_version.minor,
+        current_version.patch,
+    );
+    Ok(core >= *requested_version)
 }
 
 pub(crate) fn resolve_include_path(parent: &Path, path: &str) -> PathBuf {

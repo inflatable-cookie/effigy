@@ -95,6 +95,7 @@ struct CompositionSession {
     evaluation_order: Vec<PathBuf>,
     include_graph: Vec<ManifestCompositionEdge>,
     overridden_paths: Vec<ManifestCompositionOverride>,
+    active_version: Option<String>,
 }
 
 pub fn load_task_manifest_with_inspection(
@@ -142,9 +143,19 @@ pub fn load_task_manifest_with_inspection(
 pub(crate) fn validate_source_snapshot(
     manifest_path: &Path,
     source: &Path,
+    active_version: Option<&str>,
 ) -> Result<(), ManifestError> {
-    let mut composed = load_composed_value(manifest_path, &mut CompositionSession::default())?;
-    apply_bundle_defaults(manifest_path, &mut composed, Some(source))?;
+    let mut session = CompositionSession {
+        active_version: active_version.map(str::to_owned),
+        ..Default::default()
+    };
+    let mut composed = load_composed_value(manifest_path, &mut session)?;
+    crate::bundles::apply_bundle_defaults_for_version(
+        manifest_path,
+        &mut composed,
+        Some(source),
+        active_version,
+    )?;
     let manifest = composed
         .into_manifest()
         .map_err(|error| ManifestError::Parse {
@@ -163,7 +174,23 @@ pub(crate) fn load_manifest_source_declarations(
     ),
     ManifestError,
 > {
-    let mut session = CompositionSession::default();
+    load_manifest_source_declarations_for_version(manifest_path, None)
+}
+
+pub(crate) fn load_manifest_source_declarations_for_version(
+    manifest_path: &Path,
+    active_version: Option<&str>,
+) -> Result<
+    (
+        Option<ManifestBundleConfig>,
+        BTreeMap<String, crate::ManifestCatalogSourceConfig>,
+    ),
+    ManifestError,
+> {
+    let mut session = CompositionSession {
+        active_version: active_version.map(str::to_owned),
+        ..Default::default()
+    };
     let composed = load_composed_value(manifest_path, &mut session)?;
     let decode = |key: &str| composed.value.get(key).cloned();
     let bundle = decode("bundle")
@@ -227,7 +254,8 @@ fn load_composed_value(
             detail: "manifest root must be a TOML table".to_owned(),
         })?;
 
-    let (mut includes, manifest_extend_paths) = take_include_specs(manifest_path, table)?;
+    let (mut includes, manifest_extend_paths) =
+        take_include_specs(manifest_path, table, session.active_version.as_deref())?;
     remove_source_entries("manifest", &mut input.source_map);
     if session.stack.len() == 1 {
         append_local_overlay_include(manifest_path, &mut includes);
@@ -341,6 +369,7 @@ fn reject_retired_include_flags(
 fn take_include_specs(
     manifest_path: &Path,
     table: &mut toml::map::Map<String, Value>,
+    active_version: Option<&str>,
 ) -> Result<(Vec<ManifestIncludeSpec>, Vec<String>), ManifestError> {
     let Some(section) = table.remove("manifest") else {
         return Ok((Vec::new(), Vec::new()));
@@ -357,7 +386,17 @@ fn take_include_specs(
             path: manifest_path.to_path_buf(),
             detail: format!("invalid `[manifest]` section: {error}"),
         })?;
-    validate_minimum_effigy_version(manifest_path, config.minimum_effigy_version.as_deref())?;
+    match active_version {
+        Some(version) => crate::manifest_section::validate_minimum_effigy_version_for(
+            manifest_path,
+            config.minimum_effigy_version.as_deref(),
+            version,
+        )?,
+        None => validate_minimum_effigy_version(
+            manifest_path,
+            config.minimum_effigy_version.as_deref(),
+        )?,
+    }
     let parent = manifest_path.parent().unwrap_or_else(|| Path::new("."));
     let mut specs = Vec::with_capacity(config.include.len());
     for entry in config.include {
@@ -1448,15 +1487,10 @@ build = "true"
 minimum_effigy_version = "999.0.0"
 "#,
         );
-        let result = load_task_manifest_with_inspection(&root);
-        if effigy_core::build_info::active_version().contains("+local.") {
-            result.expect("local dev build should bypass manifest floor");
-        } else {
-            let err = result.unwrap_err();
-            let detail = err.to_string();
-            assert!(detail.contains("requires Effigy >= 999.0.0"), "{detail}");
-            assert!(detail.contains(env!("CARGO_PKG_VERSION")), "{detail}");
-        }
+        let err = load_task_manifest_with_inspection(&root).unwrap_err();
+        let detail = err.to_string();
+        assert!(detail.contains("requires Effigy >= 999.0.0"), "{detail}");
+        assert!(detail.contains(env!("CARGO_PKG_VERSION")), "{detail}");
     }
 
     #[test]
@@ -1479,15 +1513,10 @@ include = ["overlay.toml"]
 minimum_effigy_version = "999.0.0"
 "#,
         );
-        let result = load_task_manifest_with_inspection(&root);
-        if effigy_core::build_info::active_version().contains("+local.") {
-            result.expect("local dev build should bypass included manifest floor");
-        } else {
-            let err = result.unwrap_err();
-            let detail = err.to_string();
-            assert!(detail.contains("overlay.toml"), "{detail}");
-            assert!(detail.contains("requires Effigy >= 999.0.0"), "{detail}");
-        }
+        let err = load_task_manifest_with_inspection(&root).unwrap_err();
+        let detail = err.to_string();
+        assert!(detail.contains("overlay.toml"), "{detail}");
+        assert!(detail.contains("requires Effigy >= 999.0.0"), "{detail}");
     }
 
     #[test]
@@ -1512,21 +1541,28 @@ minimum_effigy_version = "latest"
     }
 
     #[test]
-    fn manifest_minimum_effigy_version_accepts_local_dev_builds_for_newer_floors() {
+    fn manifest_minimum_effigy_version_enforces_floor_for_local_dev_builds() {
         let requested = Version::parse("0.7.0").expect("requested");
         assert!(
-            crate::manifest_section::active_version_satisfies_minimum_effigy_version(
+            !crate::manifest_section::active_version_satisfies_minimum_effigy_version(
                 "0.6.1+local.67a79ff.dirty",
                 &requested,
             )
-            .expect("local build should bypass floor")
+            .expect("local build below floor should be rejected")
         );
         assert!(
-            crate::manifest_section::active_version_satisfies_minimum_effigy_version(
+            !crate::manifest_section::active_version_satisfies_minimum_effigy_version(
                 "v0.6.1+local.67a79ff",
                 &requested
             )
-            .expect("prefixed local build should bypass floor")
+            .expect("prefixed local build below floor should be rejected")
+        );
+        assert!(
+            crate::manifest_section::active_version_satisfies_minimum_effigy_version(
+                "v0.7.0+local.67a79ff.dirty",
+                &requested
+            )
+            .expect("local build meeting floor should be accepted")
         );
     }
 

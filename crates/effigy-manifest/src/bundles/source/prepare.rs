@@ -46,6 +46,9 @@ const UPDATE_STATE_KEEP: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 /// A snapshot tree is bounded to depth 32 (contract 020), so pruning a
 /// generation at a deeper bound never stops inside a removable tree.
 const GENERATION_TREE_DEPTH: usize = 40;
+/// Maximum number of candidate tags inspected when a floating Git bundle branch
+/// tip declares an Effigy version bound that the running binary does not satisfy.
+const MAX_COMPATIBILITY_TAG_CANDIDATES: usize = 12;
 
 #[derive(Default)]
 struct SnapshotUsage {
@@ -258,8 +261,21 @@ fn prepare(
     preparation: &SourcePreparation,
     mode: Mode,
 ) -> Result<Option<BundleSyncReport>, ManifestError> {
+    let active_version = effigy_core::build_info::active_version();
+    prepare_with_version(manifest, preparation, mode, &active_version)
+}
+
+fn prepare_with_version(
+    manifest: &Path,
+    preparation: &SourcePreparation,
+    mode: Mode,
+    active_version: &str,
+) -> Result<Option<BundleSyncReport>, ManifestError> {
     let manifest = std::fs::canonicalize(manifest).map_err(|err| io_error(manifest, err))?;
-    let (bundle, catalogs) = crate::composition::load_manifest_source_declarations(&manifest)?;
+    let (bundle, catalogs) = crate::composition::load_manifest_source_declarations_for_version(
+        &manifest,
+        Some(active_version),
+    )?;
     let mut selections = BTreeMap::new();
     let mut policies: BTreeMap<String, crate::ManifestSourceUpdate> = BTreeMap::new();
     if let Some(bundle) = &bundle {
@@ -317,6 +333,7 @@ fn prepare(
                     policies.get(name).copied().unwrap_or_default(),
                     checked.checks.get(name).copied(),
                     now,
+                    active_version,
                     &preparation.progress,
                 )?,
             };
@@ -447,6 +464,7 @@ fn prepare(
         &old,
         &checked,
         now,
+        active_version,
         &cx,
         &mut run,
         &preparation.home,
@@ -523,6 +541,7 @@ fn plan_source(
     policy: crate::ManifestSourceUpdate,
     checked_at: Option<u64>,
     now: u64,
+    active_version: &str,
     progress: &SourceProgress,
 ) -> Result<SourcePlan, ManifestError> {
     let Some(pin) = pin else {
@@ -548,9 +567,17 @@ fn plan_source(
                 Ok(SourcePlan::Keep)
             }
         },
-        BundleSelection::Git { reference, .. } => {
-            if reference.as_deref().is_some_and(is_full_revision) {
+        BundleSelection::Git { reference, rev, .. } => {
+            if rev.is_some() || reference.as_deref().is_some_and(is_full_revision) {
                 return Ok(SourcePlan::Keep);
+            }
+            if pin.fallback.as_ref().is_some_and(|fallback| {
+                !super::super::compatibility::same_running_effigy_version(
+                    active_version,
+                    &fallback.running_effigy,
+                )
+            }) {
+                return Ok(SourcePlan::Acquire(RefreshReason::Upstream));
             }
             if checked_at.is_some_and(|at| now.saturating_sub(at) < REMOTE_CHECK_TTL.as_secs()) {
                 return Ok(SourcePlan::Keep);
@@ -642,9 +669,10 @@ fn source_subject(name: &str, selection: &BundleSelection) -> String {
 fn source_revision(selection: &BundleSelection) -> String {
     match selection {
         BundleSelection::Path { .. } => "path".to_owned(),
-        BundleSelection::Git { reference, .. } => {
-            reference.clone().unwrap_or_else(|| "HEAD".to_owned())
-        }
+        BundleSelection::Git { reference, rev, .. } => rev
+            .clone()
+            .or_else(|| reference.clone())
+            .unwrap_or_else(|| "HEAD".to_owned()),
         BundleSelection::Oci { .. } => "oci".to_owned(),
     }
 }
@@ -854,6 +882,7 @@ fn acquire_and_publish(
     old: &SourceLock,
     checked: &SourceUpdateState,
     now: u64,
+    active_version: &str,
     cx: &EffectContext,
     run: &mut Run<'_>,
     home: &Path,
@@ -890,6 +919,7 @@ fn acquire_and_publish(
                     object: relative_object(manifest, object.path())?,
                     version,
                     revision: legacy_version(&legacy, selection),
+                    fallback: None,
                 },
             );
             imported_now.push(name.clone());
@@ -941,33 +971,49 @@ fn acquire_and_publish(
             _ => None,
         };
         if matches!(plans.get(name), Some(SourcePlan::RemoteCheck)) {
-            let BundleSelection::Git { url, reference } = selection else {
+            let BundleSelection::Git {
+                url,
+                reference,
+                rev: _,
+            } = selection
+            else {
                 return Err(error(manifest, "only a Git source has a remote check"));
             };
             checks.insert(name.clone(), now);
             checked_any = true;
-            match git_remote_revision(
-                manifest,
-                run,
-                cx,
-                home,
-                parent(manifest),
-                url,
-                reference.as_deref(),
-            ) {
-                Ok(Some(revision)) => {
-                    if pinned.as_ref().and_then(|pin| pin.revision.as_deref())
-                        != Some(revision.as_str())
-                    {
-                        reason = Some(RefreshReason::Upstream);
+            if pinned
+                .as_ref()
+                .and_then(|pin| pin.fallback.as_ref())
+                .is_some()
+            {
+                // Re-probe the branch and bounded tag candidates after the
+                // REMOTE_CHECK_TTL expires so a newer compatible tag published
+                // without moving the skipped branch tip is picked up.
+                reason = Some(RefreshReason::Upstream);
+            } else {
+                match git_remote_revision(
+                    manifest,
+                    run,
+                    cx,
+                    home,
+                    parent(manifest),
+                    url,
+                    reference.as_deref(),
+                ) {
+                    Ok(Some(revision)) => {
+                        if pinned.as_ref().and_then(|pin| pin.revision.as_deref())
+                            != Some(revision.as_str())
+                        {
+                            reason = Some(RefreshReason::Upstream);
+                        }
                     }
-                }
-                Ok(None) => {}
-                Err(failure) => {
-                    if let Some(pin) = &pinned {
-                        let message = kept_warning(name, pin, &failure);
-                        warn(progress, &message);
-                        warnings.push(message);
+                    Ok(None) => {}
+                    Err(failure) => {
+                        if let Some(pin) = &pinned {
+                            let message = kept_warning(name, pin, &failure);
+                            warn(progress, &message);
+                            warnings.push(message);
+                        }
                     }
                 }
             }
@@ -989,15 +1035,28 @@ fn acquire_and_publish(
             matches!(selection, BundleSelection::Path { .. }),
         );
         let acquired = acquire_source(
-            manifest, name, selection, run, cx, home, generation, &object, progress,
+            manifest,
+            name,
+            selection,
+            active_version,
+            run,
+            cx,
+            home,
+            generation,
+            &object,
+            progress,
         )
-        .and_then(|(version, revision)| {
+        .and_then(|(version, revision, fallback)| {
             if name == "bundle" {
-                crate::composition::validate_source_snapshot(manifest, object.path())?;
+                crate::composition::validate_source_snapshot(
+                    manifest,
+                    object.path(),
+                    Some(active_version),
+                )?;
             }
-            Ok((version, revision))
+            Ok((version, revision, fallback))
         });
-        let (version, revision) = match acquired {
+        let (version, revision, fallback) = match acquired {
             Ok(acquired) => acquired,
             Err(failure) => {
                 // Contract 020 §Failure: a pin whose declaration is unchanged
@@ -1028,21 +1087,45 @@ fn acquire_and_publish(
             }
         };
         step.finish(None, None);
+        if mode != Mode::Missing && fallback.is_some() {
+            // Cache the bounded fallback probe under REMOTE_CHECK_TTL without
+            // turning normal initial acquisitions or read-only discovery into a
+            // completed remote refresh.
+            checks.insert(name.clone(), now);
+            checked_any = true;
+        }
         let selected = SourcePin {
             declaration: selection.spec(),
             object: relative_object(manifest, object.path())?,
             version,
             revision,
+            fallback,
         };
-        changed |= pinned.as_ref().is_none_or(|pin| {
-            pin.version != selected.version || !same_declaration(&pin.declaration, selection)
+        let pin_changed = pinned.as_ref().is_none_or(|pin| {
+            pin.version != selected.version
+                || pin.revision != selected.revision
+                || pin.fallback != selected.fallback
+                || !same_declaration(&pin.declaration, selection)
         });
+        let existing_object_usable = pinned
+            .as_ref()
+            .is_some_and(|pin| parent(manifest).join(".effigy").join(&pin.object).is_dir());
+        if mode == Mode::Refresh && !pin_changed && existing_object_usable {
+            if let Some(existing) = &pinned {
+                reports.insert(name.clone(), pin_report(manifest, selection, existing));
+                continue;
+            }
+        }
+        changed |= pin_changed;
         if mode == Mode::Refresh {
             if let Some(previous) = &pinned {
                 if previous.version != selected.version || previous.revision != selected.revision {
                     notes.push(update_note(name, previous, &selected, reason));
                 }
             }
+        }
+        if let Some(fallback) = &selected.fallback {
+            notes.push(fallback.notice(name));
         }
         reports.insert(name.clone(), pin_report(manifest, selection, &selected));
         pins.insert(name.clone(), selected);
@@ -1220,85 +1303,41 @@ fn prune_unpinned_generations(
 }
 
 /// Acquire one source into its generation directory and return the recorded
-/// version and revision hint.
+/// version, revision hint, and optional compatibility fallback metadata.
 #[allow(clippy::too_many_arguments)]
 fn acquire_source(
     manifest: &Path,
     name: &str,
     selection: &BundleSelection,
+    active_version: &str,
     run: &mut Run<'_>,
     cx: &EffectContext,
     home: &Path,
     generation: &DirFd,
     object: &DirFd,
     progress: &SourceProgress,
-) -> Result<(String, Option<String>), ManifestError> {
+) -> Result<(String, Option<String>, Option<SourceCompatibilityFallback>), ManifestError> {
     match selection {
-        BundleSelection::Path { path } => Ok((snapshot(path, object, cx, manifest)?, None)),
-        BundleSelection::Git { url, reference } => {
-            let checkout = source_dir(
-                generation,
-                &format!("git-{}", sha256_hex(name.as_bytes())),
-                cx,
-                manifest,
-            )?;
-            command(
-                manifest,
-                run,
-                cx,
-                home,
-                parent(manifest),
-                vec![
-                    "git".into(),
-                    "clone".into(),
-                    "--no-checkout".into(),
-                    "--".into(),
-                    url.into(),
-                    checkout.path().as_os_str().into(),
-                ],
-                BUDGET,
-                Some(progress),
-            )?;
-            command(
-                manifest,
-                run,
-                cx,
-                home,
-                checkout.path(),
-                vec![
-                    "git".into(),
-                    "fetch".into(),
-                    "--depth".into(),
-                    "1".into(),
-                    "--".into(),
-                    "origin".into(),
-                    reference.as_deref().unwrap_or("main").into(),
-                ],
-                BUDGET,
-                Some(progress),
-            )?;
-            command(
-                manifest,
-                run,
-                cx,
-                home,
-                checkout.path(),
-                vec![
-                    "git".into(),
-                    "-c".into(),
-                    "core.hooksPath=/dev/null".into(),
-                    "checkout".into(),
-                    "--detach".into(),
-                    "FETCH_HEAD".into(),
-                ],
-                BUDGET,
-                Some(progress),
-            )?;
-            Ok((
-                snapshot(checkout.path(), object, cx, manifest)?,
-                legacy_version(checkout.path(), selection),
-            ))
-        }
+        BundleSelection::Path { path } => Ok((snapshot(path, object, cx, manifest)?, None, None)),
+        BundleSelection::Git {
+            url,
+            reference,
+            rev,
+        } => acquire_git_source(
+            manifest,
+            name,
+            selection,
+            url,
+            reference.as_deref(),
+            rev.as_deref(),
+            active_version,
+            run,
+            cx,
+            home,
+            generation,
+            object,
+            progress,
+        ),
         BundleSelection::Oci { url } => {
             let reference = url.trim_start_matches("oci://");
             let raw = command(
@@ -1360,9 +1399,407 @@ fn acquire_source(
             Ok((
                 snapshot(pull.path(), object, cx, manifest)?,
                 Some(digest.into()),
+                None,
             ))
         }
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn acquire_git_source(
+    manifest: &Path,
+    name: &str,
+    selection: &BundleSelection,
+    url: &str,
+    reference: Option<&str>,
+    rev: Option<&str>,
+    active_version: &str,
+    run: &mut Run<'_>,
+    cx: &EffectContext,
+    home: &Path,
+    generation: &DirFd,
+    object: &DirFd,
+    progress: &SourceProgress,
+) -> Result<(String, Option<String>, Option<SourceCompatibilityFallback>), ManifestError> {
+    let checkout = source_dir(
+        generation,
+        &format!("git-{}", sha256_hex(name.as_bytes())),
+        cx,
+        manifest,
+    )?;
+    command(
+        manifest,
+        run,
+        cx,
+        home,
+        parent(manifest),
+        vec![
+            "git".into(),
+            "clone".into(),
+            "--no-checkout".into(),
+            "--".into(),
+            url.into(),
+            checkout.path().as_os_str().into(),
+        ],
+        BUDGET,
+        Some(progress),
+    )?;
+    let fetch_ref = rev.or(reference).unwrap_or("HEAD");
+    git_fetch_and_checkout(
+        manifest,
+        run,
+        cx,
+        home,
+        checkout.path(),
+        fetch_ref,
+        Some(progress),
+    )?;
+    let head_revision = legacy_version(checkout.path(), selection);
+
+    if name == "bundle" {
+        match super::super::compatibility::check_bundle_dir_compatibility(
+            checkout.path(),
+            manifest,
+            active_version,
+        ) {
+            Ok(()) => {}
+            Err(super::super::compatibility::CompatibilityCheckError::Invalid(err)) => {
+                return Err(err);
+            }
+            Err(super::super::compatibility::CompatibilityCheckError::Incompatible(mismatch)) => {
+                if let Some(pinned_rev) = rev {
+                    return Err(error(
+                        manifest,
+                        format!(
+                            "bundle rev `{pinned_rev}` requires Effigy {}, but this binary is {}; {}",
+                            mismatch.required,
+                            mismatch.running,
+                            mismatch.guidance_for_pin()
+                        ),
+                    ));
+                }
+                let floating = is_floating_branch_ref(
+                    manifest,
+                    run,
+                    cx,
+                    home,
+                    checkout.path(),
+                    url,
+                    reference,
+                )?;
+                let declared_label = match reference {
+                    None | Some("HEAD") => {
+                        resolve_remote_default_branch(manifest, run, cx, home, checkout.path(), url)
+                            .unwrap_or_else(|| "HEAD".to_owned())
+                    }
+                    Some(other) => other.to_owned(),
+                };
+                if !floating {
+                    return Err(error(
+                        manifest,
+                        format!(
+                            "bundle ref `{declared_label}` requires Effigy {}, but this binary is {}; {}",
+                            mismatch.required,
+                            mismatch.running,
+                            mismatch.guidance_for_pin()
+                        ),
+                    ));
+                }
+                let fallback = select_compatible_tag(
+                    manifest,
+                    url,
+                    &declared_label,
+                    head_revision,
+                    &mismatch,
+                    active_version,
+                    run,
+                    cx,
+                    home,
+                    checkout.path(),
+                )?;
+                return Ok((
+                    snapshot(checkout.path(), object, cx, manifest)?,
+                    legacy_version(checkout.path(), selection),
+                    Some(fallback),
+                ));
+            }
+        }
+    }
+
+    Ok((
+        snapshot(checkout.path(), object, cx, manifest)?,
+        head_revision,
+        None,
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resolve_remote_default_branch(
+    manifest: &Path,
+    run: &mut Run<'_>,
+    cx: &EffectContext,
+    home: &Path,
+    cwd: &Path,
+    url: &str,
+) -> Option<String> {
+    let raw = command(
+        manifest,
+        run,
+        cx,
+        home,
+        cwd,
+        vec![
+            "git".into(),
+            "ls-remote".into(),
+            "--symref".into(),
+            "--".into(),
+            url.into(),
+            "HEAD".into(),
+        ],
+        REMOTE_CHECK_BUDGET,
+        None,
+    )
+    .ok()?;
+    parse_symref_head_branch(&raw)
+}
+
+fn parse_symref_head_branch(raw: &[u8]) -> Option<String> {
+    let output = String::from_utf8_lossy(raw);
+    for line in output.lines() {
+        let trimmed = line.trim();
+        let Some(rest) = trimmed.strip_prefix("ref: ") else {
+            continue;
+        };
+        let target = rest
+            .split_whitespace()
+            .next()
+            .unwrap_or(rest)
+            .strip_suffix("HEAD")
+            .unwrap_or_else(|| rest.split_whitespace().next().unwrap_or(rest));
+        if let Some(branch) = target.strip_prefix("refs/heads/") {
+            if !branch.is_empty() {
+                return Some(branch.to_owned());
+            }
+        }
+    }
+    None
+}
+
+#[allow(clippy::too_many_arguments)]
+fn git_fetch_and_checkout(
+    manifest: &Path,
+    run: &mut Run<'_>,
+    cx: &EffectContext,
+    home: &Path,
+    checkout_path: &Path,
+    refspec: &str,
+    progress: Option<&SourceProgress>,
+) -> Result<(), ManifestError> {
+    command(
+        manifest,
+        run,
+        cx,
+        home,
+        checkout_path,
+        vec![
+            "git".into(),
+            "fetch".into(),
+            "--depth".into(),
+            "1".into(),
+            "--".into(),
+            "origin".into(),
+            refspec.into(),
+        ],
+        BUDGET,
+        progress,
+    )?;
+    command(
+        manifest,
+        run,
+        cx,
+        home,
+        checkout_path,
+        vec![
+            "git".into(),
+            "-c".into(),
+            "core.hooksPath=/dev/null".into(),
+            "checkout".into(),
+            "--detach".into(),
+            "FETCH_HEAD".into(),
+        ],
+        BUDGET,
+        progress,
+    )?;
+    Ok(())
+}
+
+/// Returns `true` when `reference` tracks a floating branch (`None`, `"HEAD"`,
+/// `refs/heads/...`, or a remote branch name), and `false` for explicit commit
+/// revisions or explicit tag pins.
+#[allow(clippy::too_many_arguments)]
+fn is_floating_branch_ref(
+    manifest: &Path,
+    run: &mut Run<'_>,
+    cx: &EffectContext,
+    home: &Path,
+    cwd: &Path,
+    url: &str,
+    reference: Option<&str>,
+) -> Result<bool, ManifestError> {
+    let Some(reference) = reference else {
+        return Ok(true);
+    };
+    if reference == "HEAD" || reference.starts_with("refs/heads/") {
+        return Ok(true);
+    }
+    if reference.starts_with("refs/tags/") || is_full_revision(reference) {
+        return Ok(false);
+    }
+    let raw = command(
+        manifest,
+        run,
+        cx,
+        home,
+        cwd,
+        vec![
+            "git".into(),
+            "ls-remote".into(),
+            "--".into(),
+            url.into(),
+            format!("refs/heads/{reference}").into(),
+            format!("refs/tags/{reference}").into(),
+        ],
+        REMOTE_CHECK_BUDGET,
+        None,
+    )?;
+    let branch_ref = format!("refs/heads/{reference}");
+    let output = String::from_utf8_lossy(&raw);
+    Ok(output
+        .lines()
+        .filter_map(split_ls_remote_line)
+        .any(|(_, name)| name == branch_ref))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn select_compatible_tag(
+    manifest: &Path,
+    url: &str,
+    declared_ref: &str,
+    head_revision: Option<String>,
+    mismatch: &super::super::compatibility::CompatibilityMismatch,
+    active_version: &str,
+    run: &mut Run<'_>,
+    cx: &EffectContext,
+    home: &Path,
+    checkout_path: &Path,
+) -> Result<SourceCompatibilityFallback, ManifestError> {
+    let raw = command(
+        manifest,
+        run,
+        cx,
+        home,
+        checkout_path,
+        vec![
+            "git".into(),
+            "ls-remote".into(),
+            "--tags".into(),
+            "--".into(),
+            url.into(),
+        ],
+        REMOTE_CHECK_BUDGET,
+        None,
+    )?;
+    let candidates = parse_ls_remote_tags(&raw);
+    let mut probed = 0usize;
+    for (tag_name, tag_sha) in candidates {
+        if head_revision.as_deref() == Some(tag_sha.as_str()) {
+            continue;
+        }
+        if probed >= MAX_COMPATIBILITY_TAG_CANDIDATES {
+            break;
+        }
+        probed += 1;
+        let refspec = format!("refs/tags/{tag_name}");
+        if git_fetch_and_checkout(manifest, run, cx, home, checkout_path, &refspec, None).is_err() {
+            continue;
+        }
+        if super::super::compatibility::check_bundle_dir_compatibility(
+            checkout_path,
+            manifest,
+            active_version,
+        )
+        .is_ok()
+        {
+            return Ok(SourceCompatibilityFallback {
+                selected_tag: tag_name,
+                skipped_ref: declared_ref.to_owned(),
+                skipped_revision: head_revision,
+                required_effigy: mismatch.required.clone(),
+                running_effigy: mismatch.running.clone(),
+                kind: mismatch.kind,
+            });
+        }
+    }
+    if probed == 0 {
+        Err(error(
+            manifest,
+            format!(
+                "bundle ref `{declared_ref}` requires Effigy {}, but this binary is {}, and the repository has no compatible tags; {}",
+                mismatch.required,
+                mismatch.running,
+                mismatch.guidance_for_no_tag()
+            ),
+        ))
+    } else {
+        Err(error(
+            manifest,
+            format!(
+                "bundle ref `{declared_ref}` requires Effigy {}, but this binary is {}, and no compatible tag was found (checked {probed} candidate tag{}); {}",
+                mismatch.required,
+                mismatch.running,
+                if probed == 1 { "" } else { "s" },
+                mismatch.guidance_for_no_tag()
+            ),
+        ))
+    }
+}
+
+/// Parse `git ls-remote --tags` output into `(tag_name, commit_sha)` sorted
+/// newest-first: SemVer tags descending first, then non-SemVer tags descending.
+fn parse_ls_remote_tags(raw: &[u8]) -> Vec<(String, String)> {
+    let output = String::from_utf8_lossy(raw);
+    let mut tags: BTreeMap<String, (String, bool)> = BTreeMap::new();
+    for line in output.lines() {
+        let Some((sha, name)) = split_ls_remote_line(line) else {
+            continue;
+        };
+        let Some(tag_part) = name.strip_prefix("refs/tags/") else {
+            continue;
+        };
+        if let Some(tag_name) = tag_part.strip_suffix("^{}") {
+            tags.insert(tag_name.to_owned(), (sha.to_owned(), true));
+        } else {
+            tags.entry(tag_part.to_owned())
+                .or_insert_with(|| (sha.to_owned(), false));
+        }
+    }
+    let mut list: Vec<(String, String)> = tags
+        .into_iter()
+        .map(|(tag_name, (sha, _))| (tag_name, sha))
+        .collect();
+    list.sort_by(|(a_name, _), (b_name, _)| {
+        match (parse_tag_semver(a_name), parse_tag_semver(b_name)) {
+            (Some(a_ver), Some(b_ver)) => b_ver.cmp(&a_ver).then_with(|| b_name.cmp(a_name)),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => b_name.cmp(a_name),
+        }
+    });
+    list
+}
+
+fn parse_tag_semver(tag: &str) -> Option<semver::Version> {
+    semver::Version::parse(tag.trim().trim_start_matches('v')).ok()
 }
 
 /// A bounded `git ls-remote` of the floating ref. `Ok(None)` means the remote
@@ -1377,7 +1814,7 @@ fn git_remote_revision(
     url: &str,
     reference: Option<&str>,
 ) -> Result<Option<String>, ManifestError> {
-    let reference = reference.unwrap_or("main");
+    let reference = reference.unwrap_or("HEAD");
     let raw = command(
         manifest,
         run,
@@ -1397,14 +1834,15 @@ fn git_remote_revision(
     Ok(parse_ls_remote(&raw, reference))
 }
 
-/// One `ls-remote` line: the object id, then the ref name. Captured output
-/// passes the terminal sanitizer, which drops the TAB between them, so the id
-/// is taken by its length and the name starts at `refs/`.
+/// One `ls-remote` line: the object id, then the ref name (`HEAD` or `refs/...`).
+/// Captured output passes the terminal sanitizer, which drops the TAB between
+/// them, so the id is taken by its length.
 fn split_ls_remote_line(line: &str) -> Option<(&str, &str)> {
     [64, 40].into_iter().find_map(|len| {
         let sha = line.get(..len)?;
         let name = line.get(len..)?.trim();
-        (is_full_revision(sha) && name.starts_with("refs/")).then_some((sha, name))
+        (is_full_revision(sha) && (name == "HEAD" || name.starts_with("refs/")))
+            .then_some((sha, name))
     })
 }
 
@@ -1413,13 +1851,16 @@ fn parse_ls_remote(raw: &[u8], reference: &str) -> Option<String> {
     let branch = format!("refs/heads/{reference}");
     let tag = format!("refs/tags/{reference}");
     let peeled = format!("{tag}^{{}}");
-    let (mut head, mut tag_object, mut commit, mut first) = (None, None, None, None);
+    let (mut sym_head, mut head, mut tag_object, mut commit, mut first) =
+        (None, None, None, None, None);
     for line in output.lines() {
         let Some((sha, name)) = split_ls_remote_line(line) else {
             continue;
         };
         first.get_or_insert_with(|| sha.to_owned());
-        if name == branch {
+        if reference == "HEAD" && name == "HEAD" {
+            sym_head = Some(sha.to_owned());
+        } else if name == branch {
             head = Some(sha.to_owned());
         } else if name == peeled {
             commit = Some(sha.to_owned());
@@ -1427,7 +1868,7 @@ fn parse_ls_remote(raw: &[u8], reference: &str) -> Option<String> {
             tag_object = Some(sha.to_owned());
         }
     }
-    head.or(commit).or(tag_object).or(first)
+    sym_head.or(head).or(commit).or(tag_object).or(first)
 }
 fn relative_object(manifest: &Path, root: &Path) -> Result<PathBuf, ManifestError> {
     root.strip_prefix(parent(manifest).join(".effigy"))
@@ -1445,6 +1886,7 @@ fn pin_report(
         local_path: parent(manifest).join(".effigy").join(&pin.object),
         version_hint: pin.revision.clone().or_else(|| Some(pin.version.clone())),
         stale: !same_declaration(&pin.declaration, selection),
+        fallback: pin.fallback.clone(),
     }
 }
 #[allow(
@@ -1791,8 +2233,10 @@ mod tests {
                 executable: std::env::current_exe().unwrap(),
                 cancel: CancelToken::default(),
                 budget: Duration::from_secs(30),
-                next: Invocation::validated(vec!["recover".into()], |args| args == ["recover"])
-                    .unwrap(),
+                next: Invocation::validated(vec!["bundle".into(), "sync".into()], |args| {
+                    args == ["bundle", "sync"]
+                })
+                .unwrap(),
                 progress: SourceProgress::silent(),
             },
         )
@@ -2281,5 +2725,682 @@ mod tests {
         );
         assert_eq!(parse_ls_remote(b"", "main"), None);
         assert_eq!(parse_ls_remote(b"not a ref line\n", "main"), None);
+    }
+
+    fn git_cmd(cwd: &Path, args: &[&str]) -> String {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .env("GIT_AUTHOR_NAME", "Effigy Test")
+            .env("GIT_AUTHOR_EMAIL", "test@effigy.local")
+            .env("GIT_COMMITTER_NAME", "Effigy Test")
+            .env("GIT_COMMITTER_EMAIL", "test@effigy.local")
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .output()
+            .expect("spawn git");
+        assert!(
+            output.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).trim().to_owned()
+    }
+
+    struct GitBundleRepo {
+        bare: PathBuf,
+        work: PathBuf,
+        branch: String,
+    }
+
+    impl GitBundleRepo {
+        fn new(root: &Path) -> Self {
+            Self::with_branch(root, "main")
+        }
+
+        fn with_branch(root: &Path, branch: &str) -> Self {
+            let bare = root.join("remote.git");
+            let work = root.join("work");
+            std::fs::create_dir_all(&bare).unwrap();
+            std::fs::create_dir_all(&work).unwrap();
+            let initial_branch = format!("--initial-branch={branch}");
+            git_cmd(&bare, &["init", "--bare", &initial_branch]);
+            git_cmd(&work, &["init", &initial_branch]);
+            git_cmd(&work, &["remote", "add", "origin", bare.to_str().unwrap()]);
+            Self {
+                bare,
+                work,
+                branch: branch.to_owned(),
+            }
+        }
+
+        fn commit_bundle(
+            &self,
+            bundle_toml: &str,
+            export_toml: &str,
+            message: &str,
+            tag: Option<&str>,
+        ) -> String {
+            std::fs::write(self.work.join("bundle.toml"), bundle_toml).unwrap();
+            std::fs::write(self.work.join("effigy.toml"), export_toml).unwrap();
+            git_cmd(&self.work, &["add", "bundle.toml", "effigy.toml"]);
+            git_cmd(&self.work, &["commit", "--allow-empty", "-m", message]);
+            let refspec = format!("HEAD:refs/heads/{}", self.branch);
+            git_cmd(&self.work, &["push", "origin", &refspec]);
+            let sha = git_cmd(&self.work, &["rev-parse", "HEAD"]);
+            if let Some(tag) = tag {
+                git_cmd(&self.work, &["tag", "-a", tag, "-m", tag]);
+                git_cmd(&self.work, &["push", "origin", &format!("refs/tags/{tag}")]);
+            }
+            sha
+        }
+
+        /// Publish a tag on a detached commit without moving the branch tip.
+        fn publish_side_tag(
+            &self,
+            base_sha: &str,
+            bundle_toml: &str,
+            export_toml: &str,
+            tag: &str,
+        ) -> String {
+            let branch_head = git_cmd(&self.work, &["rev-parse", "HEAD"]);
+            git_cmd(&self.work, &["checkout", "--detach", base_sha]);
+            std::fs::write(self.work.join("bundle.toml"), bundle_toml).unwrap();
+            std::fs::write(self.work.join("effigy.toml"), export_toml).unwrap();
+            git_cmd(&self.work, &["add", "bundle.toml", "effigy.toml"]);
+            git_cmd(&self.work, &["commit", "--allow-empty", "-m", tag]);
+            let sha = git_cmd(&self.work, &["rev-parse", "HEAD"]);
+            git_cmd(&self.work, &["tag", "-a", tag, "-m", tag]);
+            git_cmd(&self.work, &["push", "origin", &format!("refs/tags/{tag}")]);
+            git_cmd(&self.work, &["checkout", &self.branch]);
+            assert_eq!(git_cmd(&self.work, &["rev-parse", "HEAD"]), branch_head);
+            sha
+        }
+    }
+
+    fn sentinel_executable() -> PathBuf {
+        if let Some(path) = std::env::var_os("EFFIGY_EXECUTABLE")
+            .map(PathBuf::from)
+            .filter(|path| path.is_file())
+        {
+            return path;
+        }
+        let workspace_bin = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/effigy");
+        if workspace_bin.is_file() {
+            return std::fs::canonicalize(workspace_bin).unwrap();
+        }
+        std::env::current_exe().unwrap()
+    }
+
+    fn git_consumer_fixture_with_spec(
+        root: &Path,
+        base_spec: &str,
+    ) -> (PathBuf, SourcePreparation) {
+        let project = root.join("consumer");
+        std::fs::create_dir_all(&project).unwrap();
+        let manifest = project.join("effigy.toml");
+        std::fs::write(&manifest, format!("[bundle]\nbase = {base_spec}\n")).unwrap();
+        let home = root.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        (
+            manifest,
+            SourcePreparation {
+                home,
+                executable: sentinel_executable(),
+                cancel: CancelToken::default(),
+                budget: Duration::from_secs(30),
+                next: Invocation::validated(vec!["bundle".into(), "sync".into()], |args| {
+                    args == ["bundle", "sync"]
+                })
+                .unwrap(),
+                progress: SourceProgress::silent(),
+            },
+        )
+    }
+
+    fn git_consumer_fixture(
+        root: &Path,
+        remote: &Path,
+        reference: Option<&str>,
+    ) -> (PathBuf, SourcePreparation) {
+        let ref_part = reference
+            .map(|value| format!(", ref = \"{value}\""))
+            .unwrap_or_default();
+        git_consumer_fixture_with_spec(
+            root,
+            &format!(
+                "{{ type = \"git\", url = \"{}\"{ref_part} }}",
+                remote.display()
+            ),
+        )
+    }
+
+    #[test]
+    fn parse_ls_remote_tags_orders_semver_newest_first_and_peels_annotated_tags() {
+        const A: &str = "1111111111111111111111111111111111111111";
+        const B: &str = "2222222222222222222222222222222222222222";
+        const C: &str = "3333333333333333333333333333333333333333";
+        const TAG_OBJ: &str = "4444444444444444444444444444444444444444";
+        let raw = format!(
+            "{A}\trefs/tags/v1.2.0\n\
+             {TAG_OBJ}\trefs/tags/v1.10.0\n\
+             {B}\trefs/tags/v1.10.0^{{}}\n\
+             {C}\trefs/tags/legacy-release\n"
+        );
+        let parsed = parse_ls_remote_tags(raw.as_bytes());
+        assert_eq!(
+            parsed,
+            vec![
+                ("v1.10.0".to_owned(), B.to_owned()),
+                ("v1.2.0".to_owned(), A.to_owned()),
+                ("legacy-release".to_owned(), C.to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn floating_branch_falls_back_to_newest_compatible_tag_and_emits_notice() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = GitBundleRepo::new(tmp.path());
+        repo.commit_bundle(
+            "[bundle]\nname = \"acme\"\nminimum_effigy_version = \"0.14.0\"\n",
+            "[tasks.hello]\nrun = \"echo from-v1.0.0\"\n",
+            "v1.0.0",
+            Some("v1.0.0"),
+        );
+        repo.commit_bundle(
+            "[bundle]\nname = \"acme\"\nminimum_effigy_version = \"0.15.0\"\n",
+            "[tasks.hello]\nrun = \"echo from-v1.2.0\"\n",
+            "v1.2.0",
+            Some("v1.2.0"),
+        );
+        repo.commit_bundle(
+            "[bundle]\nname = \"acme\"\nminimum_effigy_version = \"0.16.0\"\nfuture_flag = true\n",
+            "[future_v016]\nenabled = true\n",
+            "v2.0.0",
+            Some("v2.0.0"),
+        );
+        repo.commit_bundle(
+            "[bundle]\nname = \"acme\"\nminimum_effigy_version = \"0.16.0\"\n",
+            "[tasks.hello]\nrun = \"echo from-main\"\n[future_v016]\nenabled = true\n",
+            "main tip",
+            None,
+        );
+
+        let (manifest, prep) = git_consumer_fixture(tmp.path(), &repo.bare, Some("main"));
+        let report = prepare_with_version(&manifest, &prep, Mode::Refresh, "0.15.0+local.abc1234")
+            .unwrap()
+            .unwrap();
+
+        assert!(selected(&manifest).contains("echo from-v1.2.0"));
+        assert!(
+            report.notes.iter().any(|note| {
+                note.contains("v1.2.0")
+                    && note.contains("main")
+                    && note.contains(">= 0.16.0")
+                    && note.contains("0.15.0+local.abc1234")
+                    && note.contains("upgrade Effigy")
+            }),
+            "expected clear fallback notice in notes: {:?}",
+            report.notes
+        );
+
+        let inspected = crate::inspect_bundle_source(&manifest).unwrap().unwrap();
+        let fallback = inspected.fallback.expect("fallback metadata recorded");
+        assert_eq!(fallback.selected_tag, "v1.2.0");
+        assert_eq!(fallback.skipped_ref, "main");
+        assert_eq!(fallback.required_effigy, ">= 0.16.0");
+    }
+
+    #[test]
+    fn upgrading_simulated_effigy_version_selects_main_again() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = GitBundleRepo::new(tmp.path());
+        repo.commit_bundle(
+            "[bundle]\nname = \"acme\"\nminimum_effigy_version = \"0.14.0\"\n",
+            "[tasks.hello]\nrun = \"echo from-v1.2.0\"\n",
+            "v1.2.0",
+            Some("v1.2.0"),
+        );
+        repo.commit_bundle(
+            "[bundle]\nname = \"acme\"\nminimum_effigy_version = \"0.15.0\"\n",
+            "[tasks.hello]\nrun = \"echo from-main\"\n",
+            "main tip",
+            None,
+        );
+
+        let (manifest, prep) = git_consumer_fixture(tmp.path(), &repo.bare, Some("main"));
+        prepare_with_version(&manifest, &prep, Mode::Refresh, "0.14.1")
+            .unwrap()
+            .unwrap();
+        assert!(selected(&manifest).contains("echo from-v1.2.0"));
+        assert!(crate::inspect_bundle_source(&manifest)
+            .unwrap()
+            .unwrap()
+            .fallback
+            .is_some());
+
+        // Upgrading Effigy immediately re-evaluates `main` without waiting for TTL.
+        let upgraded = prepare_with_version(&manifest, &prep, Mode::Refresh, "0.15.0")
+            .unwrap()
+            .unwrap();
+        assert!(upgraded.changed);
+        assert!(selected(&manifest).contains("echo from-main"));
+        assert!(crate::inspect_bundle_source(&manifest)
+            .unwrap()
+            .unwrap()
+            .fallback
+            .is_none());
+    }
+
+    #[test]
+    fn explicit_rev_or_tag_pin_refuses_with_version_mismatch_instead_of_falling_back() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = GitBundleRepo::new(tmp.path());
+        repo.commit_bundle(
+            "[bundle]\nname = \"acme\"\nminimum_effigy_version = \"0.15.0\"\n",
+            "[tasks.hello]\nrun = \"echo from-v1.0.0\"\n",
+            "v1.0.0",
+            Some("v1.0.0"),
+        );
+        let incompatible_sha = repo.commit_bundle(
+            "[bundle]\nname = \"acme\"\nminimum_effigy_version = \"0.16.0\"\n",
+            "[future_v016]\nenabled = true\n",
+            "v2.0.0",
+            Some("v2.0.0"),
+        );
+
+        // Explicit incompatible tag pin refuses cleanly without falling back.
+        let tag_root = tmp.path().join("tag-pin");
+        let (manifest, prep) = git_consumer_fixture(&tag_root, &repo.bare, Some("v2.0.0"));
+        let err = prepare_with_version(&manifest, &prep, Mode::Refresh, "0.15.0")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("requires Effigy >= 0.16.0") && err.contains("0.15.0"),
+            "{err}"
+        );
+        assert!(!err.contains("future_v016"), "{err}");
+
+        // Explicit commit rev pin via `rev = "<sha>"` refuses cleanly without falling back.
+        let rev_root = tmp.path().join("rev-pin");
+        let (manifest, prep) = git_consumer_fixture_with_spec(
+            &rev_root,
+            &format!(
+                "{{ type = \"git\", url = \"{}\", rev = \"{incompatible_sha}\" }}",
+                repo.bare.display()
+            ),
+        );
+        let err = prepare_with_version(&manifest, &prep, Mode::Refresh, "0.15.0")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("bundle rev")
+                && err.contains("requires Effigy >= 0.16.0")
+                && err.contains("0.15.0"),
+            "{err}"
+        );
+        assert!(!err.contains("future_v016"), "{err}");
+
+        // Declaring both `ref` and `rev` is rejected cleanly.
+        let both_root = tmp.path().join("both-pin");
+        let (manifest, prep) = git_consumer_fixture_with_spec(
+            &both_root,
+            &format!(
+                "{{ type = \"git\", url = \"{}\", ref = \"main\", rev = \"{incompatible_sha}\" }}",
+                repo.bare.display()
+            ),
+        );
+        let err = prepare_with_version(&manifest, &prep, Mode::Refresh, "0.15.0")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("cannot declare both `ref` and `rev`"), "{err}");
+    }
+
+    #[test]
+    fn floating_branch_with_no_compatible_tag_refuses_with_version_mismatch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = GitBundleRepo::new(tmp.path());
+        repo.commit_bundle(
+            "[bundle]\nname = \"acme\"\nminimum_effigy_version = \"0.16.0\"\n",
+            "[future_v016]\nenabled = true\n",
+            "v2.0.0",
+            Some("v2.0.0"),
+        );
+        repo.commit_bundle(
+            "[bundle]\nname = \"acme\"\nminimum_effigy_version = \"0.17.0\"\n",
+            "[future_v017]\nenabled = true\n",
+            "main tip",
+            None,
+        );
+
+        let (manifest, prep) = git_consumer_fixture(tmp.path(), &repo.bare, Some("main"));
+        let err = prepare_with_version(&manifest, &prep, Mode::Refresh, "0.15.0")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("requires Effigy >= 0.17.0")
+                && err.contains("0.15.0")
+                && err.contains("no compatible tag"),
+            "{err}"
+        );
+        assert!(!err.contains("future_v017"), "{err}");
+    }
+
+    #[test]
+    fn bounded_candidate_probing_respects_limit_and_caches_cleanly() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = GitBundleRepo::new(tmp.path());
+        // Place one compatible tag older than MAX_COMPATIBILITY_TAG_CANDIDATES
+        // newer incompatible tags to prove probing is strictly bounded.
+        repo.commit_bundle(
+            "[bundle]\nname = \"acme\"\nminimum_effigy_version = \"0.15.0\"\n",
+            "[tasks.hello]\nrun = \"echo from-v1.0.0\"\n",
+            "v1.0.0",
+            Some("v1.0.0"),
+        );
+        for index in 0..(MAX_COMPATIBILITY_TAG_CANDIDATES + 2) {
+            let tag = format!("v2.{index}.0");
+            repo.commit_bundle(
+                "[bundle]\nname = \"acme\"\nminimum_effigy_version = \"0.16.0\"\n",
+                "[tasks.hello]\nrun = \"echo incompatible\"\n",
+                &tag,
+                Some(&tag),
+            );
+        }
+        repo.commit_bundle(
+            "[bundle]\nname = \"acme\"\nminimum_effigy_version = \"0.16.0\"\n",
+            "[tasks.hello]\nrun = \"echo main\"\n",
+            "main tip",
+            None,
+        );
+
+        let bounded_root = tmp.path().join("bounded");
+        let (manifest, prep) = git_consumer_fixture(&bounded_root, &repo.bare, Some("main"));
+        let err = prepare_with_version(&manifest, &prep, Mode::Refresh, "0.15.0")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains(&format!(
+                "checked {MAX_COMPATIBILITY_TAG_CANDIDATES} candidate tags"
+            )),
+            "{err}"
+        );
+
+        // Now add a compatible tag within the bounded window and verify caching:
+        // the first prepare selects it, and a second prepare within REMOTE_CHECK_TTL
+        // keeps the pin without re-probing.
+        repo.commit_bundle(
+            "[bundle]\nname = \"acme\"\nminimum_effigy_version = \"0.15.0\"\n",
+            "[tasks.hello]\nrun = \"echo from-v3.0.0\"\n",
+            "v3.0.0",
+            Some("v3.0.0"),
+        );
+        repo.commit_bundle(
+            "[bundle]\nname = \"acme\"\nminimum_effigy_version = \"0.16.0\"\n",
+            "[tasks.hello]\nrun = \"echo main-latest\"\n",
+            "main tip 2",
+            None,
+        );
+
+        let cached_root = tmp.path().join("cached");
+        let (manifest, prep) = git_consumer_fixture(&cached_root, &repo.bare, Some("main"));
+        let first = prepare_with_version(&manifest, &prep, Mode::Refresh, "0.15.0")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            first
+                .sources
+                .get("bundle")
+                .and_then(|s| s.fallback.as_ref())
+                .map(|fb| fb.selected_tag.as_str()),
+            Some("v3.0.0")
+        );
+        assert!(cached_root
+            .join("consumer/.effigy")
+            .join(UPDATE_STATE_FILE)
+            .is_file());
+
+        // Second prepare within REMOTE_CHECK_TTL returns None (kept from cache).
+        assert!(
+            prepare_with_version(&manifest, &prep, Mode::Refresh, "0.15.0")
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn fallback_refresh_reprobes_tags_after_ttl_even_when_branch_tip_is_unchanged() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = GitBundleRepo::new(tmp.path());
+        let v1_sha = repo.commit_bundle(
+            "[bundle]\nname = \"acme\"\nminimum_effigy_version = \"0.14.0\"\n",
+            "[tasks.hello]\nrun = \"echo from-v1.0.0\"\n",
+            "v1.0.0",
+            Some("v1.0.0"),
+        );
+        repo.commit_bundle(
+            "[bundle]\nname = \"acme\"\nminimum_effigy_version = \"0.16.0\"\n",
+            "[tasks.hello]\nrun = \"echo from-main\"\n",
+            "main tip",
+            None,
+        );
+
+        let (manifest, prep) = git_consumer_fixture(tmp.path(), &repo.bare, Some("main"));
+        prepare_with_version(&manifest, &prep, Mode::Refresh, "0.15.0")
+            .unwrap()
+            .unwrap();
+        assert!(selected(&manifest).contains("echo from-v1.0.0"));
+
+        // Publish a newer compatible tag v1.1.0 without moving `main`.
+        repo.publish_side_tag(
+            &v1_sha,
+            "[bundle]\nname = \"acme\"\nminimum_effigy_version = \"0.15.0\"\n",
+            "[tasks.hello]\nrun = \"echo from-v1.1.0\"\n",
+            "v1.1.0",
+        );
+
+        // Expire REMOTE_CHECK_TTL in sources.update.json.
+        let update_state_path = tmp.path().join("consumer/.effigy").join(UPDATE_STATE_FILE);
+        std::fs::write(
+            &update_state_path,
+            serde_json::to_vec(&SourceUpdateState {
+                version: 1,
+                checks: BTreeMap::from([("bundle".to_owned(), 1)]),
+            })
+            .unwrap(),
+        )
+        .unwrap();
+
+        let refreshed = prepare_with_version(&manifest, &prep, Mode::Refresh, "0.15.0")
+            .unwrap()
+            .unwrap();
+        assert!(refreshed.changed);
+        assert!(selected(&manifest).contains("echo from-v1.1.0"));
+        assert_eq!(
+            crate::inspect_bundle_source(&manifest)
+                .unwrap()
+                .unwrap()
+                .fallback
+                .as_ref()
+                .map(|fb| fb.selected_tag.as_str()),
+            Some("v1.1.0")
+        );
+    }
+
+    #[test]
+    fn omitted_ref_and_explicit_head_resolve_and_monitor_non_main_default_branch() {
+        const HEAD_SHA: &str = "c331abd41b70aa6cc467cbc2d57e62e671a175a0";
+        assert_eq!(
+            parse_ls_remote(format!("{HEAD_SHA}\tHEAD\n").as_bytes(), "HEAD").as_deref(),
+            Some(HEAD_SHA)
+        );
+        assert_eq!(
+            parse_ls_remote(format!("{HEAD_SHA}HEAD\n").as_bytes(), "HEAD").as_deref(),
+            Some(HEAD_SHA)
+        );
+        assert_eq!(
+            parse_symref_head_branch(
+                format!("ref: refs/heads/trunk\tHEAD\n{HEAD_SHA}\tHEAD\n").as_bytes()
+            )
+            .as_deref(),
+            Some("trunk")
+        );
+
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = GitBundleRepo::with_branch(tmp.path(), "trunk");
+        repo.commit_bundle(
+            "[bundle]\nname = \"acme\"\nminimum_effigy_version = \"0.14.0\"\n",
+            "[tasks.hello]\nrun = \"echo from-v1.0.0\"\n",
+            "v1.0.0",
+            Some("v1.0.0"),
+        );
+        repo.commit_bundle(
+            "[bundle]\nname = \"acme\"\nminimum_effigy_version = \"0.16.0\"\n",
+            "[tasks.hello]\nrun = \"echo from-trunk-v1\"\n",
+            "trunk incompatible",
+            None,
+        );
+
+        // 1. Omitted `ref` resolves default branch `trunk` and falls back to `v1.0.0`.
+        let omitted_root = tmp.path().join("omitted");
+        let (manifest, prep) = git_consumer_fixture(&omitted_root, &repo.bare, None);
+        let report = prepare_with_version(&manifest, &prep, Mode::Refresh, "0.15.0")
+            .unwrap()
+            .unwrap();
+        assert!(selected(&manifest).contains("echo from-v1.0.0"));
+        let fb = report
+            .sources
+            .get("bundle")
+            .and_then(|s| s.fallback.as_ref())
+            .expect("fallback recorded");
+        assert_eq!(fb.selected_tag, "v1.0.0");
+        assert_eq!(fb.skipped_ref, "trunk");
+
+        // 2. Explicit `ref = "HEAD"` resolves `trunk` and detects subsequent HEAD movement.
+        let head_root = tmp.path().join("explicit-head");
+        let (head_manifest, head_prep) = git_consumer_fixture(&head_root, &repo.bare, Some("HEAD"));
+        prepare_with_version(&head_manifest, &head_prep, Mode::Refresh, "0.15.0")
+            .unwrap()
+            .unwrap();
+        assert!(selected(&head_manifest).contains("echo from-v1.0.0"));
+
+        // Move `trunk` to a compatible commit and expire TTL to prove HEAD monitoring detects it.
+        repo.commit_bundle(
+            "[bundle]\nname = \"acme\"\nminimum_effigy_version = \"0.15.0\"\n",
+            "[tasks.hello]\nrun = \"echo from-trunk-v2\"\n",
+            "trunk compatible",
+            None,
+        );
+        std::fs::write(
+            head_root.join("consumer/.effigy").join(UPDATE_STATE_FILE),
+            serde_json::to_vec(&SourceUpdateState {
+                version: 1,
+                checks: BTreeMap::from([("bundle".to_owned(), 1)]),
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        let moved = prepare_with_version(&head_manifest, &head_prep, Mode::Refresh, "0.15.0")
+            .unwrap()
+            .unwrap();
+        assert!(moved.changed);
+        assert!(selected(&head_manifest).contains("echo from-trunk-v2"));
+        assert!(crate::inspect_bundle_source(&head_manifest)
+            .unwrap()
+            .unwrap()
+            .fallback
+            .is_none());
+    }
+
+    #[test]
+    fn consumer_minimum_effigy_version_refuses_local_build_before_acquisition() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project = tmp.path().join("consumer");
+        std::fs::create_dir_all(&project).unwrap();
+        let manifest = project.join("effigy.toml");
+        std::fs::write(
+            &manifest,
+            r#"[manifest]
+minimum_effigy_version = "999.0.0"
+
+[bundle]
+base = { type = "git", url = "https://invalid.invalid/should-not-fetch", ref = "main" }
+"#,
+        )
+        .unwrap();
+        let home = tmp.path().join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let prep = SourcePreparation {
+            home,
+            executable: sentinel_executable(),
+            cancel: CancelToken::default(),
+            budget: Duration::from_secs(30),
+            next: Invocation::validated(vec!["bundle".into(), "sync".into()], |args| {
+                args == ["bundle", "sync"]
+            })
+            .unwrap(),
+            progress: SourceProgress::silent(),
+        };
+
+        let err = prepare_with_version(&manifest, &prep, Mode::Sync, "v0.15.0+local.abc1234")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("requires Effigy >= 999.0.0") && err.contains("v0.15.0+local.abc1234"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn above_maximum_fallback_notice_and_no_tag_error_do_not_recommend_upgrading() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = GitBundleRepo::new(tmp.path());
+        repo.commit_bundle(
+            "[bundle]\nname = \"acme\"\nminimum_effigy_version = \"0.14.0\"\n",
+            "[tasks.hello]\nrun = \"echo from-v1.0.0\"\n",
+            "v1.0.0",
+            Some("v1.0.0"),
+        );
+        repo.commit_bundle(
+            "[bundle]\nname = \"acme\"\nmaximum_effigy_version = \"0.14.9\"\n",
+            "[tasks.hello]\nrun = \"echo from-main\"\n",
+            "main capped",
+            None,
+        );
+
+        let fallback_root = tmp.path().join("above-max-fallback");
+        let (manifest, prep) = git_consumer_fixture(&fallback_root, &repo.bare, Some("main"));
+        let report = prepare_with_version(&manifest, &prep, Mode::Refresh, "0.15.0")
+            .unwrap()
+            .unwrap();
+        assert!(selected(&manifest).contains("echo from-v1.0.0"));
+        assert!(
+            report.notes.iter().any(|note| {
+                note.contains("v1.0.0")
+                    && note.contains("only supports Effigy <= 0.14.9")
+                    && !note.contains("upgrade Effigy")
+            }),
+            "expected above-maximum notice without upgrade advice: {:?}",
+            report.notes
+        );
+
+        // When no compatible tag exists and running version exceeds maximum_effigy_version:
+        let no_tag_repo = GitBundleRepo::new(&tmp.path().join("no-tag-repo"));
+        no_tag_repo.commit_bundle(
+            "[bundle]\nname = \"acme\"\nmaximum_effigy_version = \"0.14.9\"\n",
+            "[tasks.hello]\nrun = \"echo capped\"\n",
+            "main capped only",
+            None,
+        );
+        let no_tag_root = tmp.path().join("above-max-no-tag");
+        let (manifest, prep) = git_consumer_fixture(&no_tag_root, &no_tag_repo.bare, Some("main"));
+        let err = prepare_with_version(&manifest, &prep, Mode::Refresh, "0.15.0")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("<= 0.14.9") && err.contains("0.15.0") && !err.contains("upgrade Effigy"),
+            "{err}"
+        );
     }
 }

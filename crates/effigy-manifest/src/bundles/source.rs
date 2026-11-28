@@ -28,6 +28,43 @@ pub use progress::{SourceProgress, SourceProgressEvent};
 const LOCK_FILE: &str = "sources.lock.json";
 const LOCK_MAX: u64 = 1024 * 1024;
 
+/// Metadata recorded when a floating Git bundle branch tip required an
+/// incompatible Effigy version and Effigy automatically selected the newest
+/// compatible tag instead.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SourceCompatibilityFallback {
+    pub selected_tag: String,
+    pub skipped_ref: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skipped_revision: Option<String>,
+    pub required_effigy: String,
+    pub running_effigy: String,
+    #[serde(default)]
+    pub kind: super::compatibility::CompatibilityMismatchKind,
+}
+
+impl SourceCompatibilityFallback {
+    pub fn notice(&self, name: &str) -> String {
+        match self.kind {
+            super::compatibility::CompatibilityMismatchKind::BelowMinimum => format!(
+                "{name} selected compatible tag `{}` (skipped `{}` which requires Effigy {}, running {}); upgrade Effigy to unlock the latest bundle release",
+                self.selected_tag,
+                self.skipped_ref,
+                self.required_effigy,
+                self.running_effigy,
+            ),
+            super::compatibility::CompatibilityMismatchKind::AboveMaximum => format!(
+                "{name} selected compatible tag `{}` (skipped `{}` which only supports Effigy {}, running {}); wait for a bundle release supporting this Effigy version or use a compatible Effigy release",
+                self.selected_tag,
+                self.skipped_ref,
+                self.required_effigy,
+                self.running_effigy,
+            ),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct ResolvedBundleSource {
     pub source_type: BundleSourceType,
@@ -35,6 +72,7 @@ pub(super) struct ResolvedBundleSource {
     pub source_path: PathBuf,
     pub version_hint: Option<String>,
     pub stale: bool,
+    pub fallback: Option<SourceCompatibilityFallback>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -63,6 +101,8 @@ pub struct BundleSourceInspectReport {
     pub local_path: PathBuf,
     pub version_hint: Option<String>,
     pub stale: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<SourceCompatibilityFallback>,
 }
 
 #[derive(Debug)]
@@ -73,6 +113,7 @@ pub(super) enum BundleSelection {
     Git {
         url: String,
         reference: Option<String>,
+        rev: Option<String>,
     },
     Oci {
         url: String,
@@ -92,14 +133,29 @@ impl BundleSelection {
                     },
                 })
             }
-            ManifestBundleBase::Git { url, r#ref } if !url.trim().is_empty() => Ok(Self::Git {
-                url: url.trim().into(),
-                reference: r#ref
+            ManifestBundleBase::Git { url, r#ref, rev } if !url.trim().is_empty() => {
+                let reference = r#ref
                     .as_deref()
                     .map(str::trim)
                     .filter(|value| !value.is_empty())
-                    .map(str::to_owned),
-            }),
+                    .map(str::to_owned);
+                let rev = rev
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_owned);
+                if reference.is_some() && rev.is_some() {
+                    return Err(error(
+                        manifest,
+                        "git bundle source cannot declare both `ref` and `rev`",
+                    ));
+                }
+                Ok(Self::Git {
+                    url: url.trim().into(),
+                    reference,
+                    rev,
+                })
+            }
             ManifestBundleBase::Oci { url } if !url.trim().is_empty() => Ok(Self::Oci {
                 url: url.trim().into(),
             }),
@@ -114,9 +170,14 @@ impl BundleSelection {
             Self::Path { path } => ManifestBundleBase::Path {
                 dir: path.to_string_lossy().into(),
             },
-            Self::Git { url, reference } => ManifestBundleBase::Git {
+            Self::Git {
+                url,
+                reference,
+                rev,
+            } => ManifestBundleBase::Git {
                 url: url.clone(),
                 r#ref: reference.clone(),
+                rev: rev.clone(),
             },
             Self::Oci { url } => ManifestBundleBase::Oci { url: url.clone() },
         }
@@ -151,6 +212,8 @@ struct SourcePin {
     version: String,
     #[serde(default)]
     revision: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    fallback: Option<SourceCompatibilityFallback>,
 }
 fn state_location(
     manifest: &Path,
@@ -301,6 +364,7 @@ fn resolve_source(
             local_path: root,
             version_hint: pin.revision.clone().or_else(|| Some(pin.version.clone())),
             stale,
+            fallback: pin.fallback.clone(),
         });
     }
     // Read-only migration view. Prepare imports these exact bytes before any
@@ -314,6 +378,7 @@ fn resolve_source(
             version_hint: legacy_version(&root, selection),
             local_path: root,
             stale: false,
+            fallback: None,
         });
     }
     Err(error(manifest, format!("source `{name}` is not prepared; run `effigy bundle sync` (or start `effigy dev` / `effigy bootstrap`)")))
@@ -325,6 +390,7 @@ fn inspect(resolved: ResolvedBundleSource) -> BundleSourceInspectReport {
         local_path: resolved.local_path,
         version_hint: resolved.version_hint,
         stale: resolved.stale,
+        fallback: resolved.fallback,
     }
 }
 pub fn inspect_bundle_source(
@@ -422,11 +488,15 @@ fn legacy_root(manifest: &Path, selection: &BundleSelection) -> Option<PathBuf> 
     let cache = parent(manifest).join(".effigy/cache/bundles");
     Some(match selection {
         BundleSelection::Path { path } => path.clone(),
-        BundleSelection::Git { url, reference } => cache
+        BundleSelection::Git {
+            url,
+            reference,
+            rev,
+        } => cache
             .join("git")
             .join(sha256_hex(canonical_git_cache_identity(url).as_bytes()))
             .join(sanitize_cache_segment(
-                reference.as_deref().unwrap_or("main"),
+                rev.as_deref().or(reference.as_deref()).unwrap_or("main"),
             )),
         BundleSelection::Oci { url } => {
             let locator = oci_bundle_cache_locator(url);
@@ -531,6 +601,7 @@ base = { type = "git", url = "https://invalid.invalid/bundle" }
         let source = BundleSelection::Git {
             url: "https://invalid.invalid/bundle".into(),
             reference: None,
+            rev: None,
         };
         assert!(resolve_materialized_bundle_source(&manifest, &source)
             .unwrap_err()
@@ -599,6 +670,7 @@ base = { type = "git", url = "https://invalid.invalid/bundle" }
                         object: object.into(),
                         version: "v1".into(),
                         revision: None,
+                        fallback: None,
                     },
                 )]),
             })
@@ -613,10 +685,12 @@ base = { type = "git", url = "https://invalid.invalid/bundle" }
             declaration: ManifestBundleBase::Git {
                 url: "https://example.invalid/bundle".into(),
                 r#ref: None,
+                rev: None,
             },
             object: "cache/sources/one".into(),
             version: version.into(),
             revision: revision.map(str::to_owned),
+            fallback: None,
         }
     }
 
@@ -652,6 +726,7 @@ base = { type = "git", url = "https://invalid.invalid/bundle" }
                         object: object.into(),
                         version: "sha256:selected".into(),
                         revision: None,
+                        fallback: None,
                     },
                 )]),
             })

@@ -4,17 +4,20 @@ use std::path::{Path, PathBuf};
 use toml::Value;
 
 use crate::ingress::{record_value_sources, ManifestInput};
-use crate::manifest_section::{validate_minimum_effigy_version, ManifestSectionConfig};
+use crate::manifest_section::ManifestSectionConfig;
 use crate::ManifestError;
 use crate::TASK_MANIFEST_FILE;
 
+mod compatibility;
 mod source;
 
+pub use compatibility::CompatibilityMismatchKind;
 pub use source::{
     bundle_update_notes, catalog_source_roots, hold_selected_sources, inspect_bundle_source,
     prepare_bundle_sources, prepare_missing_bundle_sources, resolve_catalog_source,
     sync_bundle_source, BundleSourceInspectReport, BundleSyncReport, CatalogSourceRoots,
-    SourceHold, SourcePreparation, SourceProgress, SourceProgressEvent, SourceSettlement,
+    SourceCompatibilityFallback, SourceHold, SourcePreparation, SourceProgress,
+    SourceProgressEvent, SourceSettlement,
 };
 use source::{resolve_bundle_selection, resolve_materialized_bundle_source, ResolvedBundleSource};
 
@@ -100,6 +103,15 @@ pub(crate) fn apply_bundle_defaults(
     input: &mut ManifestInput,
     materialized: Option<&Path>,
 ) -> Result<BundleDefaults, ManifestError> {
+    apply_bundle_defaults_for_version(manifest_path, input, materialized, None)
+}
+
+pub(crate) fn apply_bundle_defaults_for_version(
+    manifest_path: &Path,
+    input: &mut ManifestInput,
+    materialized: Option<&Path>,
+    active_version: Option<&str>,
+) -> Result<BundleDefaults, ManifestError> {
     let Some(bundle): Option<crate::config_sections::ManifestBundleConfig> = input
         .value
         .as_table()
@@ -125,14 +137,19 @@ pub(crate) fn apply_bundle_defaults(
             source_path: selection.label(),
             version_hint: None,
             stale: false,
+            fallback: None,
         },
         None => resolve_materialized_bundle_source(manifest_path, &selection)?,
     };
+    let effective_version = active_version
+        .map(str::to_owned)
+        .unwrap_or_else(effigy_core::build_info::active_version);
     let resolved_defaults = resolve_local_bundle_defaults(
         manifest_path,
         &resolved_source.local_path,
         &normalized_inputs,
         &resolved_source,
+        &effective_version,
     )?;
     let LocalBundleDefaults {
         mut defaults,
@@ -140,7 +157,8 @@ pub(crate) fn apply_bundle_defaults(
         name: bundle_name,
         inputs: resolved_inputs,
     } = resolved_defaults;
-    let bundle_extend_paths = take_bundle_extend_paths(manifest_path, &mut defaults)?;
+    let bundle_extend_paths =
+        take_bundle_extend_paths(manifest_path, &mut defaults, &effective_version)?;
     let current = &mut input.value;
     let defaults = ManifestInput::new(defaults, Some(&source_path));
     let existing_extend_paths =
@@ -182,6 +200,10 @@ pub(super) struct LocalBundleMetadata {
     _description: String,
     #[serde(default = "default_local_bundle_defaults_file")]
     defaults: String,
+    #[serde(default)]
+    minimum_effigy_version: Option<String>,
+    #[serde(default)]
+    maximum_effigy_version: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -219,6 +241,7 @@ fn resolve_local_bundle_defaults(
     bundle_dir: &Path,
     inputs: &BTreeMap<String, Value>,
     source: &ResolvedBundleSource,
+    active_version: &str,
 ) -> Result<LocalBundleDefaults, ManifestError> {
     if !bundle_dir.is_dir() {
         return Err(ManifestError::Compose {
@@ -227,6 +250,25 @@ fn resolve_local_bundle_defaults(
                 "`[bundle].base = {{ type = \"path\", dir = ... }}` must point at a directory, got {}",
                 bundle_dir.display()
             ),
+        });
+    }
+
+    if let Err(err) =
+        compatibility::check_bundle_dir_compatibility(bundle_dir, manifest_path, active_version)
+    {
+        return Err(match err {
+            compatibility::CompatibilityCheckError::Invalid(manifest_error) => manifest_error,
+            compatibility::CompatibilityCheckError::Incompatible(mismatch) => {
+                ManifestError::Compose {
+                    path: manifest_path.to_path_buf(),
+                    detail: format!(
+                        "bundle requires Effigy {}, but this binary is {}; {}",
+                        mismatch.required,
+                        mismatch.running,
+                        mismatch.guidance_for_load()
+                    ),
+                }
+            }
         });
     }
 
@@ -332,6 +374,12 @@ fn validate_local_bundle_descriptor(
             detail: format!("local bundle `{name}` `bundle.defaults` must not be empty"),
         });
     }
+    compatibility::BundleCompatibility::parse_bounds(
+        manifest_path,
+        descriptor.bundle.minimum_effigy_version.as_deref(),
+        descriptor.bundle.maximum_effigy_version.as_deref(),
+        "bundle",
+    )?;
 
     let mut seen = std::collections::BTreeSet::new();
     for input in &descriptor.inputs {
@@ -1106,6 +1154,7 @@ fn merge_missing_table(current: &mut Value, defaults: &Value, depth: usize, step
 fn take_bundle_extend_paths(
     manifest_path: &Path,
     defaults: &mut Value,
+    active_version: &str,
 ) -> Result<Vec<String>, ManifestError> {
     let Some(defaults_table) = defaults.as_table_mut() else {
         return Ok(Vec::new());
@@ -1118,7 +1167,28 @@ fn take_bundle_extend_paths(
             path: manifest_path.to_path_buf(),
             detail: format!("invalid bundle `[manifest]` section: {error}"),
         })?;
-    validate_minimum_effigy_version(manifest_path, config.minimum_effigy_version.as_deref())?;
+    let compat = compatibility::BundleCompatibility::parse_bounds(
+        manifest_path,
+        config.minimum_effigy_version.as_deref(),
+        config.maximum_effigy_version.as_deref(),
+        "manifest",
+    )?;
+    if let Err(err) = compat.check_active_version(manifest_path, active_version) {
+        return Err(match err {
+            compatibility::CompatibilityCheckError::Invalid(manifest_error) => manifest_error,
+            compatibility::CompatibilityCheckError::Incompatible(mismatch) => {
+                ManifestError::Compose {
+                    path: manifest_path.to_path_buf(),
+                    detail: format!(
+                        "bundle requires Effigy {}, but this binary is {}; {}",
+                        mismatch.required,
+                        mismatch.running,
+                        mismatch.guidance_for_load()
+                    ),
+                }
+            }
+        });
+    }
     Ok(config.extend)
 }
 

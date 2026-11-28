@@ -3,9 +3,19 @@ use std::collections::BTreeMap;
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
 pub enum ManifestBundleBase {
-    Path { dir: String },
-    Git { url: String, r#ref: Option<String> },
-    Oci { url: String },
+    Path {
+        dir: String,
+    },
+    Git {
+        url: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        r#ref: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        rev: Option<String>,
+    },
+    Oci {
+        url: String,
+    },
 }
 
 /// How the Prepare paths treat a pin that is behind its declaration or its
@@ -98,6 +108,8 @@ enum ManifestBundleBaseTable {
         url: String,
         #[serde(default)]
         r#ref: Option<String>,
+        #[serde(default)]
+        rev: Option<String>,
     },
     Oci {
         url: String,
@@ -126,7 +138,7 @@ impl From<ManifestBundleBaseRepr> for ManifestBundleBase {
             }
             ManifestBundleBaseRepr::Typed(table) => match table {
                 ManifestBundleBaseTable::Path { dir } => Self::Path { dir },
-                ManifestBundleBaseTable::Git { url, r#ref } => Self::Git { url, r#ref },
+                ManifestBundleBaseTable::Git { url, r#ref, rev } => Self::Git { url, r#ref, rev },
                 ManifestBundleBaseTable::Oci { url } => Self::Oci { url },
             },
         }
