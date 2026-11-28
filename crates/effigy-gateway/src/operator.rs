@@ -11,6 +11,7 @@ use effigy_kernel::custody::{EnvValue, Lifetime, ProcessSpec, Terminal};
 use effigy_kernel::gate::OwnerState;
 use effigy_kernel::id::*;
 use effigy_kernel::observe::*;
+use effigy_kernel::outcome::CleanupOutcome;
 use effigy_kernel::outcome::{Invocation, WorkloadOutcome};
 use effigy_kernel::probe::{HttpReadMethod, ObservationTarget, ProbeIo, StatusSet};
 use effigy_kernel::root::StateRoot;
@@ -283,9 +284,15 @@ fn status_once(config: &GatewayConfig, op: &OperationContext) -> io::Result<Opti
             result.status = "stopped";
             result.reason = closed_reason(&cx, &root, id, &workload, &effects);
         }
-        RunStatus::Closed { .. } | RunStatus::Interrupted { .. } => {
-            result.reason =
-                Some("gateway cleanup is incomplete; run `effigy gateway up` to reconcile".into())
+        RunStatus::Closed { .. } => {
+            result.reason = Some(
+                "gateway cleanup is incomplete for a closed run; inspect its recorded residue and verify affected processes are gone before using `effigy run acknowledge <run>`".into(),
+            )
+        }
+        RunStatus::Interrupted { .. } => {
+            result.reason = Some(
+                "gateway cleanup is incomplete because the prior run was interrupted; run `effigy gateway up` or `effigy gateway down` to reconcile it".into(),
+            )
         }
         RunStatus::Live(run::Phase::Admitted | run::Phase::Starting) => {
             result.status = "starting";
@@ -533,7 +540,7 @@ fn up_with_executable_observed(
     // This shared lifecycle writes no event: the explicit operator command that
     // asked for it records the action, so a `setup` step or a managed task start
     // never appears here as a `gateway up command` (effigy#450 review).
-    let before = status(config)?;
+    let mut before = status(config)?;
     if before.ready {
         note_reused_gateway_build(&before);
         return Ok(before);
@@ -549,8 +556,29 @@ fn up_with_executable_observed(
     // stopping or unobservable is in use: `up` uses it as it is, and only
     // `effigy gateway down` followed by `effigy gateway up` replaces one.
     if before.status != "stopped" {
-        note_reused_gateway_build(&before);
-        return Ok(before);
+        match recover_interrupted_gateway(config, before.run)? {
+            GatewayRecovery::Settled(settled) => before = settled,
+            GatewayRecovery::Live(_) if before.status == "unknown" => {
+                return Err(error(
+                    "the gateway owner is live or held; refusing to bypass kernel custody or start a replacement",
+                ));
+            }
+            GatewayRecovery::Live(_) => {
+                note_reused_gateway_build(&before);
+                return Ok(before);
+            }
+            GatewayRecovery::ClosedIncomplete => {
+                return Err(error(before.reason.unwrap_or_else(|| {
+                    "gateway cleanup is incomplete for a closed run; inspect and acknowledge its recorded residue after verifying affected processes are gone".into()
+                })));
+            }
+        }
+        if before.status != "stopped" {
+            return Err(error(format!(
+                "gateway recovery did not produce a stopped gateway (status `{}`); refusing to start a replacement",
+                before.status
+            )));
+        }
     }
     let home = home(config)?;
     crate::setup::read_receipt(home)?;
@@ -761,6 +789,15 @@ pub fn down_observed(config: &GatewayConfig, report: &dyn Fn(StopPhase)) -> io::
     if current.status == "stopped" {
         return Ok(current);
     }
+    let live_run = match recover_interrupted_gateway(config, current.run)? {
+        GatewayRecovery::Settled(settled) => return Ok(settled),
+        GatewayRecovery::ClosedIncomplete => {
+            return Err(error(current.reason.unwrap_or_else(|| {
+                "gateway cleanup is incomplete for a closed run; inspect and acknowledge its recorded residue after verifying affected processes are gone".into()
+            })));
+        }
+        GatewayRecovery::Live(id) => id,
+    };
     let op = context(Duration::from_secs(15), EffectClass::Mutate);
     let cx = op.effects().map_err(error)?;
     let root = StateRoot::runtime_machine_effects(&cx, home(config)?).map_err(error)?;
@@ -769,7 +806,9 @@ pub fn down_observed(config: &GatewayConfig, report: &dyn Fn(StopPhase)) -> io::
         observed(Store::read(&observe, &root))?.ok_or_else(|| error("missing gateway store"))?;
     let (id, generation) =
         observed(reader.latest_run(&owner()))?.ok_or_else(|| error("missing gateway run"))?;
-    if current.run != Some(id) {
+    // Unknown status has no run id; recovery positively observed the live run
+    // above, so compare that generation with the fresh latest run before stop.
+    if live_run != id || current.run.is_some_and(|observed| observed != id) {
         return Err(error("gateway generation changed; retry down"));
     }
     report(StopPhase::Requested);
@@ -814,6 +853,100 @@ pub fn down_observed(config: &GatewayConfig, report: &dyn Fn(StopPhase)) -> io::
         }
         std::thread::sleep(Duration::from_millis(25));
     }
+}
+
+enum GatewayRecovery {
+    Settled(Status),
+    Live(RunId),
+    ClosedIncomplete,
+}
+
+/// Reconcile an interrupted run, while returning live and closed-with-residue
+/// states to the caller so `up` and `down` can apply their distinct policies.
+fn recover_interrupted_gateway(
+    config: &GatewayConfig,
+    expected_run: Option<RunId>,
+) -> io::Result<GatewayRecovery> {
+    let op = context(Duration::from_secs(15), EffectClass::Mutate);
+    let cx = op.effects().map_err(error)?;
+    let root = StateRoot::runtime_machine_effects(&cx, home(config)?).map_err(error)?;
+    let observe = op.observe().map_err(error)?;
+    let reader = observed(Store::read(&observe, &root))?
+        .ok_or_else(|| error("missing gateway store during interrupted-run recovery"))?;
+    let (id, _) = observed(reader.latest_run(&owner()))?
+        .ok_or_else(|| error("missing gateway run during interrupted-run recovery"))?;
+    if expected_run.is_some_and(|expected| expected != id) {
+        return Err(error(
+            "gateway generation changed during interrupted-run recovery; retry",
+        ));
+    }
+    match observed(run::status(&observe, &root, &reader, id, next()))? {
+        Some(RunStatus::Interrupted { .. }) => {
+            let settled = settle_interrupted_run(config, &op, &cx, &root, id)?;
+            Ok(GatewayRecovery::Settled(settled))
+        }
+        Some(RunStatus::Live(_)) => Ok(GatewayRecovery::Live(id)),
+        Some(RunStatus::Closed {
+            complete: false, ..
+        }) => Ok(GatewayRecovery::ClosedIncomplete),
+        Some(RunStatus::Closed { complete: true, .. }) => {
+            let settled = status(config)?;
+            if settled.status != "stopped" || settled.run != Some(id) {
+                return Err(error(format!(
+                    "closed gateway run {id} is not verified stopped (status `{}`); refusing to replace or report it settled",
+                    settled.status
+                )));
+            }
+            Ok(GatewayRecovery::Settled(settled))
+        }
+        None => Err(error("missing gateway run during interrupted-run recovery")),
+    }
+}
+
+fn settle_interrupted_run(
+    config: &GatewayConfig,
+    op: &OperationContext,
+    cx: &effigy_kernel::ctx::EffectContext,
+    root: &StateRoot,
+    id: RunId,
+) -> io::Result<Status> {
+    let cleanup = op.cleanup(Duration::from_secs(10)).map_err(error)?;
+    let mut adapter = Adapter;
+    let outcome = run::settle_interrupted(cx, root, &owner(), id, next(), &cleanup, &mut adapter)
+        .map_err(|cause| match cause {
+            run::RunError::Gate(_) => error(
+                "the interrupted gateway run still holds its owner gate; refusing to bypass kernel custody or start a second gateway",
+            ),
+            cause => error(format!("could not settle the interrupted gateway run: {cause}")),
+        })?;
+    if outcome.cleanup() == CleanupOutcome::Incomplete || outcome.result().is_err() {
+        let unresolved = outcome.unresolved();
+        let detail = outcome
+            .result()
+            .as_ref()
+            .err()
+            .map(|cause| cause.message.as_str())
+            .into_iter()
+            .chain(unresolved.iter().map(String::as_str))
+            .filter(|detail| !detail.is_empty())
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(error(format!(
+            "interrupted gateway cleanup is incomplete; refusing to replace it{}",
+            if detail.is_empty() {
+                String::new()
+            } else {
+                format!(": {detail}")
+            }
+        )));
+    }
+    let settled = status(config)?;
+    if settled.status != "stopped" || settled.run != Some(id) {
+        return Err(error(format!(
+            "interrupted gateway run {id} settled without a verified stopped status; refusing to replace it"
+        )));
+    }
+    Ok(settled)
 }
 
 pub(crate) fn http_test(config: &GatewayConfig, budget: Duration) -> io::Result<()> {
@@ -892,6 +1025,37 @@ fn http_probe(config: &GatewayConfig, cx: &ObserveContext) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct EnvironmentVariableGuard {
+        key: &'static str,
+        previous: Option<OsString>,
+    }
+
+    struct EnsureGatewayStopped<'a>(&'a GatewayConfig);
+
+    impl Drop for EnsureGatewayStopped<'_> {
+        fn drop(&mut self) {
+            let _ = down(self.0);
+        }
+    }
+
+    impl EnvironmentVariableGuard {
+        fn set(key: &'static str, value: &std::ffi::OsStr) -> Self {
+            let previous = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvironmentVariableGuard {
+        fn drop(&mut self) {
+            if let Some(value) = &self.previous {
+                std::env::set_var(self.key, value);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
 
     /// A private gateway's state path is not an operator home, so it must never
     /// acquire the machine launch unit. The operator layout still derives the
@@ -1074,6 +1238,409 @@ mod tests {
             status_once(&config, &op).unwrap().unwrap().status,
             "stopped"
         );
+    }
+
+    fn interrupted_gateway_fixture() -> (tempfile::TempDir, GatewayConfig, RunId) {
+        interrupted_gateway_fixture_with_residue(false)
+    }
+
+    fn interrupted_gateway_fixture_with_residue(
+        incomplete_effect: bool,
+    ) -> (tempfile::TempDir, GatewayConfig, RunId) {
+        let home = tempfile::tempdir().unwrap();
+        let config = GatewayConfig::standard(home.path().join(".effigy/gateway"));
+        let op = context(Duration::from_secs(10), EffectClass::Mutate);
+        let cx = op.effects().unwrap();
+        let cleanup = op.cleanup(Duration::from_secs(5)).unwrap();
+        let root = StateRoot::runtime_machine_effects(&cx, home.path()).unwrap();
+        let id = run_id().unwrap();
+        let mut run = run::Run::begin(
+            &cx,
+            &root,
+            &invocation(owner()),
+            run::BeginOpts {
+                id,
+                wait: effigy_kernel::gate::Wait::FailFast,
+                acknowledge: vec![],
+                next: next(),
+                custody: None,
+            },
+            &cleanup,
+            &mut Adapter,
+        )
+        .unwrap();
+        if incomplete_effect {
+            run.intend(run::EffectSpec {
+                target: run.fence().clone(),
+                kind: "fixture:unknown-residue".into(),
+                payload: serde_json::Value::Null,
+                settlement: run::Settlement::Release(serde_json::Value::Null),
+                required: false,
+            })
+            .unwrap();
+        }
+        // A reboot leaves the gateway's static process identity beside the
+        // kernel run journal. Startup owns its validation and stale cleanup.
+        std::fs::create_dir_all(config.pid_file_path.parent().unwrap()).unwrap();
+        let mut exited = std::process::Command::new("sh")
+            .args(["-c", "exit 0"])
+            .spawn()
+            .unwrap();
+        let stale_pid = exited.id();
+        exited.wait().unwrap();
+        crate::identity::write_test_record(&config.pid_file_path, stale_pid);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let socket_path = run::control_socket_path(&root, &owner(), id);
+            std::fs::create_dir_all(socket_path.parent().unwrap()).unwrap();
+            std::fs::set_permissions(
+                socket_path.parent().unwrap(),
+                std::fs::Permissions::from_mode(0o700),
+            )
+            .unwrap();
+            // The fixture's absolute path exceeds sockaddr_un's limit; bind
+            // through a short alias into the private fixture directory.
+            let alias = tempfile::Builder::new()
+                .prefix("effigy-gateway-socket-")
+                .tempdir_in("/tmp")
+                .unwrap();
+            let alias_parent = alias.path().join("runtime");
+            std::os::unix::fs::symlink(socket_path.parent().unwrap(), &alias_parent).unwrap();
+            let alias_path = alias_parent.join(socket_path.file_name().unwrap());
+            let listener = std::os::unix::net::UnixListener::bind(alias_path).unwrap();
+            drop(listener);
+            std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+            drop(alias);
+            assert!(socket_path.exists());
+        }
+        drop(run);
+        (home, config, id)
+    }
+
+    fn closed_incomplete_gateway_fixture() -> (tempfile::TempDir, GatewayConfig) {
+        let home = tempfile::tempdir().unwrap();
+        let config = GatewayConfig::standard(home.path().join(".effigy/gateway"));
+        let op = context(Duration::from_secs(10), EffectClass::Mutate);
+        let cx = op.effects().unwrap();
+        let cleanup = op.cleanup(Duration::from_secs(5)).unwrap();
+        let root = StateRoot::runtime_machine_effects(&cx, home.path()).unwrap();
+        let mut run = run::Run::begin(
+            &cx,
+            &root,
+            &invocation(owner()),
+            run::BeginOpts {
+                id: run_id().unwrap(),
+                wait: effigy_kernel::gate::Wait::FailFast,
+                acknowledge: vec![],
+                next: next(),
+                custody: None,
+            },
+            &cleanup,
+            &mut Adapter,
+        )
+        .unwrap();
+        run.intend(run::EffectSpec {
+            target: run.fence().clone(),
+            kind: "fixture:closed-residue".into(),
+            payload: serde_json::Value::Null,
+            settlement: run::Settlement::Release(serde_json::Value::Null),
+            required: false,
+        })
+        .unwrap();
+        run.finish(WorkloadOutcome::Succeeded).unwrap();
+        let outcome = run.settle(&cleanup, &mut Adapter).unwrap();
+        assert_eq!(outcome.cleanup(), CleanupOutcome::Incomplete);
+        assert!(outcome.result().is_err());
+        (home, config)
+    }
+
+    #[test]
+    fn interrupted_gateway_is_reported_then_settled_without_dead_supervisor_wait() {
+        let (_home, config, id) = interrupted_gateway_fixture();
+        let before = status(&config).unwrap();
+        assert_eq!(before.status, "unknown");
+        let reason = before.reason.as_deref().unwrap();
+        assert!(reason.contains("gateway cleanup is incomplete"), "{reason}");
+        assert!(reason.contains("effigy gateway up"), "{reason}");
+        assert!(reason.contains("effigy gateway down"), "{reason}");
+
+        let started = Instant::now();
+        let settled = match recover_interrupted_gateway(&config, Some(id)).unwrap() {
+            GatewayRecovery::Settled(status) => status,
+            _ => panic!("interrupted gateway did not settle"),
+        };
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert_eq!(settled.status, "stopped");
+        assert_eq!(settled.run, Some(id));
+        assert!(config.pid_file_path.exists());
+        assert!(crate::identity::identity_path(&config.pid_file_path).exists());
+    }
+
+    #[test]
+    fn down_settles_an_interrupted_gateway_immediately() {
+        if nix::unistd::Uid::effective().is_root() {
+            // The standard operator lifecycle intentionally refuses root.
+            eprintln!("skipping standard gateway lifecycle test: root is unsupported");
+            return;
+        }
+        let (_home, config, id) = interrupted_gateway_fixture();
+        let started = Instant::now();
+        let settled = down_observed(&config, &|_| {}).unwrap();
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert_eq!(settled.status, "stopped");
+        assert_eq!(settled.run, Some(id));
+    }
+
+    #[ignore = "requires EFFIGY_EXECUTABLE; run effigy test:focused -- -p effigy-gateway"]
+    #[test]
+    fn up_and_restart_recover_interrupted_runs_with_stale_identity_files() {
+        if nix::unistd::Uid::effective().is_root() {
+            // The standard operator lifecycle intentionally refuses root.
+            eprintln!("skipping standard gateway lifecycle test: root is unsupported");
+            return;
+        }
+        let executable = std::env::var_os("EFFIGY_EXECUTABLE")
+            .expect("focused selector provides the checkout Effigy executable");
+        let (home, mut config, interrupted_id) = interrupted_gateway_fixture();
+        let dns_port = available_dns_port();
+        config.dns.bind_addr = ([127, 0, 0, 1], dns_port).into();
+        config.proxy.bind_addr = ([127, 0, 0, 1], available_tcp_port()).into();
+        config.proxy.tls_bind_addr = Some(([127, 0, 0, 1], available_tcp_port()).into());
+        let op = context(Duration::from_secs(10), EffectClass::Mutate);
+        let cx = op.effects().unwrap();
+        let root = StateRoot::runtime_machine_effects(&cx, home.path()).unwrap();
+        let stale_control_socket = run::control_socket_path(&root, &owner(), interrupted_id);
+        assert!(stale_control_socket.exists());
+
+        let gateway_dir = home.path().join(".effigy/gateway");
+        std::fs::create_dir_all(&gateway_dir).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(
+                home.path().join(".effigy"),
+                std::fs::Permissions::from_mode(0o700),
+            )
+            .unwrap();
+            std::fs::set_permissions(&gateway_dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let receipt = serde_json::json!({
+            "version": 1,
+            "uid": nix::unistd::Uid::effective().as_raw(),
+            "suffixes": []
+        });
+        let receipt_path = gateway_dir.join("setup.json");
+        std::fs::write(&receipt_path, serde_json::to_vec(&receipt).unwrap()).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&receipt_path, std::fs::Permissions::from_mode(0o600))
+                .unwrap();
+        }
+
+        // The spawned checkout CLI is a fixture process too. Bind its private
+        // root to this disposable gateway directory so the child uses only
+        // the ephemeral loopback endpoints above.
+        let _private_root = EnvironmentVariableGuard::set(
+            crate::private_state::PRIVATE_STATE_ROOT_ENV,
+            gateway_dir.as_os_str(),
+        );
+        let interrupted = status(&config).unwrap();
+        assert_eq!(interrupted.status, "unknown");
+        assert!(interrupted
+            .reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("cleanup is incomplete")));
+        let started = up_with_executable(&config, Path::new(&executable));
+        if started.is_err() {
+            let _ = down(&config);
+        }
+        let ready = started.unwrap();
+        assert_eq!(ready.status, "running");
+        assert!(ready.ready);
+        assert_ne!(
+            ready.control_socket.as_deref(),
+            Some(stale_control_socket.as_path())
+        );
+        let _stop_on_drop = EnsureGatewayStopped(&config);
+        let control_socket = ready.control_socket.as_ref().unwrap();
+        std::fs::remove_file(control_socket).unwrap();
+        let unobserved = status(&config).unwrap();
+        assert_eq!(unobserved.status, "unknown");
+        let replacement = up_with_executable(&config, Path::new("/not/launched"))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            replacement.contains("owner is live or held"),
+            "{replacement}"
+        );
+        assert_eq!(status(&config).unwrap().status, "unknown");
+        let stopped = down(&config).unwrap();
+        assert_eq!(stopped.status, "stopped");
+        assert!(!config.pid_file_path.exists());
+        assert!(!crate::identity::identity_path(&config.pid_file_path).exists());
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let certs = gateway_dir.join("certs");
+            if certs.exists() {
+                std::fs::set_permissions(&certs, std::fs::Permissions::from_mode(0o700)).unwrap();
+            }
+        }
+
+        let restarted_id = run_id().unwrap();
+        let restart_op = context(Duration::from_secs(10), EffectClass::Mutate);
+        let restart_cx = restart_op.effects().unwrap();
+        let restart_cleanup = restart_op.cleanup(Duration::from_secs(5)).unwrap();
+        let restart_root = StateRoot::runtime_machine_effects(&restart_cx, home.path()).unwrap();
+        let interrupted = run::Run::begin(
+            &restart_cx,
+            &restart_root,
+            &invocation(owner()),
+            run::BeginOpts {
+                id: restarted_id,
+                wait: effigy_kernel::gate::Wait::FailFast,
+                acknowledge: vec![],
+                next: next(),
+                custody: None,
+            },
+            &restart_cleanup,
+            &mut Adapter,
+        )
+        .unwrap();
+        drop(interrupted);
+        let stopped = down_observed(&config, &|_| {}).unwrap();
+        assert_eq!(stopped.status, "stopped");
+        assert_eq!(stopped.run, Some(restarted_id));
+        let restarted = up_with_executable(&config, Path::new(&executable)).unwrap();
+        assert_eq!(restarted.status, "running");
+        assert!(restarted.ready);
+        assert_eq!(down(&config).unwrap().status, "stopped");
+    }
+
+    fn available_tcp_port() -> u16 {
+        std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port()
+    }
+
+    fn available_dns_port() -> u16 {
+        loop {
+            let tcp = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
+            let port = tcp.local_addr().unwrap().port();
+            if std::net::UdpSocket::bind((std::net::Ipv4Addr::LOCALHOST, port)).is_ok() {
+                return port;
+            }
+        }
+    }
+
+    #[test]
+    fn interrupted_gateway_settlement_refuses_a_held_owner_gate() {
+        let (home, config, id) = interrupted_gateway_fixture();
+        let op = context(Duration::from_secs(5), EffectClass::Mutate);
+        let cx = op.effects().unwrap();
+        let root = StateRoot::runtime_machine_effects(&cx, home.path()).unwrap();
+        let held = effigy_kernel::gate::Gate::acquire(
+            &cx,
+            &root,
+            &[owner()],
+            effigy_kernel::gate::Wait::FailFast,
+        )
+        .unwrap();
+
+        let error = settle_interrupted_run(&config, &op, &cx, &root, id)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("still holds its owner gate"), "{error}");
+        drop(held);
+    }
+
+    #[test]
+    fn an_incomplete_interrupted_settlement_fails_closed_and_points_to_acknowledgement() {
+        let (_home, config, id) = interrupted_gateway_fixture_with_residue(true);
+        let error = match recover_interrupted_gateway(&config, Some(id)) {
+            Err(error) => error.to_string(),
+            Ok(_) => panic!("settlement unexpectedly accepted unknown residue"),
+        };
+        assert!(
+            error.contains("interrupted gateway cleanup is incomplete"),
+            "{error}"
+        );
+    }
+
+    fn assert_closed_incomplete_gateway_status(config: &GatewayConfig) {
+        let closed = status(config).unwrap();
+        assert_eq!(closed.status, "unknown");
+        let reason = closed.reason.unwrap();
+        assert!(reason.contains("closed run"), "{reason}");
+        assert!(reason.contains("effigy run acknowledge <run>"), "{reason}");
+    }
+
+    #[test]
+    fn up_and_down_refuse_closed_incomplete_gateway_residue() {
+        let (_home, config) = closed_incomplete_gateway_fixture();
+        assert_closed_incomplete_gateway_status(&config);
+
+        let up_error = up_with_executable(&config, Path::new("/not/launched"))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            up_error.contains("effigy run acknowledge <run>"),
+            "{up_error}"
+        );
+        assert_closed_incomplete_gateway_status(&config);
+
+        let down_error = down(&config).unwrap_err().to_string();
+        assert!(
+            down_error.contains("effigy run acknowledge <run>"),
+            "{down_error}"
+        );
+        assert_closed_incomplete_gateway_status(&config);
+    }
+
+    #[test]
+    fn interrupted_settlement_does_not_reconcile_a_live_starting_run() {
+        if nix::unistd::Uid::effective().is_root() {
+            eprintln!("skipping standard gateway lifecycle test: root is unsupported");
+            return;
+        }
+        let home = tempfile::tempdir().unwrap();
+        let config = GatewayConfig::standard(home.path().join(".effigy/gateway"));
+        let op = context(Duration::from_secs(5), EffectClass::Mutate);
+        let cx = op.effects().unwrap();
+        let cleanup = op.cleanup(Duration::from_secs(5)).unwrap();
+        let root = StateRoot::runtime_machine_effects(&cx, home.path()).unwrap();
+        let run = run::Run::begin(
+            &cx,
+            &root,
+            &invocation(owner()),
+            run::BeginOpts {
+                id: run_id().unwrap(),
+                wait: effigy_kernel::gate::Wait::FailFast,
+                acknowledge: vec![],
+                next: next(),
+                custody: None,
+            },
+            &cleanup,
+            &mut Adapter,
+        )
+        .unwrap();
+
+        let before = status(&config).unwrap();
+        assert_eq!(before.status, "starting");
+        let reused = up_with_executable(&config, Path::new("/not/launched")).unwrap();
+        assert_eq!(reused.status, "starting");
+        assert_eq!(reused.run, before.run);
+        assert!(matches!(
+            recover_interrupted_gateway(&config, before.run).unwrap(),
+            GatewayRecovery::Live(_)
+        ));
+        drop(run);
     }
     /// A stop is never silent: the gateway's log names the pid, cwd and bounded
     /// cause of the process that asked for it, with the fixed caller identifier
