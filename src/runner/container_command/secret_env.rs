@@ -312,11 +312,7 @@ pub(in crate::runner) fn stage_container_secret_runtime(
     {
         return Ok(());
     }
-    let result = stage_generated_runtime_files(repo_root, policy, runtime);
-    if result.is_err() {
-        cleanup_container_secret_runtime(repo_root, &policy.name)?;
-    }
-    result
+    stage_generated_runtime_files(repo_root, policy, runtime)
 }
 
 fn stage_generated_runtime_files(
@@ -341,15 +337,25 @@ fn stage_generated_runtime_files(
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).map_err(|e| {
         RunnerError::task_invocation(format!("protect secret runtime directory: {e}"))
     })?;
+    // The non-secret project identity lets retirement find this directory even
+    // after the environment declaration has been removed.
+    let mut identity = tempfile::NamedTempFile::new_in(&dir).map_err(|e| {
+        RunnerError::task_invocation(format!("create secret runtime identity: {e}"))
+    })?;
+    identity
+        .write_all(policy.project_name.as_bytes())
+        .map_err(|e| RunnerError::task_invocation(format!("write secret runtime identity: {e}")))?;
+    identity.persist(dir.join(".project")).map_err(|e| {
+        RunnerError::task_invocation(format!("publish secret runtime identity: {e}"))
+    })?;
     if !writes_runtime_secret_files(runtime) {
         return Ok(());
     }
     let previous = std::fs::read_to_string(dir.join("runtime.json")).ok();
     let changed = changed_runtime_secret_keys(previous.as_deref(), runtime);
-    for (name, contents) in [
-        ("runtime.env", render_runtime_env_file(&runtime.env)),
-        ("runtime.json", render_runtime_json_file(&runtime.env)),
-    ] {
+    // Prepare both files before replacing either, then retain a hard link to
+    // the first original so a failed second rename can restore it.
+    let prepare = |contents: &str| -> Result<tempfile::NamedTempFile, RunnerError> {
         let mut file = tempfile::NamedTempFile::new_in(&dir).map_err(|e| {
             RunnerError::task_invocation(format!("create secret runtime file: {e}"))
         })?;
@@ -360,9 +366,55 @@ fn stage_generated_runtime_files(
             })?;
         file.write_all(contents.as_bytes())
             .map_err(|e| RunnerError::task_invocation(format!("write secret runtime file: {e}")))?;
-        file.persist(dir.join(name)).map_err(|e| {
-            RunnerError::task_invocation(format!("publish secret runtime file: {e}"))
-        })?;
+        Ok(file)
+    };
+    let env_file = prepare(&render_runtime_env_file(&runtime.env))?;
+    let json_file = prepare(&render_runtime_json_file(&runtime.env))?;
+    for name in ["runtime.env", "runtime.json"] {
+        match std::fs::symlink_metadata(dir.join(name)) {
+            Ok(meta) if !meta.is_file() => {
+                return Err(RunnerError::task_invocation(format!(
+                    "secret runtime {name} is not a regular file"
+                )))
+            }
+            Ok(_) => (),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+            Err(error) => {
+                return Err(RunnerError::task_invocation(format!(
+                    "inspect secret runtime file: {error}"
+                )))
+            }
+        }
+    }
+    let env_path = dir.join("runtime.env");
+    let backup = if env_path.exists() {
+        let backup = tempfile::NamedTempFile::new_in(&dir)
+            .map_err(|e| RunnerError::task_invocation(format!("reserve secret backup: {e}")))?;
+        std::fs::remove_file(backup.path())
+            .and_then(|()| std::fs::hard_link(&env_path, backup.path()))
+            .map_err(|e| {
+                RunnerError::task_invocation(format!("backup secret runtime file: {e}"))
+            })?;
+        Some(backup)
+    } else {
+        None
+    };
+    env_file
+        .persist(&env_path)
+        .map_err(|e| RunnerError::task_invocation(format!("publish secret runtime env: {e}")))?;
+    if let Err(error) = json_file.persist(dir.join("runtime.json")) {
+        let restore = match backup {
+            Some(backup) => std::fs::rename(backup.path(), &env_path),
+            None => std::fs::remove_file(&env_path),
+        };
+        if let Err(restore_error) = restore {
+            return Err(RunnerError::task_invocation(format!(
+                "publish secret runtime json: {error}; restore env: {restore_error}"
+            )));
+        }
+        return Err(RunnerError::task_invocation(format!(
+            "publish secret runtime json: {error}"
+        )));
     }
     if existing_directory {
         if let Some(runtime_dir) = policy.secret_runtime_dir.as_deref() {
@@ -742,8 +794,11 @@ mod tests {
         fs::remove_file(dir.join("runtime.json")).expect("remove json");
         fs::create_dir(dir.join("runtime.json")).expect("block json replacement");
         super::stage_container_secret_runtime(&root, &policy, &runtime("third"))
-            .expect_err("a failed second publish removes the first file");
-        assert!(!dir.exists());
+            .expect_err("a blocked destination refuses the refresh");
+        assert!(fs::read_to_string(dir.join("runtime.env"))
+            .unwrap()
+            .contains("second"));
+        assert!(dir.exists());
         super::cleanup_container_secret_runtime(&root, "web").expect("cleanup is idempotent");
         assert!(!dir.exists());
         fs::remove_dir_all(root).expect("fixture cleanup");
@@ -956,6 +1011,11 @@ catalog = "php-fpm"
             .expect("optional keys must not fail the bring-up");
 
         assert!(runtime.env.is_empty());
+        super::stage_container_secret_runtime(&root, &test_runtime_files_policy(), &runtime)
+            .expect("stage locked delivery");
+        let dir = root.join(".effigy/runtime/secrets/web");
+        assert!(!dir.join("runtime.env").exists());
+        assert!(!dir.join("runtime.json").exists());
         assert!(
             !writes_runtime_secret_files(&runtime),
             "an undelivered runtime must not be written empty"
@@ -1230,6 +1290,20 @@ catalog = "php-fpm"
             None,
         )
         .expect("the running service binds");
+        let mut generated = policy.clone();
+        generated.compose_source = EffectiveComposeSource::Generated;
+        assert!(materialize_container_secret_runtime(
+            &fixture.repo_root,
+            &generated,
+            &runtime,
+            &binding
+        )
+        .expect("generated stacks skip exec delivery")
+        .is_empty());
+        assert_eq!(
+            fs::read_to_string(format!("{runtime_dir}/runtime.json")).unwrap(),
+            r#"{"OTHER_KEY":"other-value"}"#
+        );
         let warnings =
             materialize_container_secret_runtime(&fixture.repo_root, &policy, &runtime, &binding)
                 .expect("the reused service receives the delivery");

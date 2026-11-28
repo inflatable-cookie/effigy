@@ -1393,6 +1393,28 @@ mod tests {
     }
 
     #[test]
+    fn successful_stop_and_reset_remove_secret_runtime_files() {
+        let _lock = lock_test();
+        let fixture = EnvironmentFixture::new("secret-stop", "#!/bin/sh\nexit 0\n");
+        let _env = fixture.env();
+        let policy = fixture.policy();
+        let dir = fixture
+            .repo_root
+            .join(".effigy/runtime/secrets")
+            .join(&policy.name);
+        for operation in [Operation::Down, Operation::Reset] {
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join("runtime.env"), "secret").unwrap();
+            if operation == Operation::Down {
+                stop(&fixture.repo_root, &policy, operation, |_| Ok(())).unwrap();
+            } else {
+                reset(&fixture.repo_root, &policy, |_| Ok(())).unwrap();
+            }
+            assert!(!dir.exists());
+        }
+    }
+
+    #[test]
     fn the_idle_reaper_retries_a_busy_gate_when_arming_or_stopping() {
         use effigy_containers::environment::{EngineRecord, EnvRun, EnvState};
         use effigy_kernel::gate::Gate;
@@ -1405,6 +1427,12 @@ mod tests {
             );
             let _env = fixture.env();
             let policy = fixture.policy();
+            let secret_dir = fixture
+                .repo_root
+                .join(".effigy/runtime/secrets")
+                .join(&policy.name);
+            fs::create_dir_all(&secret_dir).unwrap();
+            fs::write(secret_dir.join("runtime.env"), "secret").unwrap();
             let env = env_ref(&policy).unwrap();
             let ctx = context(&policy.repo_root).unwrap();
             let mut up = EnvRun::begin(&ctx, &env, Operation::Up, Wait::FailFast).unwrap();
@@ -1467,6 +1495,7 @@ mod tests {
                 "the reaper retried after contention while {phase}"
             );
             assert_eq!(record(&policy).unwrap().state, EnvState::Stopped);
+            assert!(!secret_dir.exists());
             assert_eq!(
                 fs::read_to_string(fixture.repo_root.join("idle-reap.log")).unwrap(),
                 "stop\n"

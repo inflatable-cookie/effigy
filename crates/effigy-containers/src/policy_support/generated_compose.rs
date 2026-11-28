@@ -564,8 +564,21 @@ pub(crate) fn resolve_compose_source(
                 "container `{container_name}` has no primary service `{primary}`"
             ))
         })?;
-        if let Some(YamlValue::Sequence(entries)) = service.extra.get_mut("tmpfs") {
-            entries.retain(|entry| entry.as_str() != Some(runtime_dir));
+        if let Some(tmpfs) = service.extra.get_mut("tmpfs") {
+            match tmpfs {
+                YamlValue::Sequence(entries) => entries.retain(|entry| {
+                    entry
+                        .as_str()
+                        .is_none_or(|path| path.split(':').next() != Some(runtime_dir))
+                }),
+                YamlValue::Mapping(entries) => {
+                    entries.remove(YamlValue::String(runtime_dir.to_owned()));
+                }
+                YamlValue::String(path) if path.split(':').next() == Some(runtime_dir) => {
+                    *tmpfs = YamlValue::Null
+                }
+                _ => {}
+            }
         }
         if runtime_dir == "/run/effigy/secrets" {
             service.environment_mapping_mut()?.insert(

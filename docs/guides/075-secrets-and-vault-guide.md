@@ -415,13 +415,21 @@ Compose starts the primary service. It mounts the staged directory read-only at
 `runtime_dir`, so startup readers see the values and container restarts retain
 them. The host directory is `.effigy/runtime/secrets/<environment>/` with mode
 `0700`; the files have mode `0600`. Compose contains the mount path, never the
-secret values. Teardown removes the staged files.
+secret values. Teardown removes the staged files. The container user must map
+to the host UID that owns them; the bundled PHP workspace sets `dev` to that
+UID. Custom images and runtime UID mappings must provide equivalent access.
 
 Each apply refreshes resolved values. A running process that read the old values
 only at startup needs a restart to observe changes; request-time readers see the
 new files. Undeliverable keys are reported individually, and an empty delivery
 does not silently write empty files. Direct Compose sources retain their
-post-start delivery behavior.
+post-start delivery behavior. A direct-source service that reads only at
+startup misses values delivered after it starts; restarting it may also clear a
+tmpfs runtime directory, so delivery may need to run again.
+
+Effigy supplies generic runtime files; a bundle or catalog wires them into its
+application. For example, PHP can use a request-time bootstrap to read
+`runtime.json`, while deferred processes can source `runtime.env`.
 
 Repo `.env` files can still carry non-secret local overrides. Runtime-file
 delivery is for the sensitive values declared under `[secrets]`.

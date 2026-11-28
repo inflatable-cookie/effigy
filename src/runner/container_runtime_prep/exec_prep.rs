@@ -205,17 +205,7 @@ pub(super) fn run_task_apply(
         repo_root, policy, &secrets,
     )?;
     let env = crate::runner::container_command::secret_env::compose_env(&secrets);
-    let result = run_runtime_compose_up_stage(repo_root, policy, &env, run_compose);
-    if result.is_err()
-        && secrets.delivery == effigy_manifest::ManifestContainerSecretDelivery::RuntimeFiles
-        && policy.compose_source == effigy_containers::EffectiveComposeSource::Generated
-    {
-        crate::runner::container_command::secret_env::cleanup_container_secret_runtime(
-            repo_root,
-            &policy.name,
-        )?;
-    }
-    result
+    run_runtime_compose_up_stage(repo_root, policy, &env, run_compose)
 }
 
 /// Write the runtime files this apply resolved, now that the primary service
