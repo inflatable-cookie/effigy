@@ -57,7 +57,8 @@ pub(in crate::runner) fn prepare_container_exec_runtime(
             // (effigy#371).
             // The apply owns this reconcile run's custody, so a secret-bearing
             // VM Compose launch spawns under it instead of refusing (effigy#1003).
-            bring_up = Some(crate::runner::environment::reconcile_owned(
+            let failure = std::cell::RefCell::new(None);
+            let result = crate::runner::environment::reconcile_owned(
                 repo_root,
                 policy,
                 start.retention,
@@ -86,11 +87,45 @@ pub(in crate::runner) fn prepare_container_exec_runtime(
                             .map_err(RunnerError::from)
                         },
                     )
+                    .and_then(|()| {
+                        let has_named_volumes = policy.workspace_user.is_some()
+                            && effigy_containers::load_workspace_ownership_plan(policy)
+                                .map_err(|error| RunnerError::task_invocation(error.to_string()))?
+                                .targets.iter().any(|target| {
+                                    target.mount_kind == effigy_containers::WorkspaceMountKind::NamedVolume
+                                });
+                        if !has_named_volumes {
+                            return Ok(());
+                        }
+                        crate::runner::container_command::verify_and_repair_detached_mounts(
+                            || {
+                                ensure_runtime_exec_readiness_stage(repo_root, policy)?;
+                                crate::runner::workspace_command::permissions::verify_workspace_named_volumes(
+                                    repo_root, policy, container_name,
+                                )
+                            },
+                            |mounts| {
+                                eprintln!("[info] detached named-volume mount(s) {}; recreating service `{}` to reattach them while preserving named volumes", mounts.join(", "), policy.primary_service);
+                                let args = crate::runner::container_command::detached_recreate_args(policy)?;
+                                let env = applied_secrets.borrow().as_ref()
+                                    .map(crate::runner::container_command::secret_env::compose_env)
+                                    .unwrap_or_default();
+                                run_compose_capture_with_env_owner(
+                                    repo_root, policy, &args, "docker compose recreate detached volume",
+                                    &env, deadline, &mut RetainedComposeOwner::new(run, effect),
+                                ).map_err(RunnerError::from)?;
+                                Ok(())
+                            },
+                        )
+                    })
                     .map_err(|error| {
-                        effigy_containers::environment::BackendError::Uncertain(error.to_string())
+                        let message = error.to_string();
+                        *failure.borrow_mut() = Some(error);
+                        effigy_containers::environment::BackendError::Uncertain(message)
                     })
                 },
-            )?);
+            );
+            bring_up = Some(result.map_err(|error| failure.into_inner().unwrap_or(error))?);
             Ok(())
         },
         || {

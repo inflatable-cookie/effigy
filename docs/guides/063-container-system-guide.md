@@ -1504,9 +1504,12 @@ first creation, reuse, and handover passes through, while managed children
 and `container shell` enter through exec without their own preparation —
 so owned-disposable cache volumes (Cargo registry/git, target dirs) are
 writable by the workspace user however the stack was created. A
-preparation failure refuses closed: detached `up` leaves the started scope in
-place for the next activation to reconcile, attached `up` cleans up, and
-neither retries, recreates, or adopts anything.
+detached named-volume mount is the exception: `up` recreates the primary
+service once without deleting volumes when no task holds the environment, then
+checks the mount again. An active holder prevents recreation. If it is still detached, `up` refuses without scanning the host directory underneath.
+Other preparation failures refuse closed: detached `up` leaves the started
+scope in place for the next activation to reconcile, and attached `up` cleans
+up.
 
 For a running workspace, `effigy doctor` remains read-only and reports
 `container.workspace-ownership` when declared cargo/target mounts, their

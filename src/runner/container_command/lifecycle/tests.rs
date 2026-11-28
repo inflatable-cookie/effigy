@@ -1998,3 +1998,87 @@ fn detached_text_failure_is_typed_and_names_the_operation_container() {
         "{rendered}"
     );
 }
+
+#[test]
+fn detached_named_volume_repair_is_bounded_and_preserves_data() {
+    use super::up::{detached_recreate_args, verify_and_repair_detached_mounts};
+    use crate::runner::workspace_command::permissions::parse_mountinfo_mountpoints;
+    use std::cell::Cell;
+    use std::os::unix::fs::PermissionsExt;
+
+    for (initially_mounted, reattaches, expected_recreates) in
+        [(false, true, 1), (false, false, 1), (true, false, 0)]
+    {
+        let temp = effigy_test_support::Fixture::workspace("detached-volume-").expect("fixture");
+        let root = temp.path();
+        let host = root.join("host-file");
+        let volume = root.join("volume-file");
+        std::fs::write(&host, "host data").expect("host witness");
+        std::fs::write(&volume, "volume data").expect("volume witness");
+        let mountinfo = root.join("mountinfo");
+        let mounted = "1 0 0:1 / /workspace/node_modules rw - ext4 /dev/a rw\n";
+        std::fs::write(
+            &mountinfo,
+            if initially_mounted {
+                mounted
+            } else {
+                "1 0 0:1 / /workspace rw - virtiofs host rw\n"
+            },
+        )
+        .expect("mountinfo");
+        let script = root.join("runtime");
+        std::fs::write(&script, "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$1/calls\"\nif [ \"$2\" = reattach ]; then printf '1 0 0:1 / /workspace/node_modules rw - ext4 /dev/a rw\\n' > \"$1/mountinfo\"; fi\n").expect("runtime");
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
+            .expect("executable");
+        let calls = Cell::new(0);
+        let args = detached_recreate_args(&test_policy(Vec::new())).expect("compose arguments");
+        let result = verify_and_repair_detached_mounts(
+            || {
+                let raw = std::fs::read_to_string(&mountinfo).expect("mountinfo read");
+                if parse_mountinfo_mountpoints(&raw).contains("/workspace/node_modules") {
+                    Ok(())
+                } else {
+                    Err(RunnerError::DetachedNamedVolumes {
+                        mounts: vec!["/workspace/node_modules".into()],
+                        detail: "detached from the running container".into(),
+                    })
+                }
+            },
+            |mounts| {
+                assert_eq!(mounts, ["/workspace/node_modules"]);
+                calls.set(calls.get() + 1);
+                let status = std::process::Command::new(&script)
+                    .arg(root)
+                    .arg(if reattaches {
+                        "reattach"
+                    } else {
+                        "stay-detached"
+                    })
+                    .args(&args)
+                    .status()
+                    .expect("fake runtime");
+                assert!(status.success());
+                Ok(())
+            },
+        );
+        assert_eq!(calls.get(), expected_recreates);
+        assert_eq!(result.is_ok(), initially_mounted || reattaches);
+        if let Err(error) = result {
+            assert!(error
+                .to_string()
+                .contains("detached from the running container"));
+        }
+        let log = std::fs::read_to_string(root.join("calls")).unwrap_or_default();
+        if expected_recreates == 1 {
+            assert!(log.contains("up -d --force-recreate --no-deps"), "{log}");
+            assert!(!log.contains("--volumes"), "{log}");
+        } else {
+            assert!(log.is_empty());
+        }
+        assert_eq!(std::fs::read_to_string(host).expect("host"), "host data");
+        assert_eq!(
+            std::fs::read_to_string(volume).expect("volume"),
+            "volume data"
+        );
+    }
+}

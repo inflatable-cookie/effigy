@@ -578,3 +578,5 @@ catalog = "workspace-rust-bun"
         assert!(repo_root_has_effigy_manifest(&repo));
     }
 }
+
+pub(in crate::runner) use lifecycle::{detached_recreate_args, verify_and_repair_detached_mounts};

@@ -196,6 +196,76 @@ fn run_container_up_inner(
                         return Err(BackendError::Uncertain(message));
                     }
                 }
+                let has_named_volumes = plan.policy.workspace_user.is_some()
+                    && effigy_containers::load_workspace_ownership_plan(&plan.policy)
+                        .map_err(|error| BackendError::Failed(error.to_string()))?
+                        .targets
+                        .iter()
+                        .any(|target| {
+                            target.mount_kind == effigy_containers::WorkspaceMountKind::NamedVolume
+                        });
+                let repair = if has_named_volumes {
+                    verify_and_repair_detached_mounts(
+                        || {
+                            wait_for_container_ready(
+                                &plan.policy,
+                                Some(&plan.stop_flag),
+                                observation
+                                    .get()
+                                    .map(readiness::ObservationBudget::Until)
+                                    .unwrap_or_else(|| {
+                                        if unbounded_test_observation_budget() {
+                                            readiness::ObservationBudget::Unbounded
+                                        } else {
+                                            readiness::ObservationBudget::HealthTimeout
+                                        }
+                                    }),
+                                None,
+                            )?;
+                            crate::runner::container_runtime_prep::ensure_primary_service_binding(
+                                repo_root,
+                                &plan.policy,
+                                observation.get(),
+                            )?;
+                            crate::runner::workspace_command::permissions::verify_workspace_named_volumes(
+                                repo_root, &plan.policy, plan.requested_container.as_deref(),
+                            )
+                        },
+                        |mounts| {
+                            eprintln!("[info] detached named-volume mount(s) {}; recreating service `{}` to reattach them while preserving named volumes", mounts.join(", "), plan.policy.primary_service);
+                            let args = detached_recreate_args(&plan.policy)?;
+                            let invocation = effigy_runtime::container_manager::compose_invocation_plan_from_args(
+                            repo_root, &plan.policy, args, ContainerAction::Activate, "docker compose recreate detached volume",
+                        ).map_err(RunnerError::from)?;
+                            run_compose_invocation_streaming_with_env_owner(
+                                repo_root,
+                                &plan.policy,
+                                &invocation.program,
+                                &invocation.args,
+                                &invocation.label,
+                                &plan.compose_secret_env,
+                                Some(&plan.stop_flag),
+                                &mut |_| {},
+                                deadline,
+                                &mut RetainedComposeOwner::new(run, effect),
+                            )
+                            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+                            observation.set(if unbounded_test_observation_budget() {
+                                None
+                            } else {
+                                Some(readiness::observation_deadline(&plan.policy))
+                            });
+                            Ok(())
+                        },
+                    )
+                } else {
+                    Ok(())
+                };
+                if let Err(error) = repair {
+                    let message = error.to_string();
+                    *detached_failure.borrow_mut() = Some(error);
+                    return Err(BackendError::Uncertain(message));
+                }
                 Ok(())
             },
         );
@@ -573,4 +643,40 @@ pub(super) fn complete_container_up_runtime_integrations(
 /// own bounded command budget. Bounded-refusal proofs use their own budgets.
 fn unbounded_test_observation_budget() -> bool {
     std::env::var_os("EFFIGY_TEST_CONTAINER_UP_UNBOUNDED_OBSERVATIONS").is_some()
+}
+
+/// One activation may recreate the primary service at most once.
+pub(in crate::runner) fn verify_and_repair_detached_mounts(
+    mut verify: impl FnMut() -> Result<(), RunnerError>,
+    recreate: impl FnOnce(&[String]) -> Result<(), RunnerError>,
+) -> Result<(), RunnerError> {
+    match verify() {
+        Err(RunnerError::DetachedNamedVolumes { mounts, .. }) => {
+            recreate(&mounts)?;
+            verify()
+        }
+        result => result,
+    }
+}
+
+pub(in crate::runner) fn detached_recreate_args(
+    policy: &EffectiveContainerPolicy,
+) -> Result<Vec<OsString>, RunnerError> {
+    let mut args = effigy_containers::compose::compose_up_args(policy);
+    let up = args
+        .iter()
+        .position(|arg| arg == "up")
+        .ok_or_else(|| RunnerError::task_invocation("compose up arguments missing command"))?;
+    args.truncate(up + 1);
+    args.extend(
+        [
+            "-d",
+            "--force-recreate",
+            "--no-deps",
+            policy.primary_service.as_str(),
+        ]
+        .into_iter()
+        .map(OsString::from),
+    );
+    Ok(args)
 }

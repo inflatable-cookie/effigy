@@ -194,8 +194,13 @@ Mounts are part of a service's rendered configuration, so they need no separate
 change detector. One apply (`compose up -d --build --remove-orphans`, no
 recreate flag) converges the stack, and Compose recreates exactly the services
 whose configuration changed, mounts included ([053](053-environment-reconciler-contract.md)
-§3). A running stack is never inspected for mount drift, and `container up`
-adds no `--no-recreate`/`--force-recreate` variant.
+§3). After apply, workspace permission preflight verifies declared named-volume
+mounts against the live mount table. If one is detached, `container up` and
+routed task activation recreate only the primary service once with
+`--force-recreate --no-deps`, preserving volumes, then verify again. A live
+holder prevents the apply and the existing refusal remains in force. A second
+failure refuses. Exec and doctor report detached mounts without recreating the
+container or inspecting the host directory underneath.
 
 An isolated volume overlays a directory inside the checkout, so its host mount
 point must exist. Up and routed-task preparation create a missing host

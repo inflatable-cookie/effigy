@@ -37,6 +37,10 @@ pub enum RunnerError {
     Task(TaskError),
     Ui(String),
     TaskInvocation(String),
+    DetachedNamedVolumes {
+        mounts: Vec<String>,
+        detail: String,
+    },
     /// A managed host process was refused because the installed JavaScript
     /// dependencies disagree with the checkout lockfile.
     HostDependencyDrift {
@@ -503,6 +507,7 @@ impl RunnerError {
             | RunnerError::Task(_)
             | RunnerError::Ui(_)
             | RunnerError::TaskInvocation(_)
+            | RunnerError::DetachedNamedVolumes { .. }
             | RunnerError::HostDependencyDrift { .. }
             | RunnerError::ContainerWaitRefused { .. }
             | RunnerError::DetachedActivationFailure { .. }
